@@ -27,11 +27,11 @@ public class BannerController {
             @RequestParam MultipartFile psdFile,
             @RequestParam String advertiser,
             @RequestParam String campaignName,
-            @RequestParam List<String> targetMedia,
+            @RequestParam List<String> specIds,
             @RequestParam(defaultValue = "cover") String resizeMode,
             @RequestParam(defaultValue = "png") String outputFormat
     ) throws IOException {
-        BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, targetMedia, resizeMode, outputFormat);
+        BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, specIds, resizeMode, outputFormat);
         return ResponseEntity.ok(job);
     }
 

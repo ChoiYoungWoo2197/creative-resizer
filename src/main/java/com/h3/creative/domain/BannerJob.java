@@ -17,6 +17,7 @@ public class BannerJob {
     private String advertiser;
     private String campaignName;
     private List<String> targetMedia;
+    private List<String> specIds;
     private String resizeMode;       // cover / contain / blur-bg / layer-auto
     private String outputFormat;     // png / jpg / webp
 

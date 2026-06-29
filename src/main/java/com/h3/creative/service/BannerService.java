@@ -34,17 +34,22 @@ public class BannerService {
     private String uploadDir;
 
     public BannerJob submit(MultipartFile psdFile, String advertiser, String campaignName,
-                            List<String> targetMedia, String resizeMode, String outputFormat) throws IOException {
+                            List<String> specIds, String resizeMode, String outputFormat) throws IOException {
 
         String filename = UUID.randomUUID() + "_" + psdFile.getOriginalFilename();
         File dest = new File(uploadDir, filename);
         dest.getParentFile().mkdirs();
         psdFile.transferTo(dest);
 
+        List<BannerSpec> selectedSpecs = specMongoService.findByIds(specIds);
+        List<String> targetMedia = selectedSpecs.stream()
+                .map(BannerSpec::getMedia).distinct().toList();
+
         BannerJob job = new BannerJob();
         job.setAdvertiser(advertiser);
         job.setCampaignName(campaignName);
         job.setTargetMedia(targetMedia);
+        job.setSpecIds(specIds);
         job.setResizeMode(resizeMode);
         job.setOutputFormat(outputFormat);
         job.setPsdPath(dest.getAbsolutePath());
@@ -55,6 +60,7 @@ public class BannerService {
         BannerMessage message = BannerMessage.builder()
                 .jobId(saved.getId())
                 .psdPath(saved.getPsdPath())
+                .specIds(specIds)
                 .targetMedia(targetMedia)
                 .resizeMode(resizeMode)
                 .outputFormat(outputFormat)
@@ -67,12 +73,18 @@ public class BannerService {
     public void process(BannerMessage message) {
         String jobId = message.getJobId();
         bannerMongoService.updateStatus(jobId, "processing");
-        log.info("Processing job={} media={}", jobId, message.getTargetMedia());
+        log.info("Processing job={} specIds={}", jobId, message.getSpecIds());
 
-        List<BannerSpec> specs = specMongoService.findByMediaIn(message.getTargetMedia());
+        List<BannerSpec> specs;
+        if (message.getSpecIds() != null && !message.getSpecIds().isEmpty()) {
+            specs = specMongoService.findByIds(message.getSpecIds());
+        } else {
+            specs = specMongoService.findByMediaIn(message.getTargetMedia());
+        }
+
         if (specs.isEmpty()) {
-            log.warn("No active specs found for job={} media={}", jobId, message.getTargetMedia());
-            bannerMongoService.updateFail(jobId, "등록된 규격이 없습니다: " + message.getTargetMedia());
+            log.warn("No specs found for job={}", jobId);
+            bannerMongoService.updateFail(jobId, "선택된 규격이 없습니다.");
             return;
         }
 

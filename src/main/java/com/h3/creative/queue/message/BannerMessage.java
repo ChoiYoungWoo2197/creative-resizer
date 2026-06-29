@@ -16,6 +16,7 @@ public class BannerMessage {
     private String jobId;
     private String psdPath;
     private List<String> targetMedia;
+    private List<String> specIds;
     private String resizeMode;
     private String outputFormat;
 }

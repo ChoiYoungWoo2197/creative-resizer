@@ -29,6 +29,11 @@ public class SpecMongoService {
         return mongoTemplate.find(query, BannerSpec.class);
     }
 
+    public List<BannerSpec> findByIds(List<String> ids) {
+        Query query = Query.query(Criteria.where("id").in(ids));
+        return mongoTemplate.find(query, BannerSpec.class);
+    }
+
     public BannerSpec save(BannerSpec spec) {
         return mongoTemplate.save(spec);
     }
