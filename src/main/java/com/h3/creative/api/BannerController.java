@@ -5,10 +5,15 @@ import com.h3.creative.domain.BannerSpec;
 import com.h3.creative.mongo.SpecMongoService;
 import com.h3.creative.service.BannerService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -65,5 +70,26 @@ public class BannerController {
     public ResponseEntity<Map<String, String>> deleteSpec(@PathVariable String id) {
         specMongoService.deleteById(id);
         return ResponseEntity.ok(Map.of("result", "ok"));
+    }
+
+    @GetMapping("/job/{id}/download")
+    public ResponseEntity<Resource> download(@PathVariable String id) {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || !"done".equals(job.getStatus())) {
+            return ResponseEntity.notFound().build();
+        }
+
+        File zip = new File(job.getZipPath());
+        if (!zip.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String filename = job.getAdvertiser() + "_" + job.getCampaignName() + ".zip";
+        Resource resource = new FileSystemResource(zip);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(resource);
     }
 }

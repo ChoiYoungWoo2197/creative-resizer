@@ -1,9 +1,14 @@
 package com.h3.creative.service;
 
 import com.h3.creative.domain.BannerJob;
+import com.h3.creative.domain.BannerSpec;
 import com.h3.creative.mongo.BannerMongoService;
+import com.h3.creative.mongo.SpecMongoService;
 import com.h3.creative.queue.message.BannerMessage;
 import com.h3.creative.queue.producer.BannerProducer;
+import com.h3.creative.worker.WorkerClient;
+import com.h3.creative.worker.WorkerRequest;
+import com.h3.creative.worker.WorkerResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +26,9 @@ import java.util.UUID;
 public class BannerService {
 
     private final BannerMongoService bannerMongoService;
+    private final SpecMongoService specMongoService;
     private final BannerProducer bannerProducer;
+    private final WorkerClient workerClient;
 
     @Value("${creative.storage.upload-dir}")
     private String uploadDir;
@@ -58,9 +65,43 @@ public class BannerService {
     }
 
     public void process(BannerMessage message) {
-        bannerMongoService.updateStatus(message.getJobId(), "processing");
-        // Worker 호출은 2단계에서 구현
-        log.info("Job {} queued for worker processing", message.getJobId());
+        String jobId = message.getJobId();
+        bannerMongoService.updateStatus(jobId, "processing");
+        log.info("Processing job={} media={}", jobId, message.getTargetMedia());
+
+        List<BannerSpec> specs = specMongoService.findByMediaIn(message.getTargetMedia());
+        if (specs.isEmpty()) {
+            log.warn("No active specs found for job={} media={}", jobId, message.getTargetMedia());
+            bannerMongoService.updateFail(jobId, "등록된 규격이 없습니다: " + message.getTargetMedia());
+            return;
+        }
+
+        List<WorkerRequest.SpecItem> specItems = specs.stream()
+                .map(s -> WorkerRequest.SpecItem.builder()
+                        .media(s.getMedia())
+                        .placementName(s.getPlacementName())
+                        .width(s.getWidth())
+                        .height(s.getHeight())
+                        .build())
+                .toList();
+
+        WorkerRequest request = WorkerRequest.builder()
+                .jobId(jobId)
+                .psdPath(message.getPsdPath())
+                .specs(specItems)
+                .resizeMode(message.getResizeMode())
+                .outputFormat(message.getOutputFormat())
+                .build();
+
+        WorkerResponse response = workerClient.generate(request);
+
+        if (response.isSuccess()) {
+            log.info("Job done={} zip={} count={}", jobId, response.getZipPath(), response.getCount());
+            bannerMongoService.updateDone(jobId, response.getZipPath());
+        } else {
+            log.error("Job failed={} error={}", jobId, response.getError());
+            bannerMongoService.updateFail(jobId, response.getError());
+        }
     }
 
     public BannerJob getJob(String id) {
