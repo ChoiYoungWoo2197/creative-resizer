@@ -1,0 +1,53 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: creative-resizer
+
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/creative_resizer
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+
+creative:
+  storage:
+    upload-dir: /app/storage/uploads
+    output-dir: /app/storage/outputs
+    zip-dir: /app/storage/zips
+  worker:
+    url: http://banner-worker:5000
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/creative_resizer
+
+  rabbitmq:
+    host: localhost
+
+creative:
+  storage:
+    upload-dir: C:/company/storage/creative/uploads
+    output-dir: C:/company/storage/creative/outputs
+    zip-dir: C:/company/storage/creative/zips
+  worker:
+    url: http://localhost:5000
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  # prod 환경은 docker-compose 환경변수로 주입 (SPRING_DATA_MONGODB_URI 등)

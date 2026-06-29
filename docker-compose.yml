@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  creative-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: creative-api
+    ports:
+      - "18081:8081"
+    environment:
+      - TZ=Asia/Seoul
+      - SPRING_PROFILES_ACTIVE=prod
+      - SPRING_DATA_MONGODB_URI=mongodb://host.docker.internal:27017/creative_resizer
+      - SPRING_RABBITMQ_HOST=host.docker.internal
+      - CREATIVE_STORAGE_UPLOAD_DIR=/app/storage/uploads
+      - CREATIVE_STORAGE_OUTPUT_DIR=/app/storage/outputs
+      - CREATIVE_STORAGE_ZIP_DIR=/app/storage/zips
+      - CREATIVE_WORKER_URL=http://creative-worker:5000
+    volumes:
+      - ./logs:/logs
+      - creative-storage:/app/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - creative-worker
+    restart: unless-stopped
+    networks:
+      - creative-net
+
+  creative-worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: creative-worker
+    environment:
+      - OUTPUT_DIR=/app/storage/outputs
+      - ZIP_DIR=/app/storage/zips
+    volumes:
+      - creative-storage:/app/storage
+    restart: unless-stopped
+    networks:
+      - creative-net
+
+volumes:
+  creative-storage:
+    driver: local
+
+networks:
+  creative-net:
+    driver: bridge
