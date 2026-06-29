@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-wrap">
     <div class="page-header">
       <div>
         <h1 class="page-title">규격 관리</h1>
@@ -238,4 +238,5 @@ onMounted(load)
   display: flex; align-items: center; justify-content: center;
 }
 .del-btn:hover { background: #FFF0EE; }
+.page-wrap { max-width: 1100px; margin: 0 auto; padding: 32px 28px 60px; }
 </style>

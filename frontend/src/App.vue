@@ -20,7 +20,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #F2F4F6;
+  background: #F5F6F8;
   color: #191F28;
   -webkit-font-smoothing: antialiased;
 }
@@ -33,43 +33,18 @@ a { text-decoration: none; }
 .header {
   background: #fff;
   border-bottom: 1px solid #E5E8EB;
-  position: sticky;
-  top: 0;
-  z-index: 50;
+  position: sticky; top: 0; z-index: 50;
+  flex-shrink: 0;
 }
 .header-inner {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 24px;
-  height: 62px;
-  display: flex;
-  align-items: center;
-  gap: 36px;
+  padding: 0 24px; height: 56px;
+  display: flex; align-items: center; gap: 32px;
 }
-.logo {
-  font-size: 16px;
-  font-weight: 800;
-  color: #3182F6;
-  letter-spacing: -0.5px;
-  white-space: nowrap;
-}
+.logo { font-size: 15px; font-weight: 800; color: #3182F6; letter-spacing: -0.5px; white-space: nowrap; }
 .nav { display: flex; gap: 2px; }
-.nav-item {
-  color: #6B7684;
-  font-size: 14px;
-  font-weight: 500;
-  padding: 7px 12px;
-  border-radius: 8px;
-  transition: all 0.12s;
-}
+.nav-item { color: #6B7684; font-size: 14px; font-weight: 500; padding: 6px 12px; border-radius: 8px; transition: all 0.12s; }
 .nav-item:hover { color: #191F28; background: #F2F4F6; }
 .nav-item.active { color: #3182F6; font-weight: 600; background: #EEF4FF; }
 
-.main {
-  flex: 1;
-  padding: 40px 24px;
-  max-width: 720px;
-  width: 100%;
-  margin: 0 auto;
-}
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-wrap">
     <div class="page-header">
       <div>
         <h1 class="page-title">작업 목록</h1>
@@ -186,4 +186,5 @@ onMounted(load)
 .dl-btn:hover { background: #3182F6; color: #fff; }
 .fail-tip { font-size: 12px; color: #FF3B30; font-weight: 600; cursor: help; }
 .dash { color: #D1D8E0; }
+.page-wrap { max-width: 1100px; margin: 0 auto; padding: 32px 28px 60px; }
 </style>
