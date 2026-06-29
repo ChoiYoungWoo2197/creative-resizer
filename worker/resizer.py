@@ -5,7 +5,10 @@ import os
 
 def load_psd_as_image(psd_path: str) -> Image.Image:
     psd = PSDImage.open(psd_path)
-    return psd.composite()
+    img = psd.composite()
+    if img.mode in ("CMYK", "P", "LAB"):
+        img = img.convert("RGBA")
+    return img
 
 
 def resize_cover(img: Image.Image, width: int, height: int) -> Image.Image:
