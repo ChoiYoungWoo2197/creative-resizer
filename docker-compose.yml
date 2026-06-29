@@ -11,17 +11,18 @@ services:
     environment:
       - TZ=Asia/Seoul
       - SPRING_PROFILES_ACTIVE=prod
-      - SPRING_DATA_MONGODB_URI=mongodb://host.docker.internal:27017/creative_resizer
-      - SPRING_RABBITMQ_HOST=host.docker.internal
+      - SPRING_DATA_MONGODB_URI=${MONGODB_URI}
+      - SPRING_RABBITMQ_HOST=${RABBITMQ_HOST}
+      - SPRING_RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - SPRING_RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-guest}
+      - SPRING_RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
       - CREATIVE_STORAGE_UPLOAD_DIR=/app/storage/uploads
       - CREATIVE_STORAGE_OUTPUT_DIR=/app/storage/outputs
       - CREATIVE_STORAGE_ZIP_DIR=/app/storage/zips
       - CREATIVE_WORKER_URL=http://creative-worker:5000
     volumes:
       - ./logs:/logs
-      - creative-storage:/app/storage
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - ${STORAGE_PATH:-./storage}:/app/storage
     depends_on:
       - creative-worker
     restart: unless-stopped
@@ -37,14 +38,10 @@ services:
       - OUTPUT_DIR=/app/storage/outputs
       - ZIP_DIR=/app/storage/zips
     volumes:
-      - creative-storage:/app/storage
+      - ${STORAGE_PATH:-./storage}:/app/storage
     restart: unless-stopped
     networks:
       - creative-net
-
-volumes:
-  creative-storage:
-    driver: local
 
 networks:
   creative-net:

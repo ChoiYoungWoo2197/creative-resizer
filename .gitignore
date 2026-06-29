@@ -29,3 +29,10 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# 환경변수 (서버 민감 정보)
+.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
