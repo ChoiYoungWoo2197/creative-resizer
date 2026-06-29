@@ -50,4 +50,18 @@ spring:
   config:
     activate:
       on-profile: prod
-  # prod 환경은 docker-compose 환경변수로 주입 (SPRING_DATA_MONGODB_URI 등)
+
+  data:
+    mongodb:
+      uri: mongodb+srv://dev:heeil%400801%21%40%23@cluster0.u0ykepl.mongodb.net/creative_resizer?appName=Cluster0&connectTimeoutMS=10000&socketTimeoutMS=30000&serverSelectionTimeoutMS=10000
+
+  rabbitmq:
+    host: 192.168.100.12
+    port: 5672
+    username: heeilh3
+    password: heeil@0801!@#
+    virtual-host: heeil.h3
+
+creative:
+  worker:
+    url: http://creative-worker:5000
