@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  creative-nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: creative-nginx
+    ports:
+      - "3001:80"
+    depends_on:
+      - creative-api
+    restart: unless-stopped
+    networks:
+      - creative-net
+
   creative-api:
     build:
       context: .
