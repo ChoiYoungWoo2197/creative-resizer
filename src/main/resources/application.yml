@@ -5,6 +5,11 @@ spring:
   application:
     name: creative-resizer
 
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
   data:
     mongodb:
       uri: mongodb://localhost:27017/creative_resizer
