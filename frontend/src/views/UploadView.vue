@@ -25,13 +25,29 @@
               <div class="drop-label">클릭 또는 드래그</div>
               <div class="drop-hint">.psd 파일만</div>
             </div>
-            <div v-else class="file-row">
-              <div class="file-badge">PSD</div>
-              <div class="file-meta">
-                <div class="file-name">{{ form.psdFile.name }}</div>
-                <div class="file-size">{{ (form.psdFile.size / 1024 / 1024).toFixed(1) }} MB</div>
+            <div v-else class="preview-block">
+              <!-- 미리보기 이미지 -->
+              <div class="preview-img-wrap">
+                <div v-if="previewLoading" class="preview-skeleton">
+                  <span class="preview-spin" />
+                  <span>미리보기 생성 중...</span>
+                </div>
+                <div v-else-if="previewError" class="preview-fallback">
+                  <div class="fallback-badge">PSD</div>
+                  <div class="fallback-text">미리보기 불가</div>
+                </div>
+                <img v-else-if="previewUrl" :src="previewUrl" class="preview-img" alt="PSD 미리보기" />
               </div>
-              <button class="file-change" @click="form.psdFile = null">변경</button>
+              <!-- 파일 정보 + 변경 -->
+              <div class="file-info-row">
+                <div class="file-meta">
+                  <div class="file-name">{{ form.psdFile.name }}</div>
+                  <div class="file-size">{{ (form.psdFile.size / 1024 / 1024).toFixed(1) }} MB
+                    <span v-if="previewSize"> · {{ previewSize }}</span>
+                  </div>
+                </div>
+                <button class="file-change" @click="clearFile">변경</button>
+              </div>
             </div>
 
             <div class="field-stack">
@@ -175,6 +191,8 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { readPsd } from 'ag-psd'
+import 'ag-psd/initialize-canvas'
 import { uploadPsd, listSpecs } from '../api/banner.js'
 
 const loading      = ref(false)
@@ -183,6 +201,11 @@ const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
 const dragover     = ref(false)
+
+const previewUrl     = ref(null)
+const previewLoading = ref(false)
+const previewError   = ref(false)
+const previewSize    = ref('')
 
 const uploadOpen = ref(true)
 const mediaOpen  = ref(true)
@@ -282,15 +305,43 @@ function tagStyle(platform) {
   return { background: cfg.tagBg ?? '#F2F4F6', color: cfg.color ?? '#6B7684' }
 }
 
+function clearFile() {
+  form.psdFile   = null
+  previewUrl.value   = null
+  previewError.value = false
+  previewSize.value  = ''
+}
+
+async function loadPreview(file) {
+  previewLoading.value = true
+  previewError.value   = false
+  previewUrl.value     = null
+  previewSize.value    = ''
+  try {
+    const buffer = await file.arrayBuffer()
+    const psd = readPsd(buffer, { skipLayerImageData: true })
+    previewSize.value = `${psd.width}×${psd.height}px`
+    if (psd.canvas) {
+      previewUrl.value = psd.canvas.toDataURL('image/png')
+    } else {
+      previewError.value = true
+    }
+  } catch {
+    previewError.value = true
+  } finally {
+    previewLoading.value = false
+  }
+}
+
 function onInputChange(e) {
   const file = e.target.files?.[0]
-  if (file) form.psdFile = file
+  if (file) { form.psdFile = file; loadPreview(file) }
 }
 
 function onDrop(e) {
   dragover.value = false
   const file = e.dataTransfer.files?.[0]
-  if (file && file.name.endsWith('.psd')) form.psdFile = file
+  if (file && file.name.endsWith('.psd')) { form.psdFile = file; loadPreview(file) }
   else ElMessage.warning('PSD 파일만 업로드 가능합니다.')
 }
 
@@ -391,9 +442,34 @@ onMounted(async () => {
 .drop-label { font-size: 13px; font-weight: 600; color: #4E5968; }
 .drop-hint  { font-size: 11px; color: #B0B8C1; margin-top: 2px; }
 
-/* file row */
-.file-row { display: flex; align-items: center; gap: 10px; padding: 10px 0 12px; }
-.file-badge { background: #4285F4; color: #fff; font-size: 10px; font-weight: 700; padding: 3px 6px; border-radius: 4px; flex-shrink: 0; }
+/* preview block */
+.preview-block { margin-bottom: 12px; }
+
+.preview-img-wrap {
+  width: 100%; border-radius: 10px; overflow: hidden;
+  background: #F2F4F6; margin-bottom: 10px;
+  min-height: 100px; display: flex; align-items: center; justify-content: center;
+}
+.preview-img {
+  width: 100%; display: block;
+  border-radius: 10px; object-fit: contain;
+}
+.preview-skeleton {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 24px; color: #8B95A1; font-size: 12px;
+}
+.preview-spin {
+  width: 20px; height: 20px;
+  border: 2px solid #E5E8EB; border-top-color: #3182F6;
+  border-radius: 50%; animation: spin 0.7s linear infinite; display: block;
+}
+.preview-fallback {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px;
+}
+.fallback-badge { background: #4285F4; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 4px; }
+.fallback-text  { font-size: 11px; color: #B0B8C1; }
+
+.file-info-row { display: flex; align-items: center; gap: 10px; }
 .file-meta  { flex: 1; min-width: 0; }
 .file-name  { font-size: 12px; font-weight: 600; color: #333D4B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-size  { font-size: 11px; color: #8B95A1; margin-top: 1px; }
