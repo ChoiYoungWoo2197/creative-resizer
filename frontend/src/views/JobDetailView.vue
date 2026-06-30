@@ -78,7 +78,7 @@
               <div class="img-meta">
                 <span>{{ r.width }} × {{ r.height }}</span>
                 <span v-if="r.fileSize"> · {{ fmtSize(r.fileSize) }}</span>
-                <span v-if="job.resizeMode" class="mode-badge"> · {{ job.resizeMode }}</span>
+                <span v-if="job.resizeMode" class="mode-badge"> · {{ job.resizeMode }}{{ job.resizeMode === 'smart-fit' && job.smartFitStrength ? ' / ' + strengthLabel[job.smartFitStrength] : '' }}</span>
                 <span class="valid-badge" :class="r.valid === false ? 'invalid' : 'ok'">
                   {{ r.valid === false ? '규격 불일치' : '정상' }}
                 </span>
@@ -105,6 +105,8 @@ const router = useRouter()
 const job = ref(null)
 const isPolling = ref(false)
 let pollTimer = null
+
+const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움' }
 
 const MEDIA_LABELS = {
   google: 'Google', meta: 'Meta', naver: 'Naver',
