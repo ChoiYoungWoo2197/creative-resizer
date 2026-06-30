@@ -35,7 +35,9 @@ public class BannerService {
     private String uploadDir;
 
     public BannerJob submit(MultipartFile psdFile, String advertiser, String campaignName,
-                            List<String> specIds, String resizeMode, String outputFormat) throws IOException {
+                            List<String> specIds, String resizeMode, String smartFitStrength,
+                            String outputFormat) throws IOException {
+        if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
 
         String filename = UUID.randomUUID() + "_" + psdFile.getOriginalFilename();
         File dest = new File(uploadDir, filename);
@@ -52,6 +54,7 @@ public class BannerService {
         job.setTargetMedia(targetMedia);
         job.setSpecIds(specIds);
         job.setResizeMode(resizeMode);
+        job.setSmartFitStrength(smartFitStrength);
         job.setOutputFormat(outputFormat);
         job.setPsdPath(dest.getAbsolutePath());
         job.setStatus("pending");
@@ -64,6 +67,7 @@ public class BannerService {
                 .specIds(specIds)
                 .targetMedia(targetMedia)
                 .resizeMode(resizeMode)
+                .smartFitStrength(smartFitStrength)
                 .outputFormat(outputFormat)
                 .build();
 
@@ -104,6 +108,7 @@ public class BannerService {
                 .psdPath(message.getPsdPath())
                 .specs(specItems)
                 .resizeMode(message.getResizeMode())
+                .smartFitStrength(message.getSmartFitStrength())
                 .outputFormat(message.getOutputFormat())
                 .build();
 

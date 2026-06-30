@@ -18,7 +18,8 @@ public class BannerJob {
     private String campaignName;
     private List<String> targetMedia;
     private List<String> specIds;
-    private String resizeMode;       // cover / contain / blur-bg
+    private String resizeMode;        // cover / contain / blur-bg / smart-fit
+    private String smartFitStrength; // safe / balanced / fill (smart-fit 전용)
     private String outputFormat;     // png / jpg / webp
 
     private String status;           // pending / processing / done / fail

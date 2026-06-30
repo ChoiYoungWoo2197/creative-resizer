@@ -13,6 +13,7 @@ public class WorkerRequest {
     private String psdPath;
     private List<SpecItem> specs;
     private String resizeMode;
+    private String smartFitStrength;
     private String outputFormat;
 
     @Data

@@ -18,5 +18,6 @@ public class BannerMessage {
     private List<String> targetMedia;
     private List<String> specIds;
     private String resizeMode;
+    private String smartFitStrength;
     private String outputFormat;
 }
