@@ -2,6 +2,7 @@ package com.h3.creative.service;
 
 import com.h3.creative.domain.BannerJob;
 import com.h3.creative.domain.BannerSpec;
+import java.util.ArrayList;
 import com.h3.creative.mongo.BannerMongoService;
 import com.h3.creative.mongo.SpecMongoService;
 import com.h3.creative.queue.message.BannerMessage;
@@ -91,7 +92,8 @@ public class BannerService {
         List<WorkerRequest.SpecItem> specItems = specs.stream()
                 .map(s -> WorkerRequest.SpecItem.builder()
                         .media(s.getMedia())
-                        .placementName(s.getPlacementName())
+                        .name(s.getPlacementName())
+                        .slug(s.getSlug() != null ? s.getSlug() : "")
                         .width(s.getWidth())
                         .height(s.getHeight())
                         .build())
@@ -109,7 +111,20 @@ public class BannerService {
 
         if (response.isSuccess()) {
             log.info("Job done={} zip={} count={}", jobId, response.getZipPath(), response.getCount());
-            bannerMongoService.updateDone(jobId, response.getZipPath());
+            List<BannerJob.BannerResult> results = response.getResults() != null
+                    ? response.getResults().stream().map(r -> {
+                        BannerJob.BannerResult br = new BannerJob.BannerResult();
+                        br.setMedia(r.getMedia());
+                        br.setName(r.getName());
+                        br.setSlug(r.getSlug());
+                        br.setWidth(r.getWidth());
+                        br.setHeight(r.getHeight());
+                        br.setFileName(r.getFileName());
+                        br.setFilePath(r.getFilePath());
+                        return br;
+                    }).toList()
+                    : List.of();
+            bannerMongoService.updateDone(jobId, response.getZipPath(), results);
         } else {
             log.error("Job failed={} error={}", jobId, response.getError());
             bannerMongoService.updateFail(jobId, response.getError());

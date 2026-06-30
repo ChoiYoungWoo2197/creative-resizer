@@ -49,6 +49,31 @@ public class BannerController {
         return ResponseEntity.ok(bannerService.listJobs());
     }
 
+    @GetMapping("/job/{id}/preview/{filename:.+}")
+    public ResponseEntity<Resource> preview(@PathVariable String id, @PathVariable String filename) {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || job.getResults() == null) return ResponseEntity.notFound().build();
+
+        BannerJob.BannerResult result = job.getResults().stream()
+                .filter(r -> filename.equals(r.getFileName()))
+                .findFirst().orElse(null);
+
+        if (result == null) return ResponseEntity.notFound().build();
+
+        File file = new File(result.getFilePath());
+        if (!file.exists()) return ResponseEntity.notFound().build();
+
+        MediaType mediaType = filename.endsWith(".jpg") || filename.endsWith(".jpeg")
+                ? MediaType.IMAGE_JPEG
+                : filename.endsWith(".webp")
+                        ? MediaType.parseMediaType("image/webp")
+                        : MediaType.IMAGE_PNG;
+
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .body(new FileSystemResource(file));
+    }
+
     @GetMapping("/job/{id}/download")
     public ResponseEntity<Resource> download(@PathVariable String id) {
         BannerJob job = bannerService.getJob(id);

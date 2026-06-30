@@ -1,6 +1,5 @@
 import os
 import zipfile
-import uuid
 from flask import Flask, request, jsonify
 import resizer
 
@@ -30,9 +29,15 @@ def generate():
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
 
     try:
-        output_files = resizer.generate(psd_path, specs, resize_mode, output_format, job_output_dir)
-        zip_path = _make_zip(job_id, output_files)
-        return jsonify({"jobId": job_id, "zipPath": zip_path, "count": len(output_files)})
+        result_items = resizer.generate(psd_path, specs, resize_mode, output_format, job_output_dir)
+        file_paths = [r["filePath"] for r in result_items]
+        zip_path = _make_zip(job_id, file_paths)
+        return jsonify({
+            "jobId": job_id,
+            "zipPath": zip_path,
+            "count": len(result_items),
+            "results": result_items,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

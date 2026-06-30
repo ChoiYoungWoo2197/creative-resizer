@@ -19,7 +19,8 @@ public class WorkerRequest {
     @Builder
     public static class SpecItem {
         private String media;
-        private String placementName;
+        private String name;   // 한글 지면명
+        private String slug;   // 영문 파일명용
         private int width;
         private int height;
     }

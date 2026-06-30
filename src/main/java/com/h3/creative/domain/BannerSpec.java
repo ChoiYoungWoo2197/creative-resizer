@@ -12,7 +12,8 @@ public class BannerSpec {
     private String id;
 
     private String media;           // google / meta / naver / kakao / linkedin / tiktok
-    private String placementName;   // 디스플레이, 피드, 스토리 등
+    private String placementName;   // 한글 지면명
+    private String slug;            // 영문 식별자 (파일명용)
     private int width;
     private int height;
     private String aspectRatio;

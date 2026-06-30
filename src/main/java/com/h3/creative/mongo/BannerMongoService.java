@@ -39,11 +39,12 @@ public class BannerMongoService {
         mongoTemplate.updateFirst(query, update, BannerJob.class);
     }
 
-    public void updateDone(String id, String zipPath) {
+    public void updateDone(String id, String zipPath, List<BannerJob.BannerResult> results) {
         Query query = Query.query(Criteria.where("id").is(id));
         Update update = new Update()
                 .set("status", "done")
                 .set("zipPath", zipPath)
+                .set("results", results)
                 .set("updatedAt", LocalDateTime.now());
         mongoTemplate.updateFirst(query, update, BannerJob.class);
     }

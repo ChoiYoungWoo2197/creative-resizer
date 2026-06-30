@@ -243,6 +243,8 @@ import { ElMessage } from 'element-plus'
 import { readPsd } from 'ag-psd'
 import 'ag-psd/initialize-canvas'
 import { uploadPsd, listSpecs } from '../api/banner.js'
+import { useRouter } from 'vue-router'
+const router = useRouter()
 
 const loading      = ref(false)
 const result       = ref(null)
@@ -416,9 +418,7 @@ async function submit() {
   loading.value = true
   try {
     const { data } = await uploadPsd(fd)
-    result.value = data
-    ElMessage.success('작업이 접수됐습니다.')
-    setTimeout(() => { result.value = null }, 5000)
+    router.push(`/job/${data.id}`)
   } catch (e) {
     ElMessage.error('업로드 실패: ' + (e.response?.data?.message ?? e.message))
   } finally { loading.value = false }

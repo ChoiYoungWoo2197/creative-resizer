@@ -106,7 +106,7 @@
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
           <span class="c-dl">다운로드</span>
         </div>
-        <div v-for="job in paginated" :key="job.id" class="tbl-row">
+        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" @click="goDetail(job.id)">
           <span class="c-id">
             <span class="job-id">{{ job.id.slice(0, 10) }}...</span>
           </span>
@@ -119,11 +119,10 @@
             <span class="badge" :class="job.status">{{ statusLabel(job.status) }}</span>
           </span>
           <span class="c-date gray">{{ formatDate(job.createdAt) }}</span>
-          <span class="c-dl">
+          <span class="c-dl" @click.stop>
             <button v-if="job.status === 'done'" class="dl-btn" @click="download(job)">ZIP ↓</button>
             <span v-else-if="job.status === 'fail'" class="err-txt" :title="job.errorMessage">오류</span>
             <span v-else class="dash">—</span>
-            <button class="more-btn">⋮</button>
           </span>
         </div>
       </template>
@@ -152,8 +151,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listJobs, downloadZip } from '../api/banner.js'
+
+const router = useRouter()
+const goDetail = (id) => router.push(`/job/${id}`)
 
 const jobs    = ref([])
 const loading = ref(false)
@@ -357,6 +360,8 @@ onMounted(load)
 }
 .tbl-row:last-child { border-bottom: none; }
 .tbl-row:hover { background: #FAFBFF; }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover { background: #F5F3FF; }
 
 .job-id { font-family: monospace; font-size: 12px; color: #6B7684; }
 .fw { font-weight: 500; }

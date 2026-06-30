@@ -35,7 +35,6 @@ def load_psd_as_image(psd_path: str) -> Image.Image:
 
 
 def resize_cover(img: Image.Image, width: int, height: int) -> Image.Image:
-    """꽉 채우기 — 잘릴 수 있음"""
     src_ratio = img.width / img.height
     dst_ratio = width / height
 
@@ -53,7 +52,6 @@ def resize_cover(img: Image.Image, width: int, height: int) -> Image.Image:
 
 
 def resize_contain(img: Image.Image, width: int, height: int) -> Image.Image:
-    """전체 보이기 — 여백 생길 수 있음"""
     img = img.copy()
     img.thumbnail((width, height), Image.LANCZOS)
     canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
@@ -63,7 +61,6 @@ def resize_contain(img: Image.Image, width: int, height: int) -> Image.Image:
 
 
 def resize_blur_bg(img: Image.Image, width: int, height: int) -> Image.Image:
-    """원본 비율 유지 + 남은 영역 블러 배경"""
     from PIL import ImageFilter
 
     bg = img.copy().resize((width, height), Image.LANCZOS)
@@ -89,7 +86,7 @@ RESIZE_FUNCS = {
 
 
 def generate(psd_path: str, specs: list[dict], resize_mode: str,
-             output_format: str, output_dir: str) -> list[str]:
+             output_format: str, output_dir: str) -> list[dict]:
     img = load_psd_as_image(psd_path)
     resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
     results = []
@@ -98,6 +95,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         media = spec["media"]
         w = spec["width"]
         h = spec["height"]
+        slug = spec.get("slug", "")
+        name = spec.get("name", "")
 
         resized = resize_fn(img, w, h)
 
@@ -107,10 +106,20 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         else:
             ext = output_format
 
-        filename = f"{media}_{w}x{h}.{ext}"
+        slug_part = f"_{slug}" if slug else ""
+        filename = f"{media}{slug_part}_{w}x{h}.{ext}"
         out_path = os.path.join(output_dir, filename)
         os.makedirs(output_dir, exist_ok=True)
         resized.save(out_path)
-        results.append(out_path)
+
+        results.append({
+            "media": media,
+            "name": name,
+            "slug": slug,
+            "width": w,
+            "height": h,
+            "fileName": filename,
+            "filePath": out_path,
+        })
 
     return results
