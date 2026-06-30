@@ -18,4 +18,5 @@ public class BannerSpec {
     private int height;
     private String aspectRatio;
     private boolean active;
+    private int sortOrder;
 }

@@ -2,6 +2,7 @@ package com.h3.creative.mongo;
 
 import com.h3.creative.domain.BannerSpec;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -16,7 +17,8 @@ public class SpecMongoService {
     private final MongoTemplate mongoTemplate;
 
     public List<BannerSpec> findAll() {
-        return mongoTemplate.findAll(BannerSpec.class);
+        Query query = new Query().with(Sort.by(Sort.Direction.ASC, "sortOrder"));
+        return mongoTemplate.find(query, BannerSpec.class);
     }
 
     public List<BannerSpec> findByMedia(String media) {

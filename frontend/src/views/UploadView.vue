@@ -213,7 +213,7 @@
                 </div>
                 <div class="hcard-info">
                   <button class="hcard-x" @click="removeSpec(spec.id)">×</button>
-                  <div class="hcard-name">{{ platformCfg[platform]?.label }}_{{ spec.placementName }} - {{ spec.width }}×{{ spec.height }}</div>
+                  <div class="hcard-name">{{ formatSpecLabel(spec) }}</div>
                   <div class="hcard-dim">{{ spec.width }}×{{ spec.height }}px</div>
                   <span class="hcard-tag" :style="tagStyle(platform)">{{ (platformCfg[platform]?.label ?? platform).toUpperCase() }}</span>
                   <div class="hcard-meta">
@@ -284,13 +284,15 @@ const form = reactive({
   psdFile: null, advertiser: '', campaignName: '', resizeMode: 'smart-fit', smartFitStrength: 'balanced', outputFormat: 'png',
 })
 
-const platformOrder = ['google', 'meta', 'naver', 'kakao', 'linkedin', 'tiktok', 'line']
+const platformOrder = ['google', 'naver', 'meta', 'criteo', 'mobion', 'kakao', 'linkedin', 'tiktok', 'line']
 
 const platformCfg = {
   google:   { label: 'Google',   region: 'global', color: '#4285F4', tagBg: '#EAF1FE' },
   meta:     { label: 'Meta',     region: 'global', color: '#1877F2', tagBg: '#E8F0FD' },
   naver:    { label: 'Naver',    region: 'korea',  color: '#03C75A', tagBg: '#E6F9EE' },
   kakao:    { label: 'Kakao',    region: 'korea',  color: '#FACC15', tagBg: '#FEF9E7' },
+  criteo:   { label: 'Criteo',   region: 'global', color: '#FF4B33', tagBg: '#FFF0EE' },
+  mobion:   { label: 'Mobion',   region: 'korea',  color: '#0063CC', tagBg: '#E8F0FD' },
   linkedin: { label: 'LinkedIn', region: 'global', color: '#0A66C2', tagBg: '#E8F0FA' },
   tiktok:   { label: 'TikTok',  region: 'global', color: '#191F28', tagBg: '#F2F4F6' },
   line:     { label: 'LINE',     region: 'japan',  color: '#06C755', tagBg: '#E6F9EE' },
@@ -376,6 +378,12 @@ function getOrientation(w, h) {
   const r = w / h
   if (r >= 0.9 && r <= 1.1) return '정사각형'
   return r > 1 ? '가로형' : '세로형'
+}
+
+function formatSpecLabel(spec) {
+  const size = `${spec.width}×${spec.height}`
+  const name = spec.placementName || ''
+  return name ? `${size} (${name})` : size
 }
 
 function getPreviewType(spec) {
