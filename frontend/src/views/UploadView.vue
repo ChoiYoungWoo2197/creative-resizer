@@ -198,9 +198,17 @@
             <div class="hcards-grid">
               <div v-for="spec in selectedByPlatform(platform)" :key="spec.id" class="hcard">
                 <div class="hcard-preview">
-                  <img v-if="previewUrl" :src="previewUrl" class="hcard-img" :alt="spec.placementName" />
-                  <div v-else class="hcard-ph" :style="{ background: platformCfg[platform]?.tagBg }">
-                    <span class="hcard-ph-txt">{{ spec.width }}×{{ spec.height }}</span>
+                  <div class="spec-preview-canvas">
+                    <div
+                      class="spec-preview-frame"
+                      :class="getPreviewType(spec)"
+                      :style="{ aspectRatio: `${spec.width} / ${spec.height}` }"
+                    >
+                      <img v-if="previewUrl" :src="previewUrl" class="spec-preview-img" :alt="spec.placementName" />
+                      <div v-else class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
+                        <span>{{ spec.width }}×{{ spec.height }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div class="hcard-info">
@@ -365,6 +373,15 @@ function getOrientation(w, h) {
   const r = w / h
   if (r >= 0.9 && r <= 1.1) return '정사각형'
   return r > 1 ? '가로형' : '세로형'
+}
+
+function getPreviewType(spec) {
+  const ratio = spec.width / spec.height
+  if (ratio >= 5)    return 'ultra-wide'
+  if (ratio >= 1.6)  return 'wide'
+  if (ratio <= 0.45) return 'tall'
+  if (ratio <= 0.85) return 'vertical'
+  return 'square'
 }
 
 function getSimpleRatio(w, h) {
@@ -654,10 +671,34 @@ onMounted(async () => {
 }
 .hcard:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 
-.hcard-preview { width: 155px; flex-shrink: 0; overflow: hidden; background: #F2F4F6; }
-.hcard-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.hcard-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-.hcard-ph-txt { font-size: 11px; font-weight: 600; color: #8B95A1; }
+.hcard-preview {
+  width: 155px; flex-shrink: 0; overflow: hidden; background: #F2F4F6;
+  display: flex; align-items: center; justify-content: center;
+}
+.spec-preview-canvas {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  padding: 10px; box-sizing: border-box;
+}
+.spec-preview-frame {
+  max-width: 133px; max-height: 108px;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 7px; overflow: hidden;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.1);
+  min-height: 20px;
+}
+.spec-preview-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.spec-preview-frame.ultra-wide { width: 133px; }
+.spec-preview-frame.wide       { width: 133px; }
+.spec-preview-frame.square     { width: 90px; }
+.spec-preview-frame.vertical   { height: 108px; width: auto; }
+.spec-preview-frame.tall       { height: 108px; width: auto; }
+.spec-preview-ph {
+  width: 100%; height: 100%; min-width: 40px; min-height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: #8B95A1; font-weight: 600;
+}
 
 .hcard-info { flex: 1; padding: 14px 12px 12px; position: relative; min-width: 0; }
 .hcard-x {
