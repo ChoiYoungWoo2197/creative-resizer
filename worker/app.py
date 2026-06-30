@@ -20,7 +20,8 @@ def generate():
     job_id = data.get("jobId")
     psd_path = data.get("psdPath")
     specs = data.get("specs", [])
-    resize_mode = data.get("resizeMode", "cover")
+    resize_mode = data.get("resizeMode", "smart-fit")
+    smart_fit_strength = data.get("smartFitStrength", "balanced")
     output_format = data.get("outputFormat", "png")
 
     if not psd_path or not os.path.exists(psd_path):
@@ -29,7 +30,7 @@ def generate():
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
 
     try:
-        result_items = resizer.generate(psd_path, specs, resize_mode, output_format, job_output_dir)
+        result_items = resizer.generate(psd_path, specs, resize_mode, output_format, job_output_dir, smart_fit_strength)
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)
         return jsonify({

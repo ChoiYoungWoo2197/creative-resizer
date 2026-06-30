@@ -78,21 +78,40 @@ def resize_blur_bg(img: Image.Image, width: int, height: int) -> Image.Image:
     return bg
 
 
-def get_smart_zoom(src_w: int, src_h: int, dst_w: int, dst_h: int) -> float:
+def get_smart_zoom(src_w: int, src_h: int, dst_w: int, dst_h: int, strength: str = "balanced") -> float:
     src_ratio = src_w / src_h
     dst_ratio = dst_w / dst_h
     ratio_gap = abs(src_ratio - dst_ratio) / max(src_ratio, dst_ratio)
 
+    if strength == "safe":
+        if ratio_gap > 0.55:
+            return 1.00
+        if ratio_gap > 0.35:
+            return 1.02
+        if ratio_gap > 0.20:
+            return 1.04
+        return 1.06
+
+    if strength == "fill":
+        if ratio_gap > 0.55:
+            return 1.08
+        if ratio_gap > 0.35:
+            return 1.14
+        if ratio_gap > 0.20:
+            return 1.20
+        return 1.25
+
+    # balanced (default)
     if ratio_gap > 0.55:
-        return 1.00
+        return 1.03
     if ratio_gap > 0.35:
-        return 1.04
-    if ratio_gap > 0.20:
         return 1.08
-    return 1.12
+    if ratio_gap > 0.20:
+        return 1.12
+    return 1.16
 
 
-def resize_smart_fit(img: Image.Image, width: int, height: int) -> Image.Image:
+def resize_smart_fit(img: Image.Image, width: int, height: int, strength: str = "balanced") -> Image.Image:
     from PIL import ImageFilter, ImageEnhance
 
     src = img.copy()
@@ -107,7 +126,7 @@ def resize_smart_fit(img: Image.Image, width: int, height: int) -> Image.Image:
 
     # 전경: contain 기준 축소 + 비율 차이에 따른 adaptive zoom
     scale = min(width / src.width, height / src.height)
-    scale *= get_smart_zoom(src.width, src.height, width, height)
+    scale *= get_smart_zoom(src.width, src.height, width, height, strength)
 
     new_w = int(src.width * scale)
     new_h = int(src.height * scale)
@@ -139,7 +158,7 @@ RESIZE_FUNCS = {
 
 
 def generate(psd_path: str, specs: list[dict], resize_mode: str,
-             output_format: str, output_dir: str) -> list[dict]:
+             output_format: str, output_dir: str, smart_fit_strength: str = "balanced") -> list[dict]:
     img = load_psd_as_image(psd_path)
     resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
     results = []
@@ -151,7 +170,10 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         slug = spec.get("slug", "")
         name = spec.get("name", "")
 
-        resized = resize_fn(img, w, h)
+        if resize_mode == "smart-fit":
+            resized = resize_smart_fit(img, w, h, smart_fit_strength)
+        else:
+            resized = resize_fn(img, w, h)
 
         if output_format in ("jpg", "jpeg"):
             resized = resized.convert("RGB")
