@@ -5,7 +5,7 @@
     <aside class="sidebar">
       <div class="sidebar-scroll">
 
-        <!-- Upload section -->
+        <!-- Upload -->
         <div class="sec">
           <div class="sec-head" @click="uploadOpen = !uploadOpen">
             <span class="sec-title">배너 업로드 <span class="sec-hint">(PSD)</span></span>
@@ -13,83 +13,78 @@
           </div>
           <div v-show="uploadOpen" class="sec-body">
             <div v-if="!form.psdFile"
-              class="drop-zone"
-              :class="{ dragover }"
+              class="drop-zone" :class="{ dragover }"
               @click="$refs.fileInput.click()"
               @dragover.prevent="dragover = true"
               @dragleave.prevent="dragover = false"
               @drop.prevent="onDrop"
             >
               <input ref="fileInput" type="file" accept=".psd" style="display:none" @change="onInputChange" />
-              <div class="drop-icon">↑</div>
+              <div class="drop-ico-wrap">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="drop-svg">
+                  <path d="M12 15V5M12 5L8.5 8.5M12 5L15.5 8.5" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M3 18C3 19.657 4.343 21 6 21H18C19.657 21 21 19.657 21 18" stroke="#7C3AED" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
               <div class="drop-label">클릭 또는 드래그</div>
               <div class="drop-hint">.psd 파일만</div>
             </div>
             <div v-else class="preview-block">
-              <!-- 미리보기 이미지 -->
               <div class="preview-img-wrap">
                 <div v-if="previewLoading" class="preview-skeleton">
-                  <span class="preview-spin" />
-                  <span>미리보기 생성 중...</span>
+                  <span class="preview-spin" /><span>미리보기 생성 중...</span>
                 </div>
                 <div v-else-if="previewError" class="preview-fallback">
-                  <div class="fallback-badge">PSD</div>
-                  <div class="fallback-text">미리보기 불가</div>
+                  <div class="fallback-badge">PSD</div><div class="fallback-text">미리보기 불가</div>
                 </div>
                 <img v-else-if="previewUrl" :src="previewUrl" class="preview-img" alt="PSD 미리보기" />
               </div>
-              <!-- 파일 정보 + 변경 -->
               <div class="file-info-row">
                 <div class="file-meta">
                   <div class="file-name">{{ form.psdFile.name }}</div>
-                  <div class="file-size">{{ (form.psdFile.size / 1024 / 1024).toFixed(1) }} MB
-                    <span v-if="previewSize"> · {{ previewSize }}</span>
-                  </div>
+                  <div class="file-size">{{ (form.psdFile.size/1024/1024).toFixed(1) }} MB<span v-if="previewSize"> · {{ previewSize }}</span></div>
                 </div>
                 <button class="file-change" @click="clearFile">변경</button>
               </div>
             </div>
-
             <div class="field-stack">
-              <input v-model="form.advertiser" class="side-input" placeholder="광고주명" />
-              <input v-model="form.campaignName" class="side-input" placeholder="캠페인명" />
+              <div class="input-wrap">
+                <svg class="input-ico" width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#B0B8C1" stroke-width="2"/><path d="M4 20c0-4 3.582-7 8-7s8 3 8 7" stroke="#B0B8C1" stroke-width="2" stroke-linecap="round"/></svg>
+                <input v-model="form.advertiser" class="side-input" placeholder="광고주명" />
+              </div>
+              <div class="input-wrap">
+                <svg class="input-ico" width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#B0B8C1" stroke-width="2"/><path d="M3 10h18M8 3v3M16 3v3" stroke="#B0B8C1" stroke-width="2" stroke-linecap="round"/></svg>
+                <input v-model="form.campaignName" class="side-input" placeholder="캠페인명" />
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Media guide section -->
+        <!-- Media guide -->
         <div class="sec">
           <div class="sec-head" @click="mediaOpen = !mediaOpen">
-            <span class="sec-title">매체 가이드</span>
+            <span class="sec-title">매체 가이드 <span class="info-badge">ⓘ</span></span>
             <span class="chevron" :class="{ up: mediaOpen }">›</span>
           </div>
           <div v-show="mediaOpen">
             <div v-if="specsLoading" class="side-loading">불러오는 중...</div>
-            <div v-else-if="Object.keys(groupedSpecs).length === 0" class="side-loading">규격 없음</div>
             <template v-else>
               <div v-for="platform in platformOrder.filter(p => groupedSpecs[p])" :key="platform">
-                <!-- Platform row -->
                 <div class="pf-row" @click="toggleExpand(platform)">
-                  <input type="checkbox"
-                    class="check"
+                  <input type="checkbox" class="check"
                     :checked="isPlatformAllSelected(platform)"
                     :indeterminate.prop="isPlatformPartial(platform)"
-                    @change.stop="togglePlatform(platform)"
-                    @click.stop
-                  />
+                    @change.stop="togglePlatform(platform)" @click.stop />
                   <span class="pf-dot" :style="{ background: platformCfg[platform]?.color }" />
                   <span class="pf-name">{{ platformCfg[platform]?.label ?? platform }}</span>
                   <span class="pf-region">{{ platformCfg[platform]?.region }}</span>
                   <span class="pf-cnt">({{ platformSelectedCount(platform) }}/{{ groupedSpecs[platform].length }})</span>
-                  <span class="pf-chevron" :class="{ open: expandedPlatforms[platform] }">›</span>
+                  <span class="pf-chv" :class="{ open: expandedPlatforms[platform] }">›</span>
                 </div>
-                <!-- Spec items -->
                 <div v-show="expandedPlatforms[platform]" class="spec-items">
-                  <div
-                    v-for="spec in groupedSpecs[platform]" :key="spec.id"
+                  <div v-for="spec in groupedSpecs[platform]" :key="spec.id"
                     class="spec-item" :class="{ on: selectedSpecIds.includes(spec.id) }"
-                    @click="toggleSpec(spec.id)"
-                  >
+                    @click="toggleSpec(spec.id)">
                     <input type="checkbox" class="check sm" :checked="selectedSpecIds.includes(spec.id)" @click.stop @change="toggleSpec(spec.id)" />
                     <span class="sp-name">{{ spec.placementName }}</span>
                     <span class="sp-dim">{{ spec.width }}×{{ spec.height }}</span>
@@ -100,7 +95,7 @@
           </div>
         </div>
 
-        <!-- Advanced options -->
+        <!-- Advanced -->
         <div class="sec">
           <div class="sec-head" @click="advOpen = !advOpen">
             <span class="sec-title">고급 옵션</span>
@@ -126,65 +121,119 @@
           </div>
         </div>
 
-      </div><!-- /sidebar-scroll -->
+      </div>
 
-      <!-- Sidebar footer (fixed) -->
       <div class="sidebar-foot">
-        <div class="foot-info">
-          선택된 사이즈 <b>{{ selectedSpecIds.length }}</b>개
-        </div>
-        <button
-          class="gen-btn"
-          :disabled="loading || selectedSpecIds.length === 0 || !form.psdFile || !form.advertiser || !form.campaignName"
-          @click="submit"
-        >
+        <div class="foot-info">선택된 사이즈 <b>{{ selectedSpecIds.length }}</b>개</div>
+        <button class="gen-btn"
+          :disabled="loading || !selectedSpecIds.length || !form.psdFile || !form.advertiser || !form.campaignName"
+          @click="submit">
           <span v-if="loading" class="spinner" />
+          <span v-else class="gen-star">✦</span>
           {{ loading ? '생성 중...' : '배너 생성' }}
         </button>
       </div>
     </aside>
 
     <!-- ======== RIGHT PANEL ======== -->
-    <main class="right-panel">
-      <!-- Empty -->
-      <div v-if="selectedSpecIds.length === 0" class="empty">
-        <div class="empty-icon">☰</div>
-        <div class="empty-title">사이즈를 선택하세요</div>
-        <div class="empty-desc">왼쪽 매체 가이드에서 원하는 사이즈를 선택하면 여기에 표시됩니다.</div>
-      </div>
+    <div class="right-panel">
+      <div class="right-scroll">
 
-      <template v-else>
-        <div class="right-top">
-          <span class="right-cnt">선택된 사이즈 {{ selectedSpecIds.length }}개</span>
-          <button class="del-all" @click="selectedSpecIds = []">🗑 일괄삭제</button>
-        </div>
-
-        <div v-for="platform in activePlatforms" :key="platform" class="right-group">
-          <div class="group-head">
-            <span class="group-dot" :style="{ background: platformCfg[platform]?.color }" />
-            <span class="group-name">{{ platformCfg[platform]?.label ?? platform }}</span>
-            <span class="group-cnt">({{ selectedByPlatform(platform).length }}개)</span>
+        <!-- Hero row -->
+        <div class="hero-row">
+          <div class="hero-left">
+            <div class="sparkles">
+              <span class="sp sp1">✦</span>
+              <span class="sp sp2">✧</span>
+              <span class="sp sp3">✦</span>
+            </div>
+            <h1 class="hero-title">
+              선택된 사이즈 <span class="accent-num">{{ selectedSpecIds.length }}개</span>
+            </h1>
+            <p class="hero-sub">AI가 최적화된 크리에이티브를 빠르게 생성합니다.</p>
           </div>
-          <div class="cards-grid">
-            <div v-for="spec in selectedByPlatform(platform)" :key="spec.id" class="spec-card">
-              <button class="card-x" @click="removeSpec(spec.id)" title="제거">×</button>
-              <div class="card-name">{{ platformCfg[platform]?.label }}_{{ spec.placementName }} - {{ spec.width }}×{{ spec.height }}</div>
-              <div class="card-dim">{{ spec.width }}×{{ spec.height }}px</div>
-              <span class="card-tag" :style="tagStyle(platform)">{{ platformCfg[platform]?.label }}</span>
+          <div class="ai-insight-card">
+            <div class="ai-insight-head">
+              <span class="ai-star">✦</span> AI 추천 인사이트
+            </div>
+            <div class="ai-features">
+              <div v-for="f in aiFeatures" :key="f.id" class="ai-feat">
+                <span class="ai-feat-ico">{{ f.icon }}</span>
+                <div class="ai-feat-title">{{ f.title }}</div>
+                <div class="ai-feat-desc">{{ f.desc }}</div>
+              </div>
             </div>
           </div>
         </div>
-      </template>
 
-      <!-- Toast result -->
+        <!-- Empty -->
+        <div v-if="selectedSpecIds.length === 0" class="empty-hint">
+          <div class="empty-icon">☰</div>
+          <div class="empty-text">왼쪽 매체 가이드에서 사이즈를 선택하세요</div>
+        </div>
+
+        <!-- Platform groups -->
+        <template v-else>
+          <div v-for="platform in activePlatforms" :key="platform" class="pf-group">
+            <div class="pf-group-head">
+              <span class="pf-badge" :style="{ background: platformCfg[platform]?.color }">
+                {{ (platformCfg[platform]?.label ?? platform)[0] }}
+              </span>
+              <span class="pf-group-name">{{ platformCfg[platform]?.label ?? platform }}</span>
+              <span class="pf-group-cnt">{{ selectedByPlatform(platform).length }}</span>
+              <button class="desel-btn" @click="deselectPlatform(platform)">전체 해제</button>
+              <div class="view-toggle">
+                <button class="vt-btn on">⊞</button>
+                <button class="vt-btn">☰</button>
+              </div>
+            </div>
+            <div class="hcards-grid">
+              <div v-for="spec in selectedByPlatform(platform)" :key="spec.id" class="hcard">
+                <div class="hcard-preview">
+                  <img v-if="previewUrl" :src="previewUrl" class="hcard-img" :alt="spec.placementName" />
+                  <div v-else class="hcard-ph" :style="{ background: platformCfg[platform]?.tagBg }">
+                    <span class="hcard-ph-txt">{{ spec.width }}×{{ spec.height }}</span>
+                  </div>
+                </div>
+                <div class="hcard-info">
+                  <button class="hcard-x" @click="removeSpec(spec.id)">×</button>
+                  <div class="hcard-name">{{ platformCfg[platform]?.label }}_{{ spec.placementName }} - {{ spec.width }}×{{ spec.height }}</div>
+                  <div class="hcard-dim">{{ spec.width }}×{{ spec.height }}px</div>
+                  <span class="hcard-tag" :style="tagStyle(platform)">{{ (platformCfg[platform]?.label ?? platform).toUpperCase() }}</span>
+                  <div class="hcard-meta">
+                    <span class="hcard-ratio">{{ getSimpleRatio(spec.width, spec.height) }} 비율</span>
+                    <span class="hcard-orient">{{ getOrientation(spec.width, spec.height) }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+      </div>
+
+      <!-- AI bar (sticky bottom) -->
+      <div class="ai-bar">
+        <div class="ai-bar-left">
+          <div class="ai-bar-ico">✦</div>
+          <div>
+            <div class="ai-bar-title">AI가 자동으로 최적화합니다</div>
+            <div class="ai-bar-desc">선택한 모든 사이즈에 대해 요소 정렬, 텍스트 가독성, 안전 영역을 자동으로 최적화합니다.</div>
+          </div>
+        </div>
+        <button class="ai-bar-btn">⚙ 자동 최적화 설정 ∨</button>
+      </div>
+
+      <!-- Toast -->
       <transition name="toast">
         <div v-if="result" class="toast">
-          <span class="toast-check">✓</span>
+          <span class="toast-chk">✓</span>
           <span>작업 접수 완료</span>
           <button class="toast-link" @click="$router.push('/jobs')">작업 목록 →</button>
         </div>
       </transition>
-    </main>
+    </div>
+
   </div>
 </template>
 
@@ -202,22 +251,18 @@ const specsLoading = ref(true)
 const selectedSpecIds = ref([])
 const dragover     = ref(false)
 
-const previewUrl     = ref(null)
-const previewLoading = ref(false)
-const previewError   = ref(false)
-const previewSize    = ref('')
-
 const uploadOpen = ref(true)
 const mediaOpen  = ref(true)
 const advOpen    = ref(false)
 const expandedPlatforms = reactive({})
 
+const previewUrl     = ref(null)
+const previewLoading = ref(false)
+const previewError   = ref(false)
+const previewSize    = ref('')
+
 const form = reactive({
-  psdFile:      null,
-  advertiser:   '',
-  campaignName: '',
-  resizeMode:   'cover',
-  outputFormat: 'png',
+  psdFile: null, advertiser: '', campaignName: '', resizeMode: 'cover', outputFormat: 'png',
 })
 
 const platformOrder = ['google', 'meta', 'naver', 'kakao', 'linkedin', 'tiktok', 'line']
@@ -233,15 +278,17 @@ const platformCfg = {
 }
 
 const resizeOptions = [
-  { value: 'cover',   label: '꽉 채우기' },
-  { value: 'contain', label: '전체 보이기' },
-  { value: 'blur-bg', label: '블러 배경' },
+  { value: 'cover', label: '꽉 채우기' }, { value: 'contain', label: '전체 보이기' }, { value: 'blur-bg', label: '블러 배경' },
+]
+const formatOptions = [
+  { value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }, { value: 'webp', label: 'WebP' },
 ]
 
-const formatOptions = [
-  { value: 'png',  label: 'PNG' },
-  { value: 'jpg',  label: 'JPG' },
-  { value: 'webp', label: 'WebP' },
+const aiFeatures = [
+  { id: 1, icon: '⊞', title: 'AI 자동 정렬',      desc: '주요 요소를 자동으로 배치' },
+  { id: 2, icon: '⊙', title: '안전 영역 최적화',   desc: '플랫폼별 안전 영역 보장' },
+  { id: 3, icon: 'T', title: '텍스트 보정',        desc: '가독성 높은 텍스트 추천' },
+  { id: 4, icon: '✦', title: '품질 향상',          desc: '선명도 및 색감 최적화' },
 ]
 
 const groupedSpecs = computed(() => {
@@ -257,98 +304,91 @@ const activePlatforms = computed(() =>
   platformOrder.filter(p => selectedByPlatform(p).length > 0)
 )
 
-function selectedByPlatform(platform) {
+function selectedByPlatform(p) {
   const ids = new Set(selectedSpecIds.value)
-  return (groupedSpecs.value[platform] ?? []).filter(s => ids.has(s.id))
+  return (groupedSpecs.value[p] ?? []).filter(s => ids.has(s.id))
 }
-
-function platformSelectedCount(platform) {
-  return selectedByPlatform(platform).length
+function platformSelectedCount(p) { return selectedByPlatform(p).length }
+function isPlatformAllSelected(p) {
+  const sp = groupedSpecs.value[p] ?? []
+  return sp.length > 0 && sp.every(s => selectedSpecIds.value.includes(s.id))
 }
-
-function isPlatformAllSelected(platform) {
-  const specs = groupedSpecs.value[platform] ?? []
-  return specs.length > 0 && specs.every(s => selectedSpecIds.value.includes(s.id))
+function isPlatformPartial(p) {
+  const sp = groupedSpecs.value[p] ?? []
+  const n = sp.filter(s => selectedSpecIds.value.includes(s.id)).length
+  return n > 0 && n < sp.length
 }
-
-function isPlatformPartial(platform) {
-  const specs = groupedSpecs.value[platform] ?? []
-  const n = specs.filter(s => selectedSpecIds.value.includes(s.id)).length
-  return n > 0 && n < specs.length
+function togglePlatform(p) {
+  const ids = (groupedSpecs.value[p] ?? []).map(s => s.id)
+  if (isPlatformAllSelected(p)) selectedSpecIds.value = selectedSpecIds.value.filter(id => !ids.includes(id))
+  else ids.forEach(id => { if (!selectedSpecIds.value.includes(id)) selectedSpecIds.value.push(id) })
 }
-
-function togglePlatform(platform) {
-  const ids = (groupedSpecs.value[platform] ?? []).map(s => s.id)
-  if (isPlatformAllSelected(platform)) {
-    selectedSpecIds.value = selectedSpecIds.value.filter(id => !ids.includes(id))
-  } else {
-    ids.forEach(id => { if (!selectedSpecIds.value.includes(id)) selectedSpecIds.value.push(id) })
-  }
+function deselectPlatform(p) {
+  const ids = (groupedSpecs.value[p] ?? []).map(s => s.id)
+  selectedSpecIds.value = selectedSpecIds.value.filter(id => !ids.includes(id))
 }
-
-function toggleExpand(platform) {
-  expandedPlatforms[platform] = !expandedPlatforms[platform]
-}
-
+function toggleExpand(p) { expandedPlatforms[p] = !expandedPlatforms[p] }
 function toggleSpec(id) {
-  const idx = selectedSpecIds.value.indexOf(id)
-  if (idx >= 0) selectedSpecIds.value.splice(idx, 1)
+  const i = selectedSpecIds.value.indexOf(id)
+  if (i >= 0) selectedSpecIds.value.splice(i, 1)
   else selectedSpecIds.value.push(id)
 }
+function removeSpec(id) { selectedSpecIds.value = selectedSpecIds.value.filter(x => x !== id) }
 
-function removeSpec(id) {
-  selectedSpecIds.value = selectedSpecIds.value.filter(x => x !== id)
-}
-
-function tagStyle(platform) {
-  const cfg = platformCfg[platform] ?? {}
+function tagStyle(p) {
+  const cfg = platformCfg[p] ?? {}
   return { background: cfg.tagBg ?? '#F2F4F6', color: cfg.color ?? '#6B7684' }
 }
 
+function getOrientation(w, h) {
+  const r = w / h
+  if (r >= 0.9 && r <= 1.1) return '정사각형'
+  return r > 1 ? '가로형' : '세로형'
+}
+
+function getSimpleRatio(w, h) {
+  const known = [[16,9],[4,3],[1,1],[9,16],[3,4],[2,1],[3,2],[21,9],[1,2],[1,3],[3,1]]
+  const ratio = w / h
+  let best = known[0], minDiff = Infinity
+  for (const [rw, rh] of known) {
+    const d = Math.abs(ratio - rw/rh)
+    if (d < minDiff) { minDiff = d; best = [rw, rh] }
+  }
+  return `${best[0]}:${best[1]}`
+}
+
 function clearFile() {
-  form.psdFile   = null
-  previewUrl.value   = null
-  previewError.value = false
-  previewSize.value  = ''
+  form.psdFile = null
+  previewUrl.value = null; previewError.value = false; previewSize.value = ''
 }
 
 async function loadPreview(file) {
-  previewLoading.value = true
-  previewError.value   = false
-  previewUrl.value     = null
-  previewSize.value    = ''
+  previewLoading.value = true; previewError.value = false; previewUrl.value = null; previewSize.value = ''
   try {
-    const buffer = await file.arrayBuffer()
-    const psd = readPsd(buffer, { skipLayerImageData: true })
+    const buf = await file.arrayBuffer()
+    const psd = readPsd(buf, { skipLayerImageData: true })
     previewSize.value = `${psd.width}×${psd.height}px`
-    if (psd.canvas) {
-      previewUrl.value = psd.canvas.toDataURL('image/png')
-    } else {
-      previewError.value = true
-    }
-  } catch {
-    previewError.value = true
-  } finally {
-    previewLoading.value = false
-  }
+    if (psd.canvas) previewUrl.value = psd.canvas.toDataURL('image/png')
+    else previewError.value = true
+  } catch { previewError.value = true }
+  finally { previewLoading.value = false }
 }
 
 function onInputChange(e) {
-  const file = e.target.files?.[0]
-  if (file) { form.psdFile = file; loadPreview(file) }
+  const f = e.target.files?.[0]
+  if (f) { form.psdFile = f; loadPreview(f) }
 }
-
 function onDrop(e) {
   dragover.value = false
-  const file = e.dataTransfer.files?.[0]
-  if (file && file.name.endsWith('.psd')) { form.psdFile = file; loadPreview(file) }
+  const f = e.dataTransfer.files?.[0]
+  if (f && f.name.endsWith('.psd')) { form.psdFile = f; loadPreview(f) }
   else ElMessage.warning('PSD 파일만 업로드 가능합니다.')
 }
 
 async function submit() {
-  if (!form.psdFile)               return ElMessage.warning('PSD 파일을 선택해주세요.')
-  if (!form.advertiser)            return ElMessage.warning('광고주명을 입력해주세요.')
-  if (!form.campaignName)          return ElMessage.warning('캠페인명을 입력해주세요.')
+  if (!form.psdFile)              return ElMessage.warning('PSD 파일을 선택해주세요.')
+  if (!form.advertiser)           return ElMessage.warning('광고주명을 입력해주세요.')
+  if (!form.campaignName)         return ElMessage.warning('캠페인명을 입력해주세요.')
   if (!selectedSpecIds.value.length) return ElMessage.warning('사이즈를 1개 이상 선택해주세요.')
 
   const fd = new FormData()
@@ -367,162 +407,116 @@ async function submit() {
     setTimeout(() => { result.value = null }, 5000)
   } catch (e) {
     ElMessage.error('업로드 실패: ' + (e.response?.data?.message ?? e.message))
-  } finally {
-    loading.value = false
-  }
+  } finally { loading.value = false }
 }
 
 onMounted(async () => {
   try {
     const { data } = await listSpecs()
     allSpecs.value = data
-    for (const spec of data) {
-      if (!(spec.media in expandedPlatforms)) expandedPlatforms[spec.media] = false
-    }
-  } catch {
-    ElMessage.error('규격 로딩 실패')
-  } finally {
-    specsLoading.value = false
-  }
+    for (const s of data) { if (!(s.media in expandedPlatforms)) expandedPlatforms[s.media] = false }
+  } catch { ElMessage.error('규격 로딩 실패') }
+  finally { specsLoading.value = false }
 })
 </script>
 
 <style scoped>
 /* ===== layout ===== */
-.two-panel {
-  display: flex;
-  height: calc(100vh - 56px);
-  overflow: hidden;
-}
+.two-panel { display: flex; height: calc(100vh - 56px); overflow: hidden; }
 
 /* ===== sidebar ===== */
 .sidebar {
-  width: 310px;
-  flex-shrink: 0;
-  background: #fff;
-  border-right: 1px solid #E5E8EB;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  width: 300px; flex-shrink: 0; background: #fff;
+  border-right: 1px solid #EAEDF0; display: flex; flex-direction: column; overflow: hidden;
 }
-
-.sidebar-scroll {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-.sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.sidebar-scroll { flex: 1; overflow-y: auto; }
+.sidebar-scroll::-webkit-scrollbar { width: 3px; }
 .sidebar-scroll::-webkit-scrollbar-thumb { background: #E5E8EB; border-radius: 2px; }
 
-/* section */
 .sec { border-bottom: 1px solid #F2F4F6; }
 .sec-head {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 13px 16px; cursor: pointer; user-select: none;
+  padding: 12px 16px; cursor: pointer; user-select: none;
 }
 .sec-head:hover { background: #FAFBFC; }
-.sec-title { font-size: 13px; font-weight: 600; color: #333D4B; }
-.sec-hint  { font-weight: 400; color: #8B95A1; font-size: 12px; }
-.chevron {
-  font-size: 16px; color: #B0B8C1;
-  transform: rotate(90deg); display: inline-block; transition: transform 0.2s;
-}
+.sec-title { font-size: 12.5px; font-weight: 600; color: #333D4B; }
+.sec-hint  { font-weight: 400; color: #B0B8C1; }
+.info-badge { color: #B0B8C1; font-size: 11px; }
+.chevron { font-size: 15px; color: #C4CAD4; transform: rotate(90deg); display: inline-block; transition: transform 0.18s; }
 .chevron.up { transform: rotate(-90deg); }
-
 .sec-body { padding: 0 14px 14px; }
 
 /* drop zone */
 .drop-zone {
-  border: 1.5px dashed #D1D8E0; border-radius: 10px;
-  background: #FAFBFC; padding: 24px 16px; text-align: center;
+  border: 1.5px dashed #DDE0E7; border-radius: 10px;
+  background: #FAFBFF; padding: 22px 16px; text-align: center;
   cursor: pointer; transition: all 0.12s; margin-bottom: 12px;
 }
-.drop-zone:hover, .drop-zone.dragover { border-color: #3182F6; background: #EEF4FF; }
-.drop-icon  { font-size: 22px; color: #B0B8C1; margin-bottom: 6px; }
+.drop-zone:hover, .drop-zone.dragover { border-color: #7C3AED; background: #F5F0FF; }
+.drop-ico-wrap {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(59,130,246,0.08));
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 8px;
+}
+.drop-svg { display: block; }
 .drop-label { font-size: 13px; font-weight: 600; color: #4E5968; }
-.drop-hint  { font-size: 11px; color: #B0B8C1; margin-top: 2px; }
+.drop-hint  { font-size: 11px; color: #B0B8C1; margin-top: 3px; }
 
-/* preview block */
+/* preview */
 .preview-block { margin-bottom: 12px; }
-
 .preview-img-wrap {
   width: 100%; border-radius: 10px; overflow: hidden;
-  background: #F2F4F6; margin-bottom: 10px;
-  min-height: 100px; display: flex; align-items: center; justify-content: center;
+  background: #F2F4F6; margin-bottom: 10px; min-height: 100px;
+  display: flex; align-items: center; justify-content: center;
 }
-.preview-img {
-  width: 100%; display: block;
-  border-radius: 10px; object-fit: contain;
-}
-.preview-skeleton {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 24px; color: #8B95A1; font-size: 12px;
-}
-.preview-spin {
-  width: 20px; height: 20px;
-  border: 2px solid #E5E8EB; border-top-color: #3182F6;
-  border-radius: 50%; animation: spin 0.7s linear infinite; display: block;
-}
-.preview-fallback {
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px;
-}
+.preview-img { width: 100%; display: block; border-radius: 10px; object-fit: contain; }
+.preview-skeleton { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; color: #8B95A1; font-size: 12px; }
+.preview-spin { width: 18px; height: 18px; border: 2px solid #E5E8EB; border-top-color: #7C3AED; border-radius: 50%; animation: spin 0.7s linear infinite; display: block; }
+.preview-fallback { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px; }
 .fallback-badge { background: #4285F4; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 4px; }
 .fallback-text  { font-size: 11px; color: #B0B8C1; }
-
-.file-info-row { display: flex; align-items: center; gap: 10px; }
-.file-meta  { flex: 1; min-width: 0; }
-.file-name  { font-size: 12px; font-weight: 600; color: #333D4B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-size  { font-size: 11px; color: #8B95A1; margin-top: 1px; }
-.file-change {
-  background: none; border: 1px solid #E5E8EB; border-radius: 6px;
-  font-size: 11px; color: #6B7684; padding: 3px 8px;
-  cursor: pointer; font-family: inherit; flex-shrink: 0;
-}
-.file-change:hover { border-color: #3182F6; color: #3182F6; }
+.file-info-row  { display: flex; align-items: center; gap: 10px; }
+.file-meta { flex: 1; min-width: 0; }
+.file-name { font-size: 12px; font-weight: 600; color: #333D4B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-size { font-size: 11px; color: #8B95A1; margin-top: 1px; }
+.file-change { background: none; border: 1px solid #E5E8EB; border-radius: 6px; font-size: 11px; color: #6B7684; padding: 3px 8px; cursor: pointer; font-family: inherit; }
+.file-change:hover { border-color: #7C3AED; color: #7C3AED; }
 
 /* inputs */
 .field-stack { display: flex; flex-direction: column; gap: 8px; }
+.input-wrap { position: relative; }
+.input-ico { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .side-input {
-  width: 100%; padding: 9px 12px;
-  border: 1.5px solid #E5E8EB; border-radius: 8px;
+  width: 100%; padding: 9px 12px 9px 30px;
+  border: 1.5px solid #EAEDF0; border-radius: 8px;
   font-size: 13px; font-family: inherit; color: #191F28;
-  outline: none; transition: border-color 0.12s; background: #fff;
+  outline: none; transition: border-color 0.12s;
 }
-.side-input:focus { border-color: #3182F6; }
-.side-input::placeholder { color: #B0B8C1; }
+.side-input:focus { border-color: #7C3AED; }
+.side-input::placeholder { color: #C4CAD0; }
 
-/* platform list */
-.side-loading { padding: 14px 16px; font-size: 13px; color: #B0B8C1; }
-
+/* platform rows */
+.side-loading { padding: 12px 16px; font-size: 13px; color: #B0B8C1; }
 .pf-row {
   display: flex; align-items: center; gap: 7px;
-  padding: 9px 16px; cursor: pointer; transition: background 0.1s;
+  padding: 8px 16px; cursor: pointer; transition: background 0.1s;
 }
 .pf-row:hover { background: #FAFBFC; }
 .pf-dot    { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .pf-name   { font-size: 13px; font-weight: 600; color: #333D4B; }
-.pf-region { font-size: 11px; color: #B0B8C1; margin-left: 2px; }
+.pf-region { font-size: 11px; color: #B0B8C1; margin-left: 1px; }
 .pf-cnt    { font-size: 11px; color: #8B95A1; margin-left: auto; }
-.pf-chevron {
-  font-size: 14px; color: #B0B8C1;
-  transform: rotate(90deg); transition: transform 0.2s; margin-left: 4px;
-}
-.pf-chevron.open { transform: rotate(-90deg); }
+.pf-chv    { font-size: 13px; color: #C4CAD4; transform: rotate(90deg); transition: transform 0.18s; margin-left: 4px; }
+.pf-chv.open { transform: rotate(-90deg); }
 
-/* spec items */
-.spec-items { background: #FAFBFC; padding: 2px 0 4px 28px; }
-.spec-item {
-  display: flex; align-items: center; gap: 7px;
-  padding: 7px 14px 7px 0; cursor: pointer;
-  border-radius: 6px; transition: background 0.1s;
-}
-.spec-item:hover { background: #F0F4FF; }
-.spec-item.on    { background: #EEF4FF; }
-.sp-name { font-size: 12px; color: #4E5968; flex: 1; min-width: 0; }
+.spec-items { background: #FAFBFC; padding: 2px 0 4px 26px; }
+.spec-item { display: flex; align-items: center; gap: 7px; padding: 7px 14px 7px 0; cursor: pointer; border-radius: 6px; transition: background 0.1s; }
+.spec-item:hover { background: #F0EEFF; }
+.spec-item.on    { background: #EDE9FF; }
+.sp-name { font-size: 12px; color: #4E5968; flex: 1; }
 .sp-dim  { font-size: 11px; color: #B0B8C1; flex-shrink: 0; }
 
-/* checkbox */
-.check { accent-color: #3182F6; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+.check { accent-color: #7C3AED; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
 .check.sm { width: 13px; height: 13px; }
 
 /* advanced */
@@ -530,119 +524,158 @@ onMounted(async () => {
 .adv-row   { display: flex; align-items: center; gap: 10px; }
 .adv-label { font-size: 12px; color: #6B7684; font-weight: 500; width: 46px; flex-shrink: 0; }
 .adv-chips { display: flex; gap: 5px; flex-wrap: wrap; }
-.adv-chip  {
-  padding: 4px 10px; border-radius: 100px;
-  border: 1px solid #E5E8EB; background: #fff;
-  font-size: 11px; color: #6B7684; cursor: pointer; font-family: inherit; transition: all 0.1s;
-}
-.adv-chip:hover { border-color: #3182F6; color: #3182F6; }
+.adv-chip  { padding: 4px 10px; border-radius: 100px; border: 1px solid #E5E8EB; background: #fff; font-size: 11px; color: #6B7684; cursor: pointer; font-family: inherit; transition: all 0.1s; }
+.adv-chip:hover { border-color: #7C3AED; color: #7C3AED; }
 .adv-chip.on    { background: #333D4B; border-color: #333D4B; color: #fff; font-weight: 600; }
 
 /* sidebar footer */
-.sidebar-foot {
-  padding: 14px 16px; border-top: 1px solid #E5E8EB;
-  background: #fff; flex-shrink: 0;
-}
+.sidebar-foot { padding: 14px 16px; border-top: 1px solid #EAEDF0; background: #fff; flex-shrink: 0; }
 .foot-info { font-size: 12px; color: #6B7684; margin-bottom: 8px; }
-.foot-info b { color: #3182F6; }
+.foot-info b { color: #7C3AED; font-weight: 700; }
 .gen-btn {
   width: 100%; padding: 12px;
-  background: #3182F6; color: #fff;
-  border: none; border-radius: 10px;
+  background: linear-gradient(135deg, #7C3AED, #3B82F6);
+  color: #fff; border: none; border-radius: 10px;
   font-size: 14px; font-weight: 700; font-family: inherit;
-  cursor: pointer; transition: background 0.12s;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px;
+  transition: opacity 0.12s;
 }
-.gen-btn:hover:not(:disabled)  { background: #1B6EF3; }
-.gen-btn:disabled { background: #A0C4FB; cursor: not-allowed; }
-.spinner {
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff; border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
+.gen-btn:hover:not(:disabled) { opacity: 0.88; }
+.gen-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.gen-star { font-size: 13px; }
+.spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== right panel ===== */
 .right-panel {
-  flex: 1; overflow-y: auto;
-  padding: 28px 28px 60px;
-  position: relative;
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  background:
+    radial-gradient(ellipse at 20% 10%, rgba(124,58,237,0.07) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 85%, rgba(59,130,246,0.06) 0%, transparent 55%),
+    radial-gradient(ellipse at 55% 45%, rgba(236,72,153,0.04) 0%, transparent 50%),
+    #F9F8FD;
 }
+.right-scroll { flex: 1; overflow-y: auto; padding: 28px 28px 20px; }
+
+/* hero */
+.hero-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 28px;
+}
+.hero-left { flex: 1; position: relative; }
+.sparkles { position: absolute; top: -8px; left: -4px; pointer-events: none; }
+.sp { position: absolute; color: #7C3AED; font-size: 12px; opacity: 0.5; }
+.sp1 { top: 0; left: 0; font-size: 14px; opacity: 0.7; }
+.sp2 { top: -10px; left: 80px; font-size: 10px; opacity: 0.4; }
+.sp3 { top: 14px; left: 50px; font-size: 8px; opacity: 0.35; }
+.hero-title {
+  font-size: 26px; font-weight: 800; color: #191F28;
+  letter-spacing: -0.8px; margin-bottom: 6px; padding-top: 4px;
+}
+.accent-num {
+  background: linear-gradient(135deg, #7C3AED, #3B82F6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub { font-size: 13px; color: #8B95A1; }
+
+/* AI insight card */
+.ai-insight-card {
+  background: #fff; border-radius: 16px; padding: 16px 18px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06); min-width: 280px; max-width: 320px; flex-shrink: 0;
+  border: 1px solid #F0EEF8;
+}
+.ai-insight-head { font-size: 12px; font-weight: 700; color: #7C3AED; margin-bottom: 12px; display: flex; align-items: center; gap: 5px; }
+.ai-star { font-size: 11px; }
+.ai-features { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ai-feat { }
+.ai-feat-ico   { font-size: 16px; color: #7C3AED; display: block; margin-bottom: 4px; }
+.ai-feat-title { font-size: 11px; font-weight: 700; color: #333D4B; margin-bottom: 2px; }
+.ai-feat-desc  { font-size: 10px; color: #8B95A1; line-height: 1.4; }
 
 /* empty */
-.empty {
-  display: flex; flex-direction: column; align-items: center;
-  justify-content: center; height: 70%;
-}
-.empty-icon  { font-size: 40px; color: #D1D8E0; margin-bottom: 16px; }
-.empty-title { font-size: 16px; font-weight: 700; color: #6B7684; margin-bottom: 8px; }
-.empty-desc  { font-size: 13px; color: #B0B8C1; text-align: center; line-height: 1.6; }
+.empty-hint { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; }
+.empty-icon { font-size: 36px; color: #D1D8E0; margin-bottom: 12px; }
+.empty-text { font-size: 13px; color: #B0B8C1; }
 
-/* right header */
-.right-top {
-  display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 24px;
+/* platform group */
+.pf-group { margin-bottom: 28px; }
+.pf-group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.pf-badge {
+  width: 26px; height: 26px; border-radius: 50%;
+  color: #fff; font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.right-cnt { font-size: 15px; font-weight: 700; color: #191F28; }
-.del-all   {
-  background: none; border: none; color: #FF3B30;
-  font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit;
-  display: flex; align-items: center; gap: 4px;
+.pf-group-name { font-size: 14px; font-weight: 700; color: #191F28; }
+.pf-group-cnt  { font-size: 13px; font-weight: 700; color: #6B7684; margin-right: auto; }
+.desel-btn { padding: 4px 12px; border-radius: 100px; border: 1.5px solid #E5E8EB; background: #fff; font-size: 12px; color: #6B7684; cursor: pointer; font-family: inherit; transition: all 0.1s; }
+.desel-btn:hover { border-color: #7C3AED; color: #7C3AED; }
+.view-toggle { display: flex; gap: 4px; margin-left: 8px; }
+.vt-btn { width: 28px; height: 28px; border: 1.5px solid #E5E8EB; background: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; color: #B0B8C1; display: flex; align-items: center; justify-content: center; }
+.vt-btn.on { border-color: #7C3AED; color: #7C3AED; background: #F5F0FF; }
+
+/* horizontal cards */
+.hcards-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.hcard {
+  display: flex; background: #fff; border-radius: 14px;
+  border: 1px solid #EAEDF0; overflow: hidden; height: 130px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: box-shadow 0.12s;
 }
-.del-all:hover { opacity: 0.7; }
+.hcard:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 
-/* group */
-.right-group   { margin-bottom: 28px; }
-.group-head    { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.group-dot     { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.group-name    { font-size: 14px; font-weight: 700; color: #191F28; }
-.group-cnt     { font-size: 12px; color: #8B95A1; }
+.hcard-preview { width: 155px; flex-shrink: 0; overflow: hidden; background: #F2F4F6; }
+.hcard-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hcard-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.hcard-ph-txt { font-size: 11px; font-weight: 600; color: #8B95A1; }
 
-/* cards grid */
-.cards-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.spec-card {
-  position: relative; background: #fff;
-  border: 1px solid #E5E8EB; border-radius: 12px;
-  padding: 16px 14px 14px; transition: box-shadow 0.12s;
-}
-.spec-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-
-.card-x {
+.hcard-info { flex: 1; padding: 14px 12px 12px; position: relative; min-width: 0; }
+.hcard-x {
   position: absolute; top: 10px; right: 10px;
-  width: 20px; height: 20px;
-  background: #F2F4F6; border: none; border-radius: 50%;
-  font-size: 14px; color: #8B95A1; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; padding: 0;
+  width: 20px; height: 20px; background: #F2F4F6; border: none; border-radius: 50%;
+  font-size: 14px; color: #8B95A1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
 }
-.card-x:hover { background: #FFE5E5; color: #FF3B30; }
+.hcard-x:hover { background: #FFE5E5; color: #FF3B30; }
+.hcard-name { font-size: 11.5px; font-weight: 600; color: #333D4B; margin-bottom: 4px; padding-right: 22px; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hcard-dim  { font-size: 11px; color: #8B95A1; margin-bottom: 8px; }
+.hcard-tag  { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; margin-bottom: 7px; }
+.hcard-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.hcard-ratio, .hcard-orient {
+  font-size: 10px; color: #6B7684; background: #F2F4F6;
+  padding: 2px 7px; border-radius: 4px; font-weight: 500;
+}
 
-.card-name { font-size: 12px; font-weight: 600; color: #333D4B; margin-bottom: 6px; padding-right: 20px; line-height: 1.4; }
-.card-dim  { font-size: 11px; color: #8B95A1; margin-bottom: 10px; }
-.card-tag  { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 5px; }
+/* AI bar */
+.ai-bar {
+  flex-shrink: 0; padding: 12px 24px;
+  background: rgba(255,255,255,0.92); backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(124,58,237,0.12);
+  display: flex; align-items: center; gap: 14px;
+}
+.ai-bar-left { display: flex; align-items: center; gap: 12px; flex: 1; }
+.ai-bar-ico {
+  width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+  background: linear-gradient(135deg, #7C3AED, #3B82F6);
+  color: #fff; font-size: 14px; display: flex; align-items: center; justify-content: center;
+}
+.ai-bar-title { font-size: 13px; font-weight: 700; color: #333D4B; }
+.ai-bar-desc  { font-size: 11px; color: #8B95A1; margin-top: 1px; }
+.ai-bar-btn {
+  padding: 7px 16px; border-radius: 8px; border: 1.5px solid #E5E8EB; background: #fff;
+  font-size: 12px; font-weight: 600; color: #6B7684; cursor: pointer; font-family: inherit;
+  white-space: nowrap; flex-shrink: 0;
+}
+.ai-bar-btn:hover { border-color: #7C3AED; color: #7C3AED; }
 
 /* toast */
 .toast {
   position: fixed; bottom: 28px; right: 28px;
-  background: #191F28; color: #fff;
-  padding: 12px 18px; border-radius: 12px;
-  display: flex; align-items: center; gap: 10px;
-  font-size: 13px; font-weight: 500;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-  z-index: 100;
+  background: #191F28; color: #fff; padding: 12px 18px; border-radius: 12px;
+  display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 100;
 }
-.toast-check { color: #0DC780; font-weight: 700; }
-.toast-link  {
-  color: #A0C4FB; background: none; border: none;
-  cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; padding: 0;
-}
+.toast-chk  { color: #0DC780; font-weight: 700; }
+.toast-link { color: #A0C4FB; background: none; border: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; padding: 0; }
 .toast-link:hover { text-decoration: underline; }
-
 .toast-enter-active, .toast-leave-active { transition: all 0.3s; }
 .toast-enter-from { opacity: 0; transform: translateY(16px); }
 .toast-leave-to   { opacity: 0; transform: translateY(16px); }
