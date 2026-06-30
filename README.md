@@ -119,6 +119,9 @@ BannerConsumer → creative-worker (Python Flask :5000)
 | 모드 | 설명 |
 |---|---|
 | `smart-fit` | 스마트 맞춤 — 원본 전체를 최대한 유지하고 남는 영역은 블러 배경으로 자연스럽게 확장 **(기본값)** |
+| ↳ `safe` (강도) | 최대한 안 자름 — 블러 영역이 넓을 수 있음 |
+| ↳ `balanced` (강도) | 원본을 조금 더 키움 — 약간의 잘림 허용 **(기본값)** |
+| ↳ `fill` (강도) | 꽉 차게 — 일부 잘림 가능, 광고 임팩트 우선 |
 | `cover` | 꽉 채우기 — 비율 유지, 넘치는 부분 잘림 |
 | `contain` | 전체 보이기 — 비율 유지, 남는 영역 흰색 |
 | `blur-bg` | 원본 비율 유지 + 남은 영역 블러 배경 |
@@ -183,7 +186,8 @@ psdFile       이미지 파일 (PSD·PNG·JPG·WebP·GIF 등)
 advertiser    광고주명
 campaignName  캠페인명
 specIds       규격 ID 목록 (복수 전송)
-resizeMode    cover | contain | blur-bg | smart-fit  (기본: smart-fit)
+resizeMode         cover | contain | blur-bg | smart-fit  (기본: smart-fit)
+smartFitStrength   safe | balanced | fill               (기본: balanced, smart-fit 전용)
 outputFormat  png | jpg | webp          (기본: png)
 ```
 
