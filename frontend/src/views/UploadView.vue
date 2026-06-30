@@ -8,7 +8,7 @@
         <!-- Upload -->
         <div class="sec">
           <div class="sec-head" @click="uploadOpen = !uploadOpen">
-            <span class="sec-title">배너 업로드 <span class="sec-hint">(PSD)</span></span>
+            <span class="sec-title">배너 업로드 <span class="sec-hint">(이미지)</span></span>
             <span class="chevron" :class="{ up: uploadOpen }">›</span>
           </div>
           <div v-show="uploadOpen" class="sec-body">
@@ -19,7 +19,7 @@
               @dragleave.prevent="dragover = false"
               @drop.prevent="onDrop"
             >
-              <input ref="fileInput" type="file" accept=".psd" style="display:none" @change="onInputChange" />
+              <input ref="fileInput" type="file" accept=".psd,.png,.jpg,.jpeg,.webp,.gif,.tiff,.bmp" style="display:none" @change="onInputChange" />
               <div class="drop-ico-wrap">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="drop-svg">
                   <path d="M12 15V5M12 5L8.5 8.5M12 5L15.5 8.5" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -27,7 +27,7 @@
                 </svg>
               </div>
               <div class="drop-label">클릭 또는 드래그</div>
-              <div class="drop-hint">.psd 파일만</div>
+              <div class="drop-hint">PSD · PNG · JPG · WebP · GIF</div>
             </div>
             <div v-else class="preview-block">
               <div class="preview-img-wrap">
@@ -35,7 +35,7 @@
                   <span class="preview-spin" /><span>미리보기 생성 중...</span>
                 </div>
                 <div v-else-if="previewError" class="preview-fallback">
-                  <div class="fallback-badge">PSD</div><div class="fallback-text">미리보기 불가</div>
+                  <div class="fallback-badge">{{ fileExt }}</div><div class="fallback-text">미리보기 불가</div>
                 </div>
                 <img v-else-if="previewUrl" :src="previewUrl" class="preview-img" alt="PSD 미리보기" />
               </div>
@@ -291,6 +291,9 @@ const aiFeatures = [
   { id: 4, icon: '✦', title: '품질 향상',          desc: '선명도 및 색감 최적화' },
 ]
 
+const ALLOWED_EXTS = ['psd', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'tiff', 'bmp']
+const fileExt = computed(() => form.psdFile?.name.split('.').pop().toUpperCase() ?? '')
+
 const groupedSpecs = computed(() => {
   const map = {}
   for (const spec of allSpecs.value) {
@@ -364,12 +367,21 @@ function clearFile() {
 
 async function loadPreview(file) {
   previewLoading.value = true; previewError.value = false; previewUrl.value = null; previewSize.value = ''
+  const ext = file.name.split('.').pop().toLowerCase()
   try {
-    const buf = await file.arrayBuffer()
-    const psd = readPsd(buf, { skipLayerImageData: true })
-    previewSize.value = `${psd.width}×${psd.height}px`
-    if (psd.canvas) previewUrl.value = psd.canvas.toDataURL('image/png')
-    else previewError.value = true
+    if (ext === 'psd') {
+      const buf = await file.arrayBuffer()
+      const psd = readPsd(buf, { skipLayerImageData: true })
+      previewSize.value = `${psd.width}×${psd.height}px`
+      if (psd.canvas) previewUrl.value = psd.canvas.toDataURL('image/png')
+      else previewError.value = true
+    } else {
+      const url = URL.createObjectURL(file)
+      previewUrl.value = url
+      const img = new window.Image()
+      img.onload = () => { previewSize.value = `${img.naturalWidth}×${img.naturalHeight}px` }
+      img.src = url
+    }
   } catch { previewError.value = true }
   finally { previewLoading.value = false }
 }
@@ -381,8 +393,10 @@ function onInputChange(e) {
 function onDrop(e) {
   dragover.value = false
   const f = e.dataTransfer.files?.[0]
-  if (f && f.name.endsWith('.psd')) { form.psdFile = f; loadPreview(f) }
-  else ElMessage.warning('PSD 파일만 업로드 가능합니다.')
+  if (!f) return
+  const ext = f.name.split('.').pop().toLowerCase()
+  if (ALLOWED_EXTS.includes(ext)) { form.psdFile = f; loadPreview(f) }
+  else ElMessage.warning('지원하지 않는 파일 형식입니다. (PSD, PNG, JPG, WebP, GIF 등)')
 }
 
 async function submit() {
