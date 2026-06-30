@@ -15,7 +15,7 @@ export const downloadZip = (id) =>
   api.get(`/banner/job/${id}/download`, { responseType: 'blob' })
 
 export const downloadImage = (jobId, fileName) =>
-  api.get(`/banner/job/${jobId}/preview/${fileName}`, { responseType: 'blob' })
+  api.get(`/banner/job/${jobId}/image/${encodeURIComponent(fileName)}`, { responseType: 'blob' })
 
 export const previewUrl = (jobId, fileName) =>
   `/api/banner/job/${jobId}/preview/${encodeURIComponent(fileName)}`

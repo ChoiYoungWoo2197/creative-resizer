@@ -140,6 +140,7 @@ BannerConsumer → creative-worker (Python Flask :5000)
 | `status` | String | pending → processing → done / fail |
 | `psdPath` | String | 업로드 파일 경로 |
 | `zipPath` | String | 완성 ZIP 경로 |
+| `results` | List | 생성 이미지 목록 (media, name, slug, width, height, fileName, filePath) |
 | `errorMessage` | String | 실패 시 오류 메시지 |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | |
@@ -188,9 +189,11 @@ outputFormat  png | jpg | webp          (기본: png)
 ### 작업 조회
 
 ```
-GET /api/banner/job/{id}          단건 조회
-GET /api/banner/jobs              전체 목록
-GET /api/banner/job/{id}/download ZIP 다운로드
+GET /api/banner/job/{id}                       단건 조회
+GET /api/banner/jobs                           전체 목록
+GET /api/banner/job/{id}/preview/{filename}    이미지 미리보기 (image/png·jpeg·webp)
+GET /api/banner/job/{id}/image/{filename}      개별 이미지 다운로드 (attachment)
+GET /api/banner/job/{id}/download              ZIP 전체 다운로드
 ```
 
 ### 규격 관리

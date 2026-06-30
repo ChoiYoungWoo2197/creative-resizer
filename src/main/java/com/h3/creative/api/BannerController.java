@@ -74,6 +74,27 @@ public class BannerController {
                 .body(new FileSystemResource(file));
     }
 
+    @GetMapping("/job/{id}/image/{filename:.+}")
+    public ResponseEntity<Resource> downloadImage(@PathVariable String id, @PathVariable String filename) {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || job.getResults() == null) return ResponseEntity.notFound().build();
+
+        BannerJob.BannerResult result = job.getResults().stream()
+                .filter(r -> filename.equals(r.getFileName()))
+                .findFirst().orElse(null);
+
+        if (result == null) return ResponseEntity.notFound().build();
+
+        File file = new File(result.getFilePath());
+        if (!file.exists()) return ResponseEntity.notFound().build();
+
+        String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                .body(new FileSystemResource(file));
+    }
+
     @GetMapping("/job/{id}/download")
     public ResponseEntity<Resource> download(@PathVariable String id) {
         BannerJob job = bannerService.getJob(id);
