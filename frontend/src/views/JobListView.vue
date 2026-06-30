@@ -121,11 +121,36 @@
           <span class="c-date gray">{{ formatDate(job.createdAt) }}</span>
           <span class="c-dl" @click.stop>
             <button v-if="job.status === 'done'" class="dl-btn" @click="download(job)">ZIP ↓</button>
-            <span v-else-if="job.status === 'fail'" class="err-txt" :title="job.errorMessage">오류</span>
+            <span v-else-if="job.status === 'fail'" class="err-txt" @click.stop="openError(job)">오류 ↗</span>
             <span v-else class="dash">—</span>
           </span>
         </div>
       </template>
+    </div>
+
+    <!-- 오류 상세 모달 -->
+    <div v-if="errorJob" class="modal-overlay" @click.self="errorJob = null">
+      <div class="modal-box">
+        <div class="modal-head">
+          <span>오류 상세</span>
+          <button class="modal-close" @click="errorJob = null">✕</button>
+        </div>
+        <div class="modal-body">
+          <table class="error-tbl">
+            <tr><th>작업 ID</th><td class="mono">{{ errorJob.id }}</td></tr>
+            <tr><th>광고주</th><td>{{ errorJob.advertiser }}</td></tr>
+            <tr><th>캠페인</th><td>{{ errorJob.campaignName }}</td></tr>
+            <tr><th>오류 메시지</th><td class="err-cell">{{ errorJob.errorMessage || '알 수 없는 오류' }}</td></tr>
+          </table>
+          <template v-if="errorJob.results?.some(r => r.valid === false)">
+            <div class="invalid-section-title">규격 불일치 이미지</div>
+            <div v-for="r in errorJob.results.filter(r => r.valid === false)" :key="r.fileName" class="invalid-row">
+              <span class="invalid-name">{{ r.name || r.slug }}</span>
+              <span class="invalid-msg">{{ r.validationMessage }}</span>
+            </div>
+          </template>
+        </div>
+      </div>
     </div>
 
     <!-- Pagination -->
@@ -158,8 +183,13 @@ import { listJobs, downloadZip } from '../api/banner.js'
 const router = useRouter()
 const goDetail = (id) => router.push(`/job/${id}`)
 
-const jobs    = ref([])
-const loading = ref(false)
+const jobs     = ref([])
+const loading  = ref(false)
+const errorJob = ref(null)
+
+function openError(job) {
+  errorJob.value = job
+}
 
 const search       = ref('')
 const filterMedia  = ref('')
@@ -392,7 +422,43 @@ onMounted(load)
   cursor: pointer; font-family: inherit; transition: all 0.12s;
 }
 .dl-btn:hover { background: #7C3AED; color: #fff; }
-.err-txt { font-size: 12px; color: #DC2626; font-weight: 600; cursor: help; }
+.err-txt { font-size: 12px; color: #DC2626; font-weight: 600; cursor: pointer; text-decoration: underline; }
+.err-txt:hover { color: #B91C1C; }
+
+/* 오류 모달 */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center; z-index: 9999;
+}
+.modal-box {
+  background: #fff; border-radius: 14px; width: 480px; max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18); overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid #F0F2F4;
+  font-size: 15px; font-weight: 700; color: #191F28;
+}
+.modal-close {
+  background: none; border: none; font-size: 16px; color: #8B95A1;
+  cursor: pointer; line-height: 1; padding: 2px 4px;
+}
+.modal-close:hover { color: #191F28; }
+.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.error-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.error-tbl th {
+  text-align: left; width: 90px; padding: 7px 0; color: #8B95A1;
+  font-weight: 600; vertical-align: top; white-space: nowrap;
+}
+.error-tbl td { padding: 7px 0; color: #191F28; word-break: break-all; }
+.error-tbl tr { border-bottom: 1px solid #F5F6F8; }
+.error-tbl tr:last-child { border-bottom: none; }
+.mono { font-family: monospace; font-size: 12px; }
+.err-cell { color: #DC2626; }
+.invalid-section-title { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 6px; }
+.invalid-row { background: #FFF5F5; border-radius: 7px; padding: 8px 12px; margin-bottom: 4px; }
+.invalid-name { font-size: 13px; font-weight: 600; color: #374151; display: block; margin-bottom: 2px; }
+.invalid-msg  { font-size: 12px; color: #EF4444; }
 .dash    { color: #D1D8E0; }
 .more-btn {
   width: 28px; height: 28px; border-radius: 6px; border: 1.5px solid #EAEDF0;

@@ -44,15 +44,23 @@
         <p class="poll-sub">완료되면 자동으로 결과가 표시됩니다.</p>
       </div>
 
-      <!-- 실패 -->
-      <div v-else-if="job.status === 'fail'" class="fail-box">
+      <!-- 실패 (results 없을 때) -->
+      <div v-else-if="job.status === 'fail' && !job.results?.length" class="fail-box">
         <div class="fail-icon">✕</div>
         <div class="fail-title">생성 실패</div>
         <div class="fail-msg">{{ job.errorMessage || '알 수 없는 오류가 발생했습니다.' }}</div>
       </div>
 
-      <!-- 완료 — 이미지 그리드 -->
-      <div v-else-if="job.status === 'done'" class="results-area">
+      <!-- 완료 또는 fail이지만 results 있을 때 -->
+      <div v-else-if="job.status === 'done' || job.results?.length" class="results-area">
+        <!-- fail 상태 오류 배너 -->
+        <div v-if="job.status === 'fail'" class="fail-banner">
+          <span class="fail-banner-icon">✕</span>
+          <div>
+            <div class="fail-banner-title">작업 실패</div>
+            <div class="fail-banner-msg">{{ job.errorMessage }}</div>
+          </div>
+        </div>
         <div class="results-header">
           <span class="results-count">{{ job.results?.length || 0 }}개 배너 생성 완료</span>
         </div>
@@ -329,6 +337,20 @@ onUnmounted(stopPolling)
 .fail-icon  { font-size: 36px; color: #EF4444; }
 .fail-title { font-size: 18px; font-weight: 700; color: #B91C1C; }
 .fail-msg   { font-size: 14px; color: #6B7280; max-width: 480px; line-height: 1.6; }
+
+/* fail 배너 (results 있을 때) */
+.fail-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #FFF5F5;
+  border: 1px solid #FECACA;
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+.fail-banner-icon { font-size: 18px; color: #EF4444; flex-shrink: 0; }
+.fail-banner-title { font-size: 14px; font-weight: 700; color: #B91C1C; margin-bottom: 3px; }
+.fail-banner-msg   { font-size: 13px; color: #6B7280; }
 
 /* 결과 그리드 */
 .results-area { display: flex; flex-direction: column; gap: 16px; }
