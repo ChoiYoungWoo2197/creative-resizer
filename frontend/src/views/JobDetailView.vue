@@ -65,7 +65,7 @@
           <span class="results-count">{{ job.results?.length || 0 }}개 배너 생성 완료</span>
         </div>
         <div class="img-grid">
-          <div class="img-card" v-for="r in job.results" :key="r.fileName">
+          <div class="img-card" v-for="r in job.results" :key="r.fileName" :class="{ invalid: r.valid === false }">
             <div class="img-thumb" :style="thumbStyle(r)">
               <img
                 :src="getPreviewUrl(r.fileName)"
@@ -375,6 +375,7 @@ onUnmounted(stopPolling)
   transition: box-shadow 0.15s;
 }
 .img-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.img-card.invalid { border-color: #FECACA; }
 
 .img-thumb {
   position: relative;
