@@ -13,6 +13,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @RestController
@@ -59,12 +61,13 @@ public class BannerController {
             return ResponseEntity.notFound().build();
         }
 
-        String filename = job.getAdvertiser() + "_" + job.getCampaignName() + ".zip";
+        String rawName = job.getAdvertiser() + "_" + job.getCampaignName() + ".zip";
+        String encoded = URLEncoder.encode(rawName, StandardCharsets.UTF_8).replace("+", "%20");
         Resource resource = new FileSystemResource(zip);
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
                 .body(resource);
     }
 }

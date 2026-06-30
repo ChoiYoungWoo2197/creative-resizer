@@ -4,8 +4,19 @@ import os
 
 
 def load_psd_as_image(psd_path: str) -> Image.Image:
-    psd = PSDImage.open(psd_path)
+    try:
+        psd = PSDImage.open(psd_path)
+    except Exception as e:
+        msg = str(e)
+        if "version" in msg.lower():
+            raise ValueError(
+                f"지원하지 않는 PSD 포맷입니다. Photoshop에서 '다른 이름으로 저장 > Photoshop (*.psd)' 로 재저장 후 시도하세요. (원인: {msg})"
+            )
+        raise ValueError(f"PSD 파일을 열 수 없습니다: {msg}")
+
     img = psd.composite()
+    if img is None:
+        raise ValueError("PSD 합성 이미지를 생성할 수 없습니다. 레이어가 비어있거나 잠겨 있을 수 있습니다.")
     if img.mode in ("CMYK", "P", "LAB"):
         img = img.convert("RGBA")
     return img
