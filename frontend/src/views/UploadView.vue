@@ -264,7 +264,7 @@ const previewError   = ref(false)
 const previewSize    = ref('')
 
 const form = reactive({
-  psdFile: null, advertiser: '', campaignName: '', resizeMode: 'cover', outputFormat: 'png',
+  psdFile: null, advertiser: '', campaignName: '', resizeMode: 'smart-fit', outputFormat: 'png',
 })
 
 const platformOrder = ['google', 'meta', 'naver', 'kakao', 'linkedin', 'tiktok', 'line']
@@ -280,7 +280,10 @@ const platformCfg = {
 }
 
 const resizeOptions = [
-  { value: 'cover', label: '꽉 채우기' }, { value: 'contain', label: '전체 보이기' }, { value: 'blur-bg', label: '블러 배경' },
+  { value: 'smart-fit', label: '스마트 맞춤' },
+  { value: 'cover',     label: '꽉 채우기' },
+  { value: 'contain',   label: '전체 보이기' },
+  { value: 'blur-bg',   label: '블러 배경' },
 ]
 const formatOptions = [
   { value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }, { value: 'webp', label: 'WebP' },

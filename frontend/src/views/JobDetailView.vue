@@ -78,6 +78,7 @@
               <div class="img-meta">
                 <span>{{ r.width }} × {{ r.height }}</span>
                 <span v-if="r.fileSize"> · {{ fmtSize(r.fileSize) }}</span>
+                <span v-if="job.resizeMode" class="mode-badge"> · {{ job.resizeMode }}</span>
                 <span class="valid-badge" :class="r.valid === false ? 'invalid' : 'ok'">
                   {{ r.valid === false ? '규격 불일치' : '정상' }}
                 </span>
@@ -405,6 +406,8 @@ onUnmounted(stopPolling)
 }
 .img-name { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 4px; }
 .img-meta { font-size: 12px; color: #9CA3AF; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.mode-badge { font-size: 11px; color: #7C3AED; font-weight: 500; }
+
 .valid-badge {
   font-size: 11px;
   font-weight: 600;

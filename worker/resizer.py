@@ -78,10 +78,63 @@ def resize_blur_bg(img: Image.Image, width: int, height: int) -> Image.Image:
     return bg
 
 
+def get_smart_zoom(src_w: int, src_h: int, dst_w: int, dst_h: int) -> float:
+    src_ratio = src_w / src_h
+    dst_ratio = dst_w / dst_h
+    ratio_gap = abs(src_ratio - dst_ratio) / max(src_ratio, dst_ratio)
+
+    if ratio_gap > 0.55:
+        return 1.00
+    if ratio_gap > 0.35:
+        return 1.04
+    if ratio_gap > 0.20:
+        return 1.08
+    return 1.12
+
+
+def resize_smart_fit(img: Image.Image, width: int, height: int) -> Image.Image:
+    from PIL import ImageFilter, ImageEnhance
+
+    src = img.copy()
+    if src.mode != "RGBA":
+        src = src.convert("RGBA")
+
+    # 배경: cover로 꽉 채운 뒤 블러 + 약간 어둡게 (전경이 더 잘 보이도록)
+    bg = resize_cover(src, width, height)
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=28))
+    bg = ImageEnhance.Brightness(bg).enhance(0.9)
+    bg = ImageEnhance.Contrast(bg).enhance(0.95)
+
+    # 전경: contain 기준 축소 + 비율 차이에 따른 adaptive zoom
+    scale = min(width / src.width, height / src.height)
+    scale *= get_smart_zoom(src.width, src.height, width, height)
+
+    new_w = int(src.width * scale)
+    new_h = int(src.height * scale)
+    fg = src.resize((new_w, new_h), Image.LANCZOS)
+
+    x = (width - new_w) // 2
+    y = (height - new_h) // 2
+
+    # fg가 canvas보다 커지는 경우에도 안전하게 합성
+    canvas = bg.convert("RGBA")
+    paste_x = max(x, 0)
+    paste_y = max(y, 0)
+    crop_left = max(-x, 0)
+    crop_top = max(-y, 0)
+    crop_right = min(crop_left + width, fg.width)
+    crop_bottom = min(crop_top + height, fg.height)
+    fg_crop = fg.crop((crop_left, crop_top, crop_right, crop_bottom))
+    canvas.alpha_composite(fg_crop, (paste_x, paste_y))
+
+    return canvas
+
+
 RESIZE_FUNCS = {
     "cover": resize_cover,
     "contain": resize_contain,
     "blur-bg": resize_blur_bg,
+    "smart-fit": resize_smart_fit,
 }
 
 
