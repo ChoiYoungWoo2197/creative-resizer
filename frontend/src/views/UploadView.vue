@@ -110,6 +110,14 @@
                   @click="form.resizeMode = r.value">{{ r.label }}</button>
               </div>
             </div>
+            <div v-if="form.resizeMode === 'smart-fit'" class="adv-row">
+              <span class="adv-label">강도</span>
+              <div class="adv-chips">
+                <button v-for="s in smartFitOptions" :key="s.value" type="button"
+                  class="adv-chip" :class="{ on: form.smartFitStrength === s.value }"
+                  @click="form.smartFitStrength = s.value">{{ s.label }}</button>
+              </div>
+            </div>
             <div class="adv-row">
               <span class="adv-label">포맷</span>
               <div class="adv-chips">
@@ -264,7 +272,7 @@ const previewError   = ref(false)
 const previewSize    = ref('')
 
 const form = reactive({
-  psdFile: null, advertiser: '', campaignName: '', resizeMode: 'smart-fit', outputFormat: 'png',
+  psdFile: null, advertiser: '', campaignName: '', resizeMode: 'smart-fit', smartFitStrength: 'balanced', outputFormat: 'png',
 })
 
 const platformOrder = ['google', 'meta', 'naver', 'kakao', 'linkedin', 'tiktok', 'line']
@@ -284,6 +292,11 @@ const resizeOptions = [
   { value: 'cover',     label: '꽉 채우기' },
   { value: 'contain',   label: '전체 보이기' },
   { value: 'blur-bg',   label: '블러 배경' },
+]
+const smartFitOptions = [
+  { value: 'safe',     label: '안전' },
+  { value: 'balanced', label: '균형' },
+  { value: 'fill',     label: '채움' },
 ]
 const formatOptions = [
   { value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }, { value: 'webp', label: 'WebP' },
@@ -416,6 +429,7 @@ async function submit() {
   fd.append('campaignName', form.campaignName)
   selectedSpecIds.value.forEach(id => fd.append('specIds', id))
   fd.append('resizeMode', form.resizeMode)
+  fd.append('smartFitStrength', form.smartFitStrength)
   fd.append('outputFormat', form.outputFormat)
 
   loading.value = true
