@@ -57,4 +57,14 @@ public class BannerMongoService {
                 .set("updatedAt", LocalDateTime.now());
         mongoTemplate.updateFirst(query, update, BannerJob.class);
     }
+
+    public void updateFailWithResults(String id, String errorMessage, List<BannerJob.BannerResult> results) {
+        Query query = Query.query(Criteria.where("id").is(id));
+        Update update = new Update()
+                .set("status", "fail")
+                .set("errorMessage", errorMessage)
+                .set("results", results)
+                .set("updatedAt", LocalDateTime.now());
+        mongoTemplate.updateFirst(query, update, BannerJob.class);
+    }
 }

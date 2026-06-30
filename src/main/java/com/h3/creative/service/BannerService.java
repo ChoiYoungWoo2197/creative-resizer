@@ -121,9 +121,20 @@ public class BannerService {
                         br.setHeight(r.getHeight());
                         br.setFileName(r.getFileName());
                         br.setFilePath(r.getFilePath());
+                        br.setFileSize(r.getFileSize());
+                        br.setValid(r.getValid());
+                        br.setValidationMessage(r.getValidationMessage());
                         return br;
                     }).toList()
                     : List.of();
+
+            boolean hasInvalid = results.stream().anyMatch(r -> Boolean.FALSE.equals(r.getValid()));
+            if (hasInvalid) {
+                log.warn("Job validation failed={} — 규격 불일치 이미지 존재", jobId);
+                bannerMongoService.updateFailWithResults(jobId, "생성 이미지 크기가 요청 규격과 다릅니다.", results);
+                return;
+            }
+
             bannerMongoService.updateDone(jobId, response.getZipPath(), results);
         } else {
             log.error("Job failed={} error={}", jobId, response.getError());

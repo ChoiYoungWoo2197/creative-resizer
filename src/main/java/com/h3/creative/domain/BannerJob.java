@@ -33,11 +33,14 @@ public class BannerJob {
     @Data
     public static class BannerResult {
         private String media;
-        private String name;       // 한글 지면명
-        private String slug;       // 영문 식별자
+        private String name;
+        private String slug;
         private int width;
         private int height;
-        private String fileName;   // naver_smartchannel_horizontal_1200x628.png
-        private String filePath;   // 절대 경로
+        private String fileName;
+        private String filePath;
+        private Long fileSize;
+        private Boolean valid;
+        private String validationMessage;
     }
 }

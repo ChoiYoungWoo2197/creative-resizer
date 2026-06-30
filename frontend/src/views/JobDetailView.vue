@@ -67,7 +67,14 @@
             </div>
             <div class="img-info">
               <div class="img-name">{{ r.name || r.slug }}</div>
-              <div class="img-size">{{ r.width }} × {{ r.height }}</div>
+              <div class="img-meta">
+                <span>{{ r.width }} × {{ r.height }}</span>
+                <span v-if="r.fileSize"> · {{ fmtSize(r.fileSize) }}</span>
+                <span class="valid-badge" :class="r.valid === false ? 'invalid' : 'ok'">
+                  {{ r.valid === false ? '규격 불일치' : '정상' }}
+                </span>
+              </div>
+              <div class="valid-msg" v-if="r.valid === false">{{ r.validationMessage }}</div>
             </div>
             <button class="btn-dl-single" @click="handleSingleDownload(r)">
               ↓ 다운로드
@@ -122,6 +129,12 @@ function thumbStyle(r) {
 
 function getPreviewUrl(fileName) {
   return previewUrl(route.params.id, fileName)
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return ''
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + 'MB'
+  return Math.round(bytes / 1024) + 'KB'
 }
 
 function onImgError(e) {
@@ -368,7 +381,16 @@ onUnmounted(stopPolling)
   flex: 1;
 }
 .img-name { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 4px; }
-.img-size { font-size: 12px; color: #9CA3AF; }
+.img-meta { font-size: 12px; color: #9CA3AF; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.valid-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 20px;
+}
+.valid-badge.ok      { background: #D1FAE5; color: #065F46; }
+.valid-badge.invalid { background: #FEE2E2; color: #991B1B; }
+.valid-msg { font-size: 11px; color: #EF4444; margin-top: 2px; line-height: 1.4; word-break: break-all; }
 
 .btn-dl-single {
   margin: 0 14px 14px;

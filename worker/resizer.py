@@ -112,6 +112,12 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         os.makedirs(output_dir, exist_ok=True)
         resized.save(out_path)
 
+        file_size = os.path.getsize(out_path)
+        with Image.open(out_path) as check_img:
+            actual_w, actual_h = check_img.size
+        valid = (actual_w == w and actual_h == h)
+        validation_message = "정상" if valid else f"expected={w}x{h}, actual={actual_w}x{actual_h}"
+
         results.append({
             "media": media,
             "name": name,
@@ -120,6 +126,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "height": h,
             "fileName": filename,
             "filePath": out_path,
+            "fileSize": file_size,
+            "valid": valid,
+            "validationMessage": validation_message,
         })
 
     return results

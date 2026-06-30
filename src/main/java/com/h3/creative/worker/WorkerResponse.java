@@ -26,5 +26,8 @@ public class WorkerResponse {
         private int height;
         private String fileName;
         private String filePath;
+        private Long fileSize;
+        private Boolean valid;
+        private String validationMessage;
     }
 }
