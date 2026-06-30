@@ -191,11 +191,11 @@
               <span class="pf-group-cnt">{{ selectedByPlatform(platform).length }}</span>
               <button class="desel-btn" @click="deselectPlatform(platform)">전체 해제</button>
               <div class="view-toggle">
-                <button class="vt-btn on">⊞</button>
-                <button class="vt-btn">☰</button>
+                <button class="vt-btn" :class="{ on: getViewMode(platform) === 'grid' }" @click="setViewMode(platform, 'grid')">⊞</button>
+                <button class="vt-btn" :class="{ on: getViewMode(platform) === 'list' }" @click="setViewMode(platform, 'list')">☰</button>
               </div>
             </div>
-            <div class="hcards-grid">
+            <div class="hcards-grid" :class="{ 'hcards-list': getViewMode(platform) === 'list' }">
               <div v-for="spec in selectedByPlatform(platform)" :key="spec.id" class="hcard">
                 <div class="hcard-preview">
                   <div class="spec-preview-canvas">
@@ -273,6 +273,7 @@ const uploadOpen = ref(true)
 const mediaOpen  = ref(true)
 const advOpen    = ref(false)
 const expandedPlatforms = reactive({})
+const viewModes = reactive({})
 
 const previewUrl     = ref(null)
 const previewLoading = ref(false)
@@ -357,6 +358,8 @@ function deselectPlatform(p) {
   selectedSpecIds.value = selectedSpecIds.value.filter(id => !ids.includes(id))
 }
 function toggleExpand(p) { expandedPlatforms[p] = !expandedPlatforms[p] }
+function getViewMode(p) { return viewModes[p] ?? 'grid' }
+function setViewMode(p, mode) { viewModes[p] = mode }
 function toggleSpec(id) {
   const i = selectedSpecIds.value.indexOf(id)
   if (i >= 0) selectedSpecIds.value.splice(i, 1)
@@ -663,6 +666,17 @@ onMounted(async () => {
 
 /* horizontal cards */
 .hcards-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* list mode */
+.hcards-list { display: flex; flex-direction: column; gap: 8px; }
+.hcards-list .hcard { height: 72px; }
+.hcards-list .hcard-preview { width: 96px; }
+.hcards-list .spec-preview-canvas { padding: 6px; }
+.hcards-list .spec-preview-frame { max-width: 82px; max-height: 58px; }
+.hcards-list .spec-preview-frame.vertical,
+.hcards-list .spec-preview-frame.tall { height: 58px; width: auto; }
+.hcards-list .hcard-name { -webkit-line-clamp: 1; }
+.hcards-list .hcard-meta { display: none; }
 
 .hcard {
   display: flex; background: #fff; border-radius: 14px;
