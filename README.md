@@ -150,7 +150,8 @@ BannerConsumer → creative-worker (Python Flask :5000)
 |---|---|---|
 | `id` | String | ObjectId |
 | `media` | String | google / meta / naver / kakao / linkedin / tiktok |
-| `placementName` | String | 지면명 |
+| `placementName` | String | 한글 지면명 |
+| `slug` | String | 영문 식별자 (파일명용, e.g. smartchannel_horizontal) |
 | `width` | int | px |
 | `height` | int | px |
 | `active` | boolean | 활성 여부 |
@@ -195,11 +196,11 @@ GET /api/banner/job/{id}/download ZIP 다운로드
 ### 규격 관리
 
 ```
-GET    /api/banner/spec           전체 규격 목록
-GET    /api/banner/spec?media=naver  매체별 필터
-POST   /api/banner/spec           규격 등록
-POST   /api/banner/spec/init      기본 규격 일괄 삽입
-DELETE /api/banner/spec/{id}      규격 삭제
+GET    /api/spec                  전체 규격 목록
+GET    /api/spec?media=naver      매체별 필터
+POST   /api/spec                  규격 등록
+POST   /api/spec/init             기본 규격 일괄 삽입 (?reset=true 시 전체 초기화)
+DELETE /api/spec/{id}             규격 삭제
 ```
 
 ---
@@ -300,7 +301,7 @@ docker logs -f creative-nginx
 
 ## 지원 매체 및 규격
 
-`POST /api/banner/spec/init` 으로 기본 규격 삽입. 이후 규격 관리 화면에서 추가/삭제 가능.
+`POST /api/spec/init` 으로 기본 규격 삽입. 이후 규격 관리 화면에서 추가/삭제 가능.
 
 | 매체 | 주요 규격 |
 |---|---|
