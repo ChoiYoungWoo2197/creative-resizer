@@ -174,6 +174,46 @@ RESIZE_FUNCS = {
 }
 
 
+def generate_candidates(input_path: str, output_dir: str, spec: dict,
+                        resize_mode: str = "smart-fit", focal_position: str = "center",
+                        strengths: list = None) -> tuple[str, list]:
+    if strengths is None:
+        strengths = ["safe", "balanced", "fill"]
+
+    os.makedirs(output_dir, exist_ok=True)
+    img = load_psd_as_image(input_path)
+
+    w = spec["width"]
+    h = spec["height"]
+
+    # 원본 contain 썸네일 저장 (OpenAI 비교 기준용)
+    original_name = f"original_{w}x{h}.png"
+    original_path = os.path.join(output_dir, original_name)
+    resize_contain(img, w, h).save(original_path)
+
+    results = []
+    for strength in strengths:
+        file_name = f"candidate_{strength}_{w}x{h}.png"
+        output_path = os.path.join(output_dir, file_name)
+
+        if resize_mode == "smart-fit":
+            resized = resize_smart_fit(img, w, h, strength, focal_position)
+        else:
+            resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
+            resized = resize_fn(img, w, h)
+
+        resized.save(output_path)
+        results.append({
+            "strength": strength,
+            "fileName": file_name,
+            "filePath": output_path,
+            "width": w,
+            "height": h,
+        })
+
+    return original_path, results
+
+
 def generate(psd_path: str, specs: list[dict], resize_mode: str,
              output_format: str, output_dir: str, smart_fit_strength: str = "balanced",
              focal_position: str = "center") -> list[dict]:

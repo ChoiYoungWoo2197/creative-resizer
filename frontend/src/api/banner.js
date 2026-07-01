@@ -35,3 +35,9 @@ export const analyzeBanner = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 30000,
   })
+
+export const compareJob = (jobId, specId) =>
+  api.post(`/banner/jobs/${jobId}/compare`, { specId }, { timeout: 60000 })
+
+export const compareFileUrl = (compareId, fileName) =>
+  `/api/banner/compare/${compareId}/files/${encodeURIComponent(fileName)}`

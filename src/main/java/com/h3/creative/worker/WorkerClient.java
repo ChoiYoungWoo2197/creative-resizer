@@ -39,6 +39,23 @@ public class WorkerClient {
         }
     }
 
+    public CompareWorkerResponse compare(CompareWorkerRequest request) {
+        String url = workerUrl + "/compare";
+        log.info("Calling worker compare: {} compareId={}", url, request.getCompareId());
+        try {
+            ResponseEntity<CompareWorkerResponse> response =
+                    restTemplate.postForEntity(url, request, CompareWorkerResponse.class);
+            CompareWorkerResponse body = response.getBody();
+            if (body == null) throw new IllegalStateException("Worker returned empty response");
+            return body;
+        } catch (Exception e) {
+            log.error("Worker compare failed compareId={} error={}", request.getCompareId(), e.getMessage());
+            CompareWorkerResponse error = new CompareWorkerResponse();
+            error.setError(e.getMessage());
+            return error;
+        }
+    }
+
     public boolean isHealthy() {
         try {
             restTemplate.getForEntity(workerUrl + "/health", String.class);

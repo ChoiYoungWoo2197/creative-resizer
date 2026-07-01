@@ -41,6 +41,7 @@ public class BannerJob {
 
     @Data
     public static class BannerResult {
+        private String specId;
         private String media;
         private String name;
         private String slug;

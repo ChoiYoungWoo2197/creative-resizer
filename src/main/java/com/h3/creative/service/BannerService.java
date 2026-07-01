@@ -131,6 +131,12 @@ public class BannerService {
             List<BannerJob.BannerResult> results = response.getResults() != null
                     ? response.getResults().stream().map(r -> {
                         BannerJob.BannerResult br = new BannerJob.BannerResult();
+                        // slug+width+height로 specId 역매핑
+                        specs.stream()
+                                .filter(s -> r.getWidth() == s.getWidth() && r.getHeight() == s.getHeight()
+                                        && java.util.Objects.equals(r.getSlug(), s.getSlug() != null ? s.getSlug() : ""))
+                                .findFirst()
+                                .ifPresent(s -> br.setSpecId(s.getId()));
                         br.setMedia(r.getMedia());
                         br.setName(r.getName());
                         br.setSlug(r.getSlug());

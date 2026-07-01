@@ -44,6 +44,36 @@ def generate():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/compare", methods=["POST"])
+def compare():
+    data = request.json
+    compare_id = data.get("compareId")
+    psd_path = data.get("psdPath")
+    spec = data.get("spec")
+    resize_mode = data.get("resizeMode", "smart-fit")
+    focal_position = data.get("focalPosition", "center")
+    strengths = data.get("strengths", ["safe", "balanced", "fill"])
+
+    if not psd_path or not os.path.exists(psd_path):
+        return jsonify({"error": "psd_path not found"}), 400
+    if not spec or not compare_id:
+        return jsonify({"error": "compareId and spec are required"}), 400
+
+    compare_output_dir = os.path.join(OUTPUT_DIR, "compare", compare_id)
+
+    try:
+        original_path, candidates = resizer.generate_candidates(
+            psd_path, compare_output_dir, spec, resize_mode, focal_position, strengths
+        )
+        return jsonify({
+            "compareId": compare_id,
+            "originalFilePath": original_path,
+            "candidates": candidates,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 def _make_zip(job_id: str, files: list[str]) -> str:
     os.makedirs(ZIP_DIR, exist_ok=True)
     zip_path = os.path.join(ZIP_DIR, f"{job_id}.zip")

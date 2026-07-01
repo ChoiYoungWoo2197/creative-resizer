@@ -1,8 +1,11 @@
 package com.h3.creative.api;
 
 import com.h3.creative.domain.BannerAiAnalysis;
+import com.h3.creative.domain.BannerAiCompare;
 import com.h3.creative.domain.BannerJob;
+import com.h3.creative.domain.CompareRequest;
 import com.h3.creative.service.BannerAnalysisService;
+import com.h3.creative.service.BannerCompareService;
 import com.h3.creative.service.BannerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
@@ -26,6 +29,7 @@ public class BannerController {
 
     private final BannerService bannerService;
     private final BannerAnalysisService bannerAnalysisService;
+    private final BannerCompareService bannerCompareService;
 
     @PostMapping("/analyze")
     public ResponseEntity<BannerAiAnalysis> analyze(@RequestParam MultipartFile file) throws IOException {
@@ -64,6 +68,35 @@ public class BannerController {
     @GetMapping("/jobs")
     public ResponseEntity<List<BannerJob>> listJobs() {
         return ResponseEntity.ok(bannerService.listJobs());
+    }
+
+    @PostMapping("/jobs/{jobId}/compare")
+    public ResponseEntity<BannerAiCompare> compare(
+            @PathVariable String jobId,
+            @RequestBody CompareRequest body
+    ) throws IOException {
+        return ResponseEntity.ok(bannerCompareService.compare(jobId, body.getSpecId()));
+    }
+
+    @GetMapping("/compare/{compareId}/files/{filename:.+}")
+    public ResponseEntity<Resource> compareFile(
+            @PathVariable String compareId,
+            @PathVariable String filename
+    ) {
+        BannerAiCompare compare = bannerCompareService.getCompare(compareId);
+        if (compare == null || compare.getCandidates() == null) return ResponseEntity.notFound().build();
+
+        BannerAiCompare.CandidateResult result = compare.getCandidates().stream()
+                .filter(c -> filename.equals(c.getFileName()))
+                .findFirst().orElse(null);
+        if (result == null) return ResponseEntity.notFound().build();
+
+        File file = new File(result.getFilePath());
+        if (!file.exists()) return ResponseEntity.notFound().build();
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .body(new FileSystemResource(file));
     }
 
     @GetMapping("/job/{id}/preview/{filename:.+}")

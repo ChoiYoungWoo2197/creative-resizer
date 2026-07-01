@@ -85,26 +85,71 @@
               </div>
               <div class="valid-msg" v-if="r.valid === false">{{ r.validationMessage }}</div>
             </div>
-            <button class="btn-dl-single" @click="handleSingleDownload(r)">
-              ↓ 다운로드
-            </button>
+            <div class="card-actions">
+              <button class="btn-dl-single" @click="handleSingleDownload(r)">↓ 다운로드</button>
+              <button v-if="job.resizeMode === 'smart-fit' && r.specId"
+                class="btn-compare"
+                :disabled="compareLoading[r.specId]"
+                @click="runCompare(r.specId)">
+                <span v-if="compareLoading[r.specId]" class="spin-xs" />
+                <span v-else>✦</span>
+                {{ compareLoading[r.slug || r.fileName] ? '비교 중...' : 'AI 비교' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </template>
+
+    <!-- AI 후보 비교 모달 -->
+    <div v-if="compareModal" class="cmp-overlay" @click.self="compareModal = false">
+      <div class="cmp-modal">
+        <div class="cmp-header">
+          <span class="cmp-star">✦</span> AI 후보 비교 결과
+          <span class="cmp-best-badge">추천: {{ strengthKr(compareResult?.bestCandidate) }} {{ compareResult?.bestScore }}점</span>
+          <button class="cmp-close" @click="compareModal = false">✕</button>
+        </div>
+        <div class="cmp-summary">{{ compareResult?.summary }}</div>
+        <div class="cmp-candidates">
+          <div v-for="c in compareResult?.candidates" :key="c.strength"
+            class="cmp-card" :class="{ best: c.strength === compareResult?.bestCandidate }">
+            <div class="cmp-card-head">
+              <span class="cmp-strength">{{ strengthKr(c.strength) }}</span>
+              <span class="cmp-score" :class="scoreClass(c.score)">{{ c.score }}점</span>
+              <span v-if="c.strength === compareResult?.bestCandidate" class="cmp-crown">★ 추천</span>
+            </div>
+            <div class="cmp-thumb-wrap">
+              <img :src="compareFileUrl(compareResult.id, c.fileName)" class="cmp-thumb" :alt="c.strength" @error="$event.target.style.display='none'" />
+            </div>
+            <div v-if="c.pros?.length" class="cmp-pros">
+              <div v-for="p in c.pros" :key="p" class="cmp-pro-item">✓ {{ p }}</div>
+            </div>
+            <div v-if="c.cons?.length" class="cmp-cons">
+              <div v-for="n in c.cons" :key="n" class="cmp-con-item">✕ {{ n }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getJob, downloadZip, downloadImage, previewUrl } from '../api/banner.js'
+import { getJob, downloadZip, downloadImage, previewUrl, compareJob, compareFileUrl } from '../api/banner.js'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
 const job = ref(null)
 const isPolling = ref(false)
 let pollTimer = null
+
+// AI 후보 비교
+const compareLoading = ref({})   // { specId: true/false }
+const compareModal = ref(false)
+const compareResult = ref(null)
 
 const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움' }
 
@@ -209,6 +254,33 @@ async function handleSingleDownload(r) {
     URL.revokeObjectURL(url)
   } catch { alert('다운로드에 실패했습니다.') }
 }
+
+function getSpecIdFromResult(r) {
+  return r.specId ?? ''
+}
+
+function scoreClass(score) {
+  if (score >= 85) return 'score-high'
+  if (score >= 70) return 'score-mid'
+  return 'score-low'
+}
+
+async function runCompare(specId) {
+  if (compareLoading.value[specId]) return
+  compareLoading.value[specId] = true
+  try {
+    const { data } = await compareJob(route.params.id, specId)
+    compareResult.value = data
+    compareModal.value = true
+  } catch (e) {
+    ElMessage.error('AI 비교 실패: ' + (e.response?.data?.message ?? e.message))
+  } finally {
+    compareLoading.value[specId] = false
+  }
+}
+
+const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움' }
+function strengthKr(v) { return STRENGTH_KR[v] ?? v }
 
 onMounted(loadJob)
 onUnmounted(stopPolling)
@@ -420,17 +492,102 @@ onUnmounted(stopPolling)
 .valid-badge.invalid { background: #FEE2E2; color: #991B1B; }
 .valid-msg { font-size: 11px; color: #EF4444; margin-top: 2px; line-height: 1.4; word-break: break-all; }
 
+.card-actions { display: flex; gap: 6px; margin: 0 14px 14px; }
+
 .btn-dl-single {
-  margin: 0 14px 14px;
+  flex: 1;
   background: #F5F3FF;
   color: #7C3AED;
   border: none;
   border-radius: 7px;
   padding: 7px 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  width: calc(100% - 28px);
 }
 .btn-dl-single:hover { background: #EDE9FE; }
+
+.btn-compare {
+  flex: 1;
+  background: linear-gradient(135deg, rgba(124,58,237,0.1), rgba(59,130,246,0.08));
+  color: #7C3AED;
+  border: 1px dashed #C4B5FD;
+  border-radius: 7px;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  font-family: inherit;
+}
+.btn-compare:hover:not(:disabled) { background: #EDE9FE; border-color: #7C3AED; }
+.btn-compare:disabled { opacity: 0.5; cursor: not-allowed; }
+.spin-xs {
+  width: 10px; height: 10px;
+  border: 1.5px solid rgba(124,58,237,0.3); border-top-color: #7C3AED;
+  border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block;
+}
+
+/* 비교 모달 */
+.cmp-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200; padding: 20px;
+}
+.cmp-modal {
+  background: #fff; border-radius: 16px; width: 100%; max-width: 860px;
+  max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  padding: 24px;
+}
+.cmp-header {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 700; color: #7C3AED; margin-bottom: 10px;
+}
+.cmp-star { font-size: 12px; }
+.cmp-best-badge {
+  margin-left: auto; background: #EDE9FE; color: #6D28D9;
+  font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 20px;
+}
+.cmp-close {
+  background: none; border: none; cursor: pointer; color: #9CA3AF;
+  font-size: 16px; padding: 0 0 0 8px;
+}
+.cmp-close:hover { color: #374151; }
+.cmp-summary {
+  font-size: 13px; color: #4E5968; line-height: 1.55;
+  background: #F9F8FD; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
+}
+.cmp-candidates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 640px) { .cmp-candidates { grid-template-columns: 1fr; } }
+
+.cmp-card {
+  border: 1.5px solid #E5E7EB; border-radius: 12px; overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+.cmp-card.best { border-color: #7C3AED; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
+
+.cmp-card-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px 8px; background: #FAFBFF;
+  border-bottom: 1px solid #F0EEF8;
+}
+.cmp-strength { font-size: 13px; font-weight: 700; color: #374151; }
+.cmp-score { font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 20px; }
+.cmp-score.score-high { background: #D1FAE5; color: #065F46; }
+.cmp-score.score-mid  { background: #FEF3C7; color: #92400E; }
+.cmp-score.score-low  { background: #FEE2E2; color: #991B1B; }
+.cmp-crown { margin-left: auto; font-size: 11px; font-weight: 700; color: #7C3AED; }
+
+.cmp-thumb-wrap {
+  background: #F2F4F6; width: 100%; aspect-ratio: 4/3;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.cmp-thumb { width: 100%; height: 100%; object-fit: contain; }
+
+.cmp-pros, .cmp-cons { padding: 8px 12px; }
+.cmp-pros { border-top: 1px solid #F0FDF4; }
+.cmp-cons { border-top: 1px solid #FEF2F2; }
+.cmp-pro-item { font-size: 11px; color: #16A34A; line-height: 1.5; }
+.cmp-con-item { font-size: 11px; color: #DC2626; line-height: 1.5; }
 </style>
