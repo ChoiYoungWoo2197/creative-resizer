@@ -86,7 +86,19 @@
         <option value="pending">대기</option>
         <option value="processing">처리중</option>
       </select>
-      <button class="reset-btn" @click="resetFilter">↺ 필터 초기화</button>
+      <div class="date-preset-group">
+        <button
+          v-for="p in datePresets" :key="p.value"
+          class="preset-btn" :class="{ active: filterDatePreset === p.value }"
+          @click="setDatePreset(p.value)"
+        >{{ p.label }}</button>
+      </div>
+      <div class="date-range-group">
+        <input type="date" v-model="filterDateFrom" class="date-input" @change="onDateInputChange" />
+        <span class="date-sep">~</span>
+        <input type="date" v-model="filterDateTo" class="date-input" @change="onDateInputChange" />
+      </div>
+      <button class="reset-btn" @click="resetFilter">↺ 초기화</button>
       <div class="filter-right">
         <span class="result-cnt">{{ filtered.length }}건</span>
       </div>
@@ -191,18 +203,64 @@ function openError(job) {
   errorJob.value = job
 }
 
-const search       = ref('')
-const filterMedia  = ref('')
-const filterStatus = ref('')
-const sortField    = ref('createdAt')
-const sortDir      = ref(-1)
-const page         = ref(1)
-const pageSize     = ref(10)
+const search           = ref('')
+const filterMedia      = ref('')
+const filterStatus     = ref('')
+const filterDatePreset = ref('')
+const filterDateFrom   = ref('')
+const filterDateTo     = ref('')
+const sortField        = ref('createdAt')
+const sortDir          = ref(-1)
+const page             = ref(1)
+const pageSize         = ref(10)
 
-const total      = computed(() => jobs.value.length)
-const done       = computed(() => jobs.value.filter(j => j.status === 'done').length)
-const fail       = computed(() => jobs.value.filter(j => j.status === 'fail').length)
-const processing = computed(() => jobs.value.filter(j => j.status === 'processing' || j.status === 'pending').length)
+const datePresets = [
+  { value: 'today', label: '오늘' },
+  { value: 'week',  label: '이번 주' },
+  { value: 'month', label: '이번 달' },
+]
+
+function toDateStr(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function setDatePreset(preset) {
+  if (filterDatePreset.value === preset) {
+    filterDatePreset.value = ''
+    filterDateFrom.value = ''
+    filterDateTo.value = ''
+    return
+  }
+  filterDatePreset.value = preset
+  const now = new Date()
+  const today = toDateStr(now)
+  if (preset === 'today') {
+    filterDateFrom.value = today
+    filterDateTo.value   = today
+  } else if (preset === 'week') {
+    const mon = new Date(now)
+    mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
+    filterDateFrom.value = toDateStr(mon)
+    filterDateTo.value   = today
+  } else if (preset === 'month') {
+    filterDateFrom.value = toDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+    filterDateTo.value   = today
+  }
+  page.value = 1
+}
+
+function onDateInputChange() {
+  filterDatePreset.value = ''
+  page.value = 1
+}
+
+const total      = computed(() => filtered.value.length)
+const done       = computed(() => filtered.value.filter(j => j.status === 'done').length)
+const fail       = computed(() => filtered.value.filter(j => j.status === 'fail').length)
+const processing = computed(() => filtered.value.filter(j => j.status === 'processing' || j.status === 'pending').length)
 const doneRate       = computed(() => total.value ? (done.value / total.value * 100).toFixed(1) : 0)
 const failRate       = computed(() => total.value ? (fail.value / total.value * 100).toFixed(1) : 0)
 const processingRate = computed(() => total.value ? (processing.value / total.value * 100).toFixed(1) : 0)
@@ -226,12 +284,21 @@ const filtered = computed(() => {
     const q = search.value.toLowerCase()
     list = list.filter(j =>
       j.id.toLowerCase().includes(q) ||
-      j.advertiser.toLowerCase().includes(q) ||
-      j.campaignName.toLowerCase().includes(q)
+      (j.advertiser || '').toLowerCase().includes(q) ||
+      (j.campaignName || '').toLowerCase().includes(q)
     )
   }
   if (filterMedia.value)  list = list.filter(j => j.targetMedia?.includes(filterMedia.value))
   if (filterStatus.value) list = list.filter(j => j.status === filterStatus.value)
+  if (filterDateFrom.value || filterDateTo.value) {
+    list = list.filter(j => {
+      if (!j.createdAt) return false
+      const d = j.createdAt.slice(0, 10)
+      if (filterDateFrom.value && d < filterDateFrom.value) return false
+      if (filterDateTo.value   && d > filterDateTo.value)   return false
+      return true
+    })
+  }
   return [...list].sort((a, b) => {
     const av = a[sortField.value] ?? '', bv = b[sortField.value] ?? ''
     return av < bv ? -sortDir.value : av > bv ? sortDir.value : 0
@@ -258,7 +325,9 @@ function sort(field) {
 }
 
 function resetFilter() {
-  search.value = ''; filterMedia.value = ''; filterStatus.value = ''; page.value = 1
+  search.value = ''; filterMedia.value = ''; filterStatus.value = ''
+  filterDatePreset.value = ''; filterDateFrom.value = ''; filterDateTo.value = ''
+  page.value = 1
 }
 
 const statusLabel = s => ({ pending: '대기', processing: '처리중', done: '완료', fail: '실패' }[s] ?? s)
@@ -491,4 +560,23 @@ onMounted(load)
   margin-left: 8px; padding: 7px 10px; border: 1.5px solid #EAEDF0; border-radius: 8px;
   font-size: 12px; font-family: inherit; color: #6B7684; background: #fff; outline: none; cursor: pointer;
 }
+
+/* date filter */
+.date-preset-group { display: flex; gap: 4px; flex-shrink: 0; }
+.preset-btn {
+  padding: 7px 12px; border-radius: 8px; border: 1.5px solid #EAEDF0;
+  background: #fff; font-size: 12px; font-weight: 600; color: #6B7684;
+  cursor: pointer; font-family: inherit; white-space: nowrap; transition: all 0.12s;
+}
+.preset-btn:hover { border-color: #7C3AED; color: #7C3AED; }
+.preset-btn.active { border-color: #7C3AED; background: #7C3AED; color: #fff; }
+
+.date-range-group { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.date-input {
+  padding: 7px 10px; border: 1.5px solid #EAEDF0; border-radius: 8px;
+  font-size: 12px; font-family: inherit; color: #4E5968; background: #fff;
+  outline: none; cursor: pointer; transition: border-color 0.12s;
+}
+.date-input:focus { border-color: #7C3AED; }
+.date-sep { font-size: 12px; color: #B0B8C1; }
 </style>
