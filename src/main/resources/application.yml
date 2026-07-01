@@ -60,14 +60,14 @@ spring:
 
   data:
     mongodb:
-      uri: mongodb+srv://dev:heeil%400801%21%40%23@cluster0.u0ykepl.mongodb.net/creative_resizer?appName=Cluster0&connectTimeoutMS=10000&socketTimeoutMS=30000&serverSelectionTimeoutMS=10000
+      uri: ${MONGODB_URI}
 
   rabbitmq:
-    host: 192.168.100.12
-    port: 5672
-    username: heeilh3
-    password: heeil@0801!@#
-    virtual-host: heeil.h3
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST}
 
 creative:
   worker:
