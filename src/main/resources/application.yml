@@ -28,6 +28,8 @@ creative:
     zip-dir: /app/storage/zips
   worker:
     url: http://banner-worker:5000
+  openai:
+    api-key: ${OPENAI_API_KEY:}
 
 ---
 spring:

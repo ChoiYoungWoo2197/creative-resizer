@@ -30,7 +30,7 @@ public class BannerAnalysisService {
     private final BannerAnalysisMongoService mongoService;
     private final ObjectMapper objectMapper;
 
-    @Value("${creative.openai.api-key}")
+    @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
@@ -63,8 +63,30 @@ public class BannerAnalysisService {
             }
             """;
 
+    private static final java.util.Set<String> VALID_RESIZE_MODES =
+            java.util.Set.of("smart-fit", "cover", "contain", "blur-bg");
+    private static final java.util.Set<String> VALID_STRENGTHS =
+            java.util.Set.of("safe", "balanced", "fill");
+    private static final java.util.Set<String> VALID_FOCAL_POSITIONS =
+            java.util.Set.of("center", "top", "bottom", "left", "right",
+                             "left-top", "right-top", "left-bottom", "right-bottom");
+
+    private String normalizeResizeMode(String v) {
+        return VALID_RESIZE_MODES.contains(v) ? v : "smart-fit";
+    }
+    private String normalizeStrength(String v) {
+        return VALID_STRENGTHS.contains(v) ? v : "balanced";
+    }
+    private String normalizeFocalPosition(String v) {
+        return VALID_FOCAL_POSITIONS.contains(v) ? v : "center";
+    }
+
     @SuppressWarnings("unchecked")
     public BannerAiAnalysis analyze(MultipartFile file) throws IOException {
+        if (openAiApiKey == null || openAiApiKey.isBlank()) {
+            throw new IllegalStateException("OpenAI API Key가 설정되지 않았습니다. OPENAI_API_KEY 환경변수를 확인하세요.");
+        }
+
         byte[] imageBytes = file.getBytes();
         String base64 = Base64.getEncoder().encodeToString(imageBytes);
         String mimeType = file.getContentType() != null ? file.getContentType() : "image/png";
@@ -111,9 +133,9 @@ public class BannerAnalysisService {
 
         BannerAiAnalysis analysis = new BannerAiAnalysis();
         analysis.setSourceFileName(file.getOriginalFilename());
-        analysis.setResizeMode((String) result.getOrDefault("resizeMode", "smart-fit"));
-        analysis.setSmartFitStrength((String) result.getOrDefault("smartFitStrength", "balanced"));
-        analysis.setFocalPosition((String) result.getOrDefault("focalPosition", "center"));
+        analysis.setResizeMode(normalizeResizeMode((String) result.getOrDefault("resizeMode", "")));
+        analysis.setSmartFitStrength(normalizeStrength((String) result.getOrDefault("smartFitStrength", "")));
+        analysis.setFocalPosition(normalizeFocalPosition((String) result.getOrDefault("focalPosition", "")));
         analysis.setReason((String) result.getOrDefault("reason", ""));
 
         Object warningsObj = result.get("warnings");
