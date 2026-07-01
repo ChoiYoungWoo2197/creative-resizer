@@ -93,7 +93,7 @@
                 @click="runCompare(r.specId)">
                 <span v-if="compareLoading[r.specId]" class="spin-xs" />
                 <span v-else>✦</span>
-                {{ compareLoading[r.slug || r.fileName] ? '비교 중...' : 'AI 비교' }}
+                {{ compareLoading[r.specId] ? '비교 중...' : 'AI 비교' }}
               </button>
             </div>
           </div>
