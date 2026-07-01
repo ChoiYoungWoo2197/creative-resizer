@@ -32,9 +32,10 @@ public class BannerController {
             @RequestParam List<String> specIds,
             @RequestParam(defaultValue = "smart-fit") String resizeMode,
             @RequestParam(defaultValue = "balanced") String smartFitStrength,
+            @RequestParam(defaultValue = "center") String focalPosition,
             @RequestParam(defaultValue = "png") String outputFormat
     ) throws IOException {
-        BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, specIds, resizeMode, smartFitStrength, outputFormat);
+        BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, specIds, resizeMode, smartFitStrength, focalPosition, outputFormat);
         return ResponseEntity.ok(job);
     }
 

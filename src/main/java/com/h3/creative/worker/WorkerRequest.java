@@ -14,6 +14,7 @@ public class WorkerRequest {
     private List<SpecItem> specs;
     private String resizeMode;
     private String smartFitStrength;
+    private String focalPosition;
     private String outputFormat;
 
     @Data

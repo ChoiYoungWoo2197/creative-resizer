@@ -20,6 +20,7 @@ public class BannerJob {
     private List<String> specIds;
     private String resizeMode;        // cover / contain / blur-bg / smart-fit
     private String smartFitStrength; // safe / balanced / fill (smart-fit 전용)
+    private String focalPosition;    // center / top / bottom / left / right / left-top / right-top / left-bottom / right-bottom
     private String outputFormat;     // png / jpg / webp
 
     private String status;           // pending / processing / done / fail

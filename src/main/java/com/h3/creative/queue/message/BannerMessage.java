@@ -19,5 +19,6 @@ public class BannerMessage {
     private List<String> specIds;
     private String resizeMode;
     private String smartFitStrength;
+    private String focalPosition;
     private String outputFormat;
 }

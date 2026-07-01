@@ -111,7 +111,25 @@ def get_smart_zoom(src_w: int, src_h: int, dst_w: int, dst_h: int, strength: str
     return 1.16
 
 
-def resize_smart_fit(img: Image.Image, width: int, height: int, strength: str = "balanced") -> Image.Image:
+def get_anchor_position(canvas_w: int, canvas_h: int, fg_w: int, fg_h: int, focal_position: str) -> tuple[int, int]:
+    cx = (canvas_w - fg_w) // 2
+    cy = (canvas_h - fg_h) // 2
+    positions = {
+        "center":       (cx, cy),
+        "top":          (cx, 0),
+        "bottom":       (cx, canvas_h - fg_h),
+        "left":         (0, cy),
+        "right":        (canvas_w - fg_w, cy),
+        "left-top":     (0, 0),
+        "right-top":    (canvas_w - fg_w, 0),
+        "left-bottom":  (0, canvas_h - fg_h),
+        "right-bottom": (canvas_w - fg_w, canvas_h - fg_h),
+    }
+    return positions.get(focal_position, positions["center"])
+
+
+def resize_smart_fit(img: Image.Image, width: int, height: int,
+                     strength: str = "balanced", focal_position: str = "center") -> Image.Image:
     from PIL import ImageFilter, ImageEnhance
 
     src = img.copy()
@@ -132,8 +150,7 @@ def resize_smart_fit(img: Image.Image, width: int, height: int, strength: str = 
     new_h = int(src.height * scale)
     fg = src.resize((new_w, new_h), Image.LANCZOS)
 
-    x = (width - new_w) // 2
-    y = (height - new_h) // 2
+    x, y = get_anchor_position(width, height, new_w, new_h, focal_position)
 
     # fg가 canvas보다 커지는 경우에도 안전하게 합성
     canvas = bg.convert("RGBA")
@@ -158,7 +175,8 @@ RESIZE_FUNCS = {
 
 
 def generate(psd_path: str, specs: list[dict], resize_mode: str,
-             output_format: str, output_dir: str, smart_fit_strength: str = "balanced") -> list[dict]:
+             output_format: str, output_dir: str, smart_fit_strength: str = "balanced",
+             focal_position: str = "center") -> list[dict]:
     img = load_psd_as_image(psd_path)
     resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
     results = []
@@ -171,7 +189,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         name = spec.get("name", "")
 
         if resize_mode == "smart-fit":
-            resized = resize_smart_fit(img, w, h, smart_fit_strength)
+            resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
         else:
             resized = resize_fn(img, w, h)
 

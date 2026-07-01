@@ -129,6 +129,14 @@
             <div v-if="form.resizeMode === 'smart-fit' && currentMaterialHint" class="ai-strength-hint">
               <span class="ai-hint-star">✦</span> {{ currentMaterialHint }}
             </div>
+            <div v-if="form.resizeMode === 'smart-fit'" class="adv-row adv-row-pos">
+              <span class="adv-label">위치</span>
+              <div class="adv-pos-grid">
+                <button v-for="p in focalPositionOptions" :key="p.value" type="button"
+                  class="adv-chip adv-chip-pos" :class="{ on: form.focalPosition === p.value }"
+                  @click="form.focalPosition = p.value">{{ p.label }}</button>
+              </div>
+            </div>
             <div class="adv-row">
               <span class="adv-label">포맷</span>
               <div class="adv-chips">
@@ -293,7 +301,8 @@ const previewError   = ref(false)
 const previewSize    = ref('')
 
 const form = reactive({
-  psdFile: null, advertiser: '', campaignName: '', resizeMode: 'smart-fit', smartFitStrength: 'balanced', outputFormat: 'png',
+  psdFile: null, advertiser: '', campaignName: '',
+  resizeMode: 'smart-fit', smartFitStrength: 'balanced', focalPosition: 'center', outputFormat: 'png',
 })
 
 const platformOrder = ['google', 'naver', 'meta', 'criteo', 'mobion', 'kakao', 'linkedin', 'tiktok', 'line']
@@ -325,6 +334,17 @@ const materialTypeOptions = [
   { value: 'text',    label: '텍스트형', strength: 'safe',     strengthLabel: '안전', hint: '텍스트 영역 보호에 최적' },
   { value: 'general', label: '일반형',   strength: 'balanced', strengthLabel: '균형', hint: '자연스러운 배치 추천' },
   { value: 'product', label: '제품형',   strength: 'fill',     strengthLabel: '채움', hint: '제품 최대 노출에 최적' },
+]
+const focalPositionOptions = [
+  { value: 'left-top',     label: '좌상단' },
+  { value: 'top',          label: '상단' },
+  { value: 'right-top',    label: '우상단' },
+  { value: 'left',         label: '좌측' },
+  { value: 'center',       label: '중앙' },
+  { value: 'right',        label: '우측' },
+  { value: 'left-bottom',  label: '좌하단' },
+  { value: 'bottom',       label: '하단' },
+  { value: 'right-bottom', label: '우하단' },
 ]
 const formatOptions = [
   { value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }, { value: 'webp', label: 'WebP' },
@@ -493,6 +513,7 @@ async function submit() {
   selectedSpecIds.value.forEach(id => fd.append('specIds', id))
   fd.append('resizeMode', form.resizeMode)
   fd.append('smartFitStrength', form.smartFitStrength)
+  fd.append('focalPosition', form.focalPosition)
   fd.append('outputFormat', form.outputFormat)
 
   loading.value = true
@@ -629,6 +650,15 @@ onMounted(async () => {
   margin-top: -4px;
 }
 .ai-hint-star { font-size: 9px; opacity: 0.7; }
+
+.adv-row-pos { align-items: flex-start; }
+.adv-pos-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+}
+.adv-chip-pos {
+  padding: 5px 0; width: 100%; text-align: center;
+  border-radius: 7px; font-size: 10.5px;
+}
 
 /* sidebar footer */
 .sidebar-foot { padding: 14px 16px; border-top: 1px solid #EAEDF0; background: #fff; flex-shrink: 0; }
