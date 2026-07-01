@@ -42,19 +42,25 @@ creative-resizer/
 │       └── api/banner.js               # Axios API 클라이언트
 │
 ├── src/main/java/com/h3/creative/
-│   ├── api/BannerController.java       # REST 엔드포인트
-│   ├── config/RabbitConfig.java        # Exchange/Queue 설정
+│   ├── api/BannerController.java       # REST 엔드포인트 (/upload, /analyze, /job/*, /jobs)
+│   ├── config/
+│   │   ├── RabbitConfig.java           # Exchange/Queue 설정
+│   │   └── AppConfig.java             # RestTemplate + ObjectMapper(JavaTimeModule)
 │   ├── domain/
-│   │   ├── BannerJob.java              # 작업 이력 도큐먼트 (specIds 포함)
-│   │   └── BannerSpec.java             # 매체별 규격 도큐먼트
+│   │   ├── BannerJob.java              # 작업 이력 도큐먼트 (focalPosition 포함)
+│   │   ├── BannerSpec.java             # 매체별 규격 도큐먼트
+│   │   └── BannerAiAnalysis.java       # AI 분석 결과 도큐먼트
 │   ├── mongo/
 │   │   ├── BannerMongoService.java
-│   │   └── SpecMongoService.java       # findByIds() 지원
+│   │   ├── SpecMongoService.java       # findByIds() 지원
+│   │   └── BannerAnalysisMongoService.java
 │   ├── queue/
-│   │   ├── message/BannerMessage.java  # specIds 포함
+│   │   ├── message/BannerMessage.java  # specIds + focalPosition 포함
 │   │   ├── producer/BannerProducer.java
 │   │   └── consumer/BannerConsumer.java
-│   └── service/BannerService.java
+│   └── service/
+│       ├── BannerService.java
+│       └── BannerAnalysisService.java  # OpenAI Vision API 호출 + normalize
 │
 ├── src/main/resources/application.yml  # 프로파일: default / local / prod
 │
@@ -126,6 +132,16 @@ BannerConsumer → creative-worker (Python Flask :5000)
 | `contain` | 전체 보이기 — 비율 유지, 남는 영역 흰색 |
 | `blur-bg` | 원본 비율 유지 + 남은 영역 블러 배경 |
 
+### focalPosition (smart-fit 전용)
+
+전경 이미지를 배치할 앵커 위치. `smart-fit` 모드에서만 유효.
+
+| 값 | 위치 |
+|---|---|
+| `center` | 중앙 **(기본값)** |
+| `top` / `bottom` / `left` / `right` | 상/하/좌/우 |
+| `left-top` / `right-top` / `left-bottom` / `right-bottom` | 4개 모서리 |
+
 ---
 
 ## MongoDB 컬렉션
@@ -148,6 +164,25 @@ BannerConsumer → creative-worker (Python Flask :5000)
 | `errorMessage` | String | 실패 시 오류 메시지 |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | |
+
+### `banner_ai_analysis` — AI 분석 이력
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `id` | String | ObjectId |
+| `sourceFileName` | String | 분석한 파일명 |
+| `creativeType` | String | `text_heavy` / `product_focused` / `balanced_mix` |
+| `textDensity` | String | `high` / `medium` / `low` |
+| `edgeRisk` | String | `high` / `medium` / `low` |
+| `mainSubjectPosition` | String | 주요 피사체 위치 (focalPosition 허용값과 동일) |
+| `mainSubjectDescription` | String | 주요 피사체 한국어 설명 |
+| `resizeMode` | String | 추천 리사이즈 모드 |
+| `smartFitStrength` | String | 추천 강도 |
+| `focalPosition` | String | 추천 위치 |
+| `reason` | String | 분석 이유 (한국어) |
+| `warnings` | List\<String\> | 주의사항 목록 |
+| `confidence` | Double | 신뢰도 (0.0 ~ 1.0) |
+| `createdAt` | DateTime | |
 
 ### `banner_spec` — 매체별 규격
 
@@ -200,6 +235,38 @@ GET /api/banner/job/{id}/preview/{filename}    이미지 미리보기 (image/png
 GET /api/banner/job/{id}/image/{filename}      개별 이미지 다운로드 (attachment)
 GET /api/banner/job/{id}/download              ZIP 전체 다운로드
 ```
+
+### AI 추천 분석
+
+```
+POST /api/banner/analyze
+Content-Type: multipart/form-data
+
+file    이미지 파일 (PNG·JPG·WebP 등 — 미리보기 이미지 권장)
+```
+
+응답 (`BannerAiAnalysis`):
+
+```json
+{
+  "creativeType": "text_heavy | product_focused | balanced_mix",
+  "textDensity": "high | medium | low",
+  "edgeRisk": "high | medium | low",
+  "mainSubjectPosition": "center | top | bottom | left | right | ...",
+  "mainSubjectDescription": "주요 피사체 설명",
+  "resizeMode": "smart-fit | cover | contain | blur-bg",
+  "smartFitStrength": "safe | balanced | fill",
+  "focalPosition": "center | top | bottom | ...",
+  "reason": "분석 이유 (한국어)",
+  "warnings": ["주의사항"],
+  "confidence": 0.82
+}
+```
+
+- OpenAI `gpt-4.1-mini` Vision 모델 사용
+- API Key는 서버 `.env`의 `OPENAI_API_KEY` 환경변수로 관리 (프론트 노출 없음)
+- 허용 범위 외 값은 서버에서 자동 보정 (normalize)
+- 분석 결과는 `banner_ai_analysis` 컬렉션에 저장
 
 ### 규격 관리
 
@@ -276,18 +343,29 @@ docker logs -f creative-nginx
 
 ## 환경 설정
 
-`application.yml` `prod` 프로파일에 실제 값 포함 (`.env` 미사용).  
-서버에서는 `SPRING_PROFILES_ACTIVE=prod` 환경변수만 설정.
+접속 정보는 서버의 `/opt/creative-resizer/.env`에 저장. `docker compose`가 자동으로 읽어 컨테이너에 주입.
+
+`.env.example` 참고:
+
+```env
+OPENAI_API_KEY=sk-proj-...
+MONGODB_URI=mongodb+srv://<user>:<password>@cluster0.xxxx.mongodb.net/creative_resizer?...
+RABBITMQ_HOST=192.168.x.x
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=your_username
+RABBITMQ_PASSWORD=your_password
+RABBITMQ_VHOST=your.vhost
+```
 
 주요 설정값:
 
 | 항목 | 설명 |
 |---|---|
-| `spring.data.mongodb.uri` | MongoDB Atlas URI |
-| `spring.rabbitmq.*` | RabbitMQ 연결 정보 |
-| `spring.servlet.multipart.max-file-size` | 200MB |
-| `creative.worker.url` | `http://creative-worker:5000` |
-| `creative.storage.upload-dir` | `/app/storage/uploads` |
+| `OPENAI_API_KEY` | OpenAI API 키 (AI 분석 기능) |
+| `MONGODB_URI` | MongoDB Atlas 연결 URI |
+| `RABBITMQ_HOST` / `USERNAME` / `PASSWORD` / `VHOST` | RabbitMQ 연결 정보 |
+| `spring.servlet.multipart.max-file-size` | 200MB (application.yml 고정) |
+| `creative.worker.url` | `http://creative-worker:5000` (application.yml 고정) |
 
 ---
 
