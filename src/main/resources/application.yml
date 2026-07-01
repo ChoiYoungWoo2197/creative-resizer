@@ -70,3 +70,5 @@ spring:
 creative:
   worker:
     url: http://creative-worker:5000
+  openai:
+    api-key: ${OPENAI_API_KEY}

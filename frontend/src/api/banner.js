@@ -29,3 +29,9 @@ export const deleteSpec = (id) => api.delete(`/spec/${id}`)
 
 export const initSpecs = (reset = false) =>
   api.post('/spec/init', null, { params: { reset } })
+
+export const analyzeBanner = (formData) =>
+  api.post('/banner/analyze', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000,
+  })

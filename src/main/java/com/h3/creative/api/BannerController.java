@@ -1,6 +1,8 @@
 package com.h3.creative.api;
 
+import com.h3.creative.domain.BannerAiAnalysis;
 import com.h3.creative.domain.BannerJob;
+import com.h3.creative.service.BannerAnalysisService;
 import com.h3.creative.service.BannerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
@@ -23,6 +25,12 @@ import java.util.List;
 public class BannerController {
 
     private final BannerService bannerService;
+    private final BannerAnalysisService bannerAnalysisService;
+
+    @PostMapping("/analyze")
+    public ResponseEntity<BannerAiAnalysis> analyze(@RequestParam MultipartFile file) throws IOException {
+        return ResponseEntity.ok(bannerAnalysisService.analyze(file));
+    }
 
     @PostMapping("/upload")
     public ResponseEntity<BannerJob> upload(

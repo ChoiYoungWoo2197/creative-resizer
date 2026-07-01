@@ -46,6 +46,27 @@
                 </div>
                 <button class="file-change" @click="clearFile">변경</button>
               </div>
+              <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
+                <span v-if="aiAnalyzing" class="spinner" style="width:12px;height:12px;border-width:1.5px;" />
+                <span v-else>✦</span>
+                {{ aiAnalyzing ? 'AI 분석 중...' : 'AI 추천 분석' }}
+              </button>
+              <div v-if="aiAnalysis" class="ai-result-card">
+                <div class="ai-result-head">
+                  <span class="ai-result-star">✦</span> AI 분석 결과
+                  <span class="ai-conf">신뢰도 {{ Math.round((aiAnalysis.confidence ?? 0) * 100) }}%</span>
+                </div>
+                <div class="ai-result-reason">{{ aiAnalysis.reason }}</div>
+                <div class="ai-result-settings">
+                  <span class="ai-tag">{{ resizeLabel(aiAnalysis.resizeMode) }}</span>
+                  <span class="ai-tag">강도: {{ strengthLabel(aiAnalysis.smartFitStrength) }}</span>
+                  <span class="ai-tag">위치: {{ posLabel(aiAnalysis.focalPosition) }}</span>
+                </div>
+                <div v-if="aiAnalysis.warnings?.length" class="ai-result-warnings">
+                  <div v-for="w in aiAnalysis.warnings" :key="w" class="ai-warn-item">⚠ {{ w }}</div>
+                </div>
+                <button class="ai-apply-btn" @click="applyAiAnalysis">추천 적용</button>
+              </div>
             </div>
             <div class="field-stack">
               <div class="input-wrap">
@@ -277,12 +298,14 @@ import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { readPsd } from 'ag-psd'
 import 'ag-psd/initialize-canvas'
-import { uploadPsd, listSpecs } from '../api/banner.js'
+import { uploadPsd, listSpecs, analyzeBanner } from '../api/banner.js'
 import { useRouter } from 'vue-router'
 const router = useRouter()
 
 const loading      = ref(false)
 const result       = ref(null)
+const aiAnalyzing  = ref(false)
+const aiAnalysis   = ref(null)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
@@ -450,6 +473,16 @@ function getPreviewType(spec) {
   return 'square'
 }
 
+const RESIZE_LABELS = { 'smart-fit': '스마트 맞춤', cover: '꽉 채우기', contain: '전체 보이기', 'blur-bg': '블러 배경' }
+const STRENGTH_LABELS = { safe: '안전', balanced: '균형', fill: '채움' }
+const POS_LABELS = {
+  center: '중앙', top: '상단', bottom: '하단', left: '좌측', right: '우측',
+  'left-top': '좌상단', 'right-top': '우상단', 'left-bottom': '좌하단', 'right-bottom': '우하단',
+}
+function resizeLabel(v) { return RESIZE_LABELS[v] ?? v }
+function strengthLabel(v) { return STRENGTH_LABELS[v] ?? v }
+function posLabel(v) { return POS_LABELS[v] ?? v }
+
 function getSimpleRatio(w, h) {
   const known = [[16,9],[4,3],[1,1],[9,16],[3,4],[2,1],[3,2],[21,9],[1,2],[1,3],[3,1]]
   const ratio = w / h
@@ -464,6 +497,34 @@ function getSimpleRatio(w, h) {
 function clearFile() {
   form.psdFile = null
   previewUrl.value = null; previewError.value = false; previewSize.value = ''
+  aiAnalysis.value = null
+}
+
+async function runAiAnalyze() {
+  if (!previewUrl.value) return
+  aiAnalyzing.value = true
+  aiAnalysis.value = null
+  try {
+    const blob = await fetch(previewUrl.value).then(r => r.blob())
+    const fd = new FormData()
+    fd.append('file', blob, 'preview.png')
+    const { data } = await analyzeBanner(fd)
+    aiAnalysis.value = data
+    advOpen.value = true
+  } catch (e) {
+    ElMessage.error('AI 분석 실패: ' + (e.response?.data?.message ?? e.message))
+  } finally {
+    aiAnalyzing.value = false
+  }
+}
+
+function applyAiAnalysis() {
+  if (!aiAnalysis.value) return
+  form.resizeMode = aiAnalysis.value.resizeMode ?? form.resizeMode
+  form.smartFitStrength = aiAnalysis.value.smartFitStrength ?? form.smartFitStrength
+  form.focalPosition = aiAnalysis.value.focalPosition ?? form.focalPosition
+  materialType.value = ''
+  ElMessage.success('AI 추천 설정이 적용되었습니다.')
 }
 
 async function loadPreview(file) {
@@ -650,6 +711,44 @@ onMounted(async () => {
   margin-top: -4px;
 }
 .ai-hint-star { font-size: 9px; opacity: 0.7; }
+
+/* AI analyze */
+.ai-analyze-btn {
+  width: 100%; margin-top: 10px; padding: 8px;
+  background: linear-gradient(135deg, rgba(124,58,237,0.08), rgba(59,130,246,0.06));
+  border: 1px dashed #C4B5FD; border-radius: 8px;
+  font-size: 12px; font-weight: 600; color: #7C3AED;
+  cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: all 0.12s;
+}
+.ai-analyze-btn:hover:not(:disabled) { background: #EDE9FF; border-color: #7C3AED; }
+.ai-analyze-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ai-result-card {
+  margin-top: 10px; background: #FAFBFF;
+  border: 1px solid #E0D9F9; border-radius: 10px; padding: 12px;
+}
+.ai-result-head {
+  font-size: 11.5px; font-weight: 700; color: #7C3AED;
+  display: flex; align-items: center; gap: 5px; margin-bottom: 8px;
+}
+.ai-result-star { font-size: 10px; }
+.ai-conf { margin-left: auto; font-size: 10px; font-weight: 500; color: #8B95A1; }
+.ai-result-reason { font-size: 11.5px; color: #4E5968; line-height: 1.55; margin-bottom: 8px; }
+.ai-result-settings { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
+.ai-tag {
+  font-size: 10.5px; font-weight: 600; color: #7C3AED;
+  background: #EDE9FF; border-radius: 5px; padding: 3px 8px;
+}
+.ai-result-warnings { margin-bottom: 8px; }
+.ai-warn-item { font-size: 10.5px; color: #B45309; margin-bottom: 3px; line-height: 1.4; }
+.ai-apply-btn {
+  width: 100%; padding: 7px;
+  background: #7C3AED; border: none; border-radius: 7px;
+  font-size: 12px; font-weight: 700; color: #fff;
+  cursor: pointer; font-family: inherit; transition: opacity 0.12s;
+}
+.ai-apply-btn:hover { opacity: 0.88; }
 
 .adv-row-pos { align-items: flex-start; }
 .adv-pos-grid {
