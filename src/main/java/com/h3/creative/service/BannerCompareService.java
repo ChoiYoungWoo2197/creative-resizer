@@ -107,8 +107,8 @@ public class BannerCompareService {
 
         Map<String, Object> aiResult = callOpenAiCompare(workerResp.getOriginalFilePath(), workerResp.getCandidates());
 
-        String bestCandidate = (String) aiResult.getOrDefault("bestCandidate", "balanced");
-        if (!VALID_CANDIDATES.contains(bestCandidate)) bestCandidate = "balanced";
+        String bestCandidateRaw = (String) aiResult.getOrDefault("bestCandidate", "balanced");
+        final String bestCandidate = VALID_CANDIDATES.contains(bestCandidateRaw) ? bestCandidateRaw : "balanced";
         String summary = (String) aiResult.getOrDefault("summary", "");
         List<Map<String, Object>> aiCandidates = (List<Map<String, Object>>) aiResult.getOrDefault("candidates", List.of());
 
