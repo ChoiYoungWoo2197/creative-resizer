@@ -111,12 +111,23 @@
               </div>
             </div>
             <div v-if="form.resizeMode === 'smart-fit'" class="adv-row">
+              <span class="adv-label">소재 유형</span>
+              <div class="adv-chips">
+                <button v-for="t in materialTypeOptions" :key="t.value" type="button"
+                  class="adv-chip" :class="{ on: materialType === t.value }"
+                  @click="selectMaterialType(t.value)">{{ t.label }}</button>
+              </div>
+            </div>
+            <div v-if="form.resizeMode === 'smart-fit'" class="adv-row">
               <span class="adv-label">강도</span>
               <div class="adv-chips">
                 <button v-for="s in smartFitOptions" :key="s.value" type="button"
                   class="adv-chip" :class="{ on: form.smartFitStrength === s.value }"
-                  @click="form.smartFitStrength = s.value">{{ s.label }}</button>
+                  @click="selectStrength(s.value)">{{ s.label }}</button>
               </div>
+            </div>
+            <div v-if="form.resizeMode === 'smart-fit' && currentMaterialHint" class="ai-strength-hint">
+              <span class="ai-hint-star">✦</span> {{ currentMaterialHint }}
             </div>
             <div class="adv-row">
               <span class="adv-label">포맷</span>
@@ -254,7 +265,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { readPsd } from 'ag-psd'
 import 'ag-psd/initialize-canvas'
@@ -268,6 +279,7 @@ const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
 const dragover     = ref(false)
+const materialType = ref('')
 
 const uploadOpen = ref(true)
 const mediaOpen  = ref(true)
@@ -309,6 +321,11 @@ const smartFitOptions = [
   { value: 'balanced', label: '균형' },
   { value: 'fill',     label: '채움' },
 ]
+const materialTypeOptions = [
+  { value: 'text',    label: '텍스트형', strength: 'safe',     strengthLabel: '안전', hint: '텍스트 영역 보호에 최적' },
+  { value: 'general', label: '일반형',   strength: 'balanced', strengthLabel: '균형', hint: '자연스러운 배치 추천' },
+  { value: 'product', label: '제품형',   strength: 'fill',     strengthLabel: '채움', hint: '제품 최대 노출에 최적' },
+]
 const formatOptions = [
   { value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }, { value: 'webp', label: 'WebP' },
 ]
@@ -322,6 +339,24 @@ const aiFeatures = [
 
 const ALLOWED_EXTS = ['psd', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'tiff', 'bmp']
 const fileExt = computed(() => form.psdFile?.name.split('.').pop().toUpperCase() ?? '')
+
+const currentMaterialHint = computed(() => {
+  const opt = materialTypeOptions.find(o => o.value === materialType.value)
+  return opt ? `AI 추천: ${opt.strengthLabel} — ${opt.hint}` : null
+})
+
+function selectMaterialType(type) {
+  materialType.value = type
+  const opt = materialTypeOptions.find(o => o.value === type)
+  if (opt) form.smartFitStrength = opt.strength
+}
+
+function selectStrength(value) {
+  form.smartFitStrength = value
+  materialType.value = ''
+}
+
+watch(() => form.resizeMode, () => { materialType.value = '' })
 
 const groupedSpecs = computed(() => {
   const map = {}
@@ -586,6 +621,14 @@ onMounted(async () => {
 .adv-chip  { padding: 4px 10px; border-radius: 100px; border: 1px solid #E5E8EB; background: #fff; font-size: 11px; color: #6B7684; cursor: pointer; font-family: inherit; transition: all 0.1s; }
 .adv-chip:hover { border-color: #7C3AED; color: #7C3AED; }
 .adv-chip.on    { background: #333D4B; border-color: #333D4B; color: #fff; font-weight: 600; }
+
+.ai-strength-hint {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500; color: #6D28D9;
+  background: #F5F0FF; border-radius: 7px; padding: 6px 10px;
+  margin-top: -4px;
+}
+.ai-hint-star { font-size: 9px; opacity: 0.7; }
 
 /* sidebar footer */
 .sidebar-foot { padding: 14px 16px; border-top: 1px solid #EAEDF0; background: #fff; flex-shrink: 0; }
