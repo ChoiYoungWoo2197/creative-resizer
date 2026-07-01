@@ -15,6 +15,15 @@ public class BannerAiAnalysis {
     private String id;
 
     private String sourceFileName;
+
+    // 이미지 분석
+    private String creativeType;           // text_heavy / product_focused / balanced_mix
+    private String textDensity;            // high / medium / low
+    private String edgeRisk;              // high / medium / low
+    private String mainSubjectPosition;   // center / top / bottom / left / right + 대각선 4종
+    private String mainSubjectDescription;
+
+    // 추천 설정
     private String resizeMode;
     private String smartFitStrength;
     private String focalPosition;

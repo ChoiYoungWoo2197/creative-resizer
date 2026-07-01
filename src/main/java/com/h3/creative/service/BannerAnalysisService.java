@@ -39,21 +39,32 @@ public class BannerAnalysisService {
             이 광고 배너 소재 이미지를 리사이징 관점에서 분석해줘.
             반환은 반드시 JSON 형식으로만 해줘. 다른 텍스트는 포함하지 마.
 
-            추천 가능한 값:
+            [이미지 분석 필드]
+            creativeType: text_heavy (텍스트/로고/CTA가 주를 이룸), product_focused (제품/인물이 주를 이룸), balanced_mix (텍스트와 제품이 균형)
+            textDensity: high (텍스트가 많고 빽빽함), medium (적당한 텍스트), low (텍스트 거의 없음)
+            edgeRisk: high (가장자리에 중요 요소 있어 잘림 위험 높음), medium (주의 필요), low (잘림 위험 없음)
+            mainSubjectPosition: 주요 피사체(제품/인물)가 이미지에서 위치하는 방향 (center, top, bottom, left, right, left-top, right-top, left-bottom, right-bottom)
+            mainSubjectDescription: 주요 피사체를 한국어로 한 문장으로 설명
+
+            [추천 설정 필드]
             resizeMode: smart-fit, cover, contain, blur-bg
             smartFitStrength: safe, balanced, fill
             focalPosition: center, top, bottom, left, right, left-top, right-top, left-bottom, right-bottom
 
             판단 기준:
-            - 텍스트/로고/가격/CTA가 가장자리에 많으면 safe
-            - 제품/인물이 중앙에 있으면 center focalPosition
-            - 제품이 오른쪽에 크면 right focalPosition
-            - 하단 CTA가 중요하면 bottom focalPosition
+            - 텍스트/로고/가격/CTA가 가장자리에 많으면 edgeRisk high, smartFitStrength safe
+            - 제품/인물이 명확하면 product_focused, 해당 위치를 mainSubjectPosition과 focalPosition에 반영
             - 텍스트가 거의 없고 제품 중심이면 fill 가능
-            - 잘림 위험이 있으면 smart-fit safe 또는 contain 추천
+            - 잘림 위험이 높으면 smart-fit safe 또는 contain 추천
+            - focalPosition은 mainSubjectPosition과 동일하게 맞추는 것을 우선으로 함
 
             반환 JSON:
             {
+              "creativeType": "...",
+              "textDensity": "...",
+              "edgeRisk": "...",
+              "mainSubjectPosition": "...",
+              "mainSubjectDescription": "...",
               "resizeMode": "...",
               "smartFitStrength": "...",
               "focalPosition": "...",
@@ -70,6 +81,10 @@ public class BannerAnalysisService {
     private static final java.util.Set<String> VALID_FOCAL_POSITIONS =
             java.util.Set.of("center", "top", "bottom", "left", "right",
                              "left-top", "right-top", "left-bottom", "right-bottom");
+    private static final java.util.Set<String> VALID_CREATIVE_TYPES =
+            java.util.Set.of("text_heavy", "product_focused", "balanced_mix");
+    private static final java.util.Set<String> VALID_DENSITIES =
+            java.util.Set.of("high", "medium", "low");
 
     private String normalizeResizeMode(String v) {
         return VALID_RESIZE_MODES.contains(v) ? v : "smart-fit";
@@ -79,6 +94,12 @@ public class BannerAnalysisService {
     }
     private String normalizeFocalPosition(String v) {
         return VALID_FOCAL_POSITIONS.contains(v) ? v : "center";
+    }
+    private String normalizeCreativeType(String v) {
+        return VALID_CREATIVE_TYPES.contains(v) ? v : "balanced_mix";
+    }
+    private String normalizeDensity(String v) {
+        return VALID_DENSITIES.contains(v) ? v : "medium";
     }
 
     @SuppressWarnings("unchecked")
@@ -133,6 +154,13 @@ public class BannerAnalysisService {
 
         BannerAiAnalysis analysis = new BannerAiAnalysis();
         analysis.setSourceFileName(file.getOriginalFilename());
+        // 이미지 분석
+        analysis.setCreativeType(normalizeCreativeType((String) result.getOrDefault("creativeType", "")));
+        analysis.setTextDensity(normalizeDensity((String) result.getOrDefault("textDensity", "")));
+        analysis.setEdgeRisk(normalizeDensity((String) result.getOrDefault("edgeRisk", "")));
+        analysis.setMainSubjectPosition(normalizeFocalPosition((String) result.getOrDefault("mainSubjectPosition", "")));
+        analysis.setMainSubjectDescription((String) result.getOrDefault("mainSubjectDescription", ""));
+        // 추천 설정
         analysis.setResizeMode(normalizeResizeMode((String) result.getOrDefault("resizeMode", "")));
         analysis.setSmartFitStrength(normalizeStrength((String) result.getOrDefault("smartFitStrength", "")));
         analysis.setFocalPosition(normalizeFocalPosition((String) result.getOrDefault("focalPosition", "")));

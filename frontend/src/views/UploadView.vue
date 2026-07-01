@@ -56,7 +56,28 @@
                   <span class="ai-result-star">✦</span> AI 분석 결과
                   <span class="ai-conf">신뢰도 {{ Math.round((aiAnalysis.confidence ?? 0) * 100) }}%</span>
                 </div>
+                <!-- 이미지 분석 -->
+                <div class="ai-analysis-section">
+                  <div class="ai-analysis-row">
+                    <span class="ai-analysis-label">소재 유형</span>
+                    <span class="ai-badge" :class="aiAnalysis.creativeType">{{ creativeTypeLabel(aiAnalysis.creativeType) }}</span>
+                  </div>
+                  <div class="ai-analysis-row">
+                    <span class="ai-analysis-label">텍스트 밀도</span>
+                    <span class="ai-badge" :class="'density-' + aiAnalysis.textDensity">{{ densityLabel(aiAnalysis.textDensity) }}</span>
+                  </div>
+                  <div class="ai-analysis-row">
+                    <span class="ai-analysis-label">잘림 위험</span>
+                    <span class="ai-badge" :class="'risk-' + aiAnalysis.edgeRisk">{{ riskLabel(aiAnalysis.edgeRisk) }}</span>
+                  </div>
+                  <div v-if="aiAnalysis.mainSubjectDescription" class="ai-analysis-row">
+                    <span class="ai-analysis-label">주요 피사체</span>
+                    <span class="ai-subject-desc">{{ aiAnalysis.mainSubjectDescription }}</span>
+                  </div>
+                </div>
+                <!-- 분석 이유 -->
                 <div class="ai-result-reason">{{ aiAnalysis.reason }}</div>
+                <!-- 추천 설정 -->
                 <div class="ai-result-settings">
                   <span class="ai-tag">{{ resizeLabel(aiAnalysis.resizeMode) }}</span>
                   <span class="ai-tag">강도: {{ strengthLabel(aiAnalysis.smartFitStrength) }}</span>
@@ -483,6 +504,13 @@ function resizeLabel(v) { return RESIZE_LABELS[v] ?? v }
 function strengthLabel(v) { return STRENGTH_LABELS[v] ?? v }
 function posLabel(v) { return POS_LABELS[v] ?? v }
 
+const CREATIVE_TYPE_LABELS = { text_heavy: '텍스트형', product_focused: '제품형', balanced_mix: '균형형' }
+const DENSITY_LABELS = { high: '높음', medium: '보통', low: '낮음' }
+const RISK_LABELS = { high: '높음 ⚠', medium: '보통', low: '낮음' }
+function creativeTypeLabel(v) { return CREATIVE_TYPE_LABELS[v] ?? v }
+function densityLabel(v) { return DENSITY_LABELS[v] ?? v }
+function riskLabel(v) { return RISK_LABELS[v] ?? v }
+
 function getSimpleRatio(w, h) {
   const known = [[16,9],[4,3],[1,1],[9,16],[3,4],[2,1],[3,2],[21,9],[1,2],[1,3],[3,1]]
   const ratio = w / h
@@ -734,6 +762,26 @@ onMounted(async () => {
 }
 .ai-result-star { font-size: 10px; }
 .ai-conf { margin-left: auto; font-size: 10px; font-weight: 500; color: #8B95A1; }
+.ai-analysis-section { margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px; }
+.ai-analysis-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.ai-analysis-label { color: #8B95A1; font-weight: 600; min-width: 58px; flex-shrink: 0; }
+.ai-subject-desc { color: #4E5968; font-size: 11px; line-height: 1.4; }
+
+.ai-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 100px;
+  font-size: 10.5px; font-weight: 700;
+  background: #F0ECFF; color: #7C3AED;
+}
+.ai-badge.text_heavy    { background: #EFF6FF; color: #2563EB; }
+.ai-badge.product_focused { background: #F0FDF4; color: #16A34A; }
+.ai-badge.balanced_mix  { background: #FFF7ED; color: #EA580C; }
+.ai-badge.density-high  { background: #FEF2F2; color: #DC2626; }
+.ai-badge.density-medium { background: #FEFCE8; color: #CA8A04; }
+.ai-badge.density-low   { background: #F0FDF4; color: #16A34A; }
+.ai-badge.risk-high     { background: #FEF2F2; color: #DC2626; }
+.ai-badge.risk-medium   { background: #FEFCE8; color: #CA8A04; }
+.ai-badge.risk-low      { background: #F0FDF4; color: #16A34A; }
+
 .ai-result-reason { font-size: 11.5px; color: #4E5968; line-height: 1.55; margin-bottom: 8px; }
 .ai-result-settings { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
 .ai-tag {
