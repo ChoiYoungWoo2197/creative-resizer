@@ -51,12 +51,21 @@ public class BannerAnalysisService {
             smartFitStrength: safe, balanced, fill
             focalPosition: center, top, bottom, left, right, left-top, right-top, left-bottom, right-bottom
 
+            [품질 체크 필드]
+            cropRiskAreas: 잘림 위험이 있는 영역 목록 (예: ["우측 상단 로고", "하단 가격 텍스트"]) — 없으면 빈 배열
+            recommendedBecause: 추천 설정의 근거 bullet (예: ["제품이 좌측에 치우쳐 left 포커스 적용", "텍스트 밀도가 높아 safe 강도 권장"]) — 2~4항목
+            avoidOptions: 이 소재에서 피해야 할 설정 목록 (예: ["fill 강도 — 가장자리 텍스트 잘림 위험", "cover 모드 — 배경 손실 가능"]) — 없으면 빈 배열
+
             판단 기준:
             - 텍스트/로고/가격/CTA가 가장자리에 많으면 edgeRisk high, smartFitStrength safe
             - 제품/인물이 명확하면 product_focused, 해당 위치를 mainSubjectPosition과 focalPosition에 반영
             - 텍스트가 거의 없고 제품 중심이면 fill 가능
             - 잘림 위험이 높으면 smart-fit safe 또는 contain 추천
             - focalPosition은 mainSubjectPosition과 동일하게 맞추는 것을 우선으로 함
+            - textDensity=high 이고 edgeRisk=high 이면 → focalPosition=center 우선 (텍스트 분산 보호)
+            - creativeType=text_heavy 이면 → smartFitStrength=safe 우선, fill 절대 지양
+            - creativeType=product_focused 이고 textDensity=low 이면 → smartFitStrength=balanced 또는 fill 적극 추천
+            - 제품이 한쪽에 치우쳐 있어도 텍스트가 이미지 여러 방향에 분산되어 있으면 → focalPosition=center 추천
 
             반환 JSON:
             {
@@ -70,7 +79,10 @@ public class BannerAnalysisService {
               "focalPosition": "...",
               "reason": "한국어로 분석 이유 (1~2문장)",
               "warnings": ["주의사항"],
-              "confidence": 0.00
+              "confidence": 0.00,
+              "cropRiskAreas": ["..."],
+              "recommendedBecause": ["...", "..."],
+              "avoidOptions": ["..."]
             }
             """;
 
@@ -128,7 +140,7 @@ public class BannerAnalysisService {
         Map<String, Object> requestBody = new LinkedHashMap<>();
         requestBody.put("model", "gpt-4.1-mini");
         requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 600);
+        requestBody.put("max_tokens", 900);
         requestBody.put("response_format", Map.of("type", "json_object"));
 
         HttpHeaders headers = new HttpHeaders();
@@ -171,6 +183,15 @@ public class BannerAnalysisService {
 
         Object conf = result.get("confidence");
         if (conf instanceof Number) analysis.setConfidence(((Number) conf).doubleValue());
+
+        Object cropRiskObj = result.get("cropRiskAreas");
+        analysis.setCropRiskAreas(cropRiskObj instanceof List ? (List<String>) cropRiskObj : List.of());
+
+        Object recommendedObj = result.get("recommendedBecause");
+        analysis.setRecommendedBecause(recommendedObj instanceof List ? (List<String>) recommendedObj : List.of());
+
+        Object avoidObj = result.get("avoidOptions");
+        analysis.setAvoidOptions(avoidObj instanceof List ? (List<String>) avoidObj : List.of());
 
         analysis.setCreatedAt(LocalDateTime.now());
         return mongoService.save(analysis);

@@ -41,9 +41,16 @@ public class BannerController {
             @RequestParam(defaultValue = "smart-fit") String resizeMode,
             @RequestParam(defaultValue = "balanced") String smartFitStrength,
             @RequestParam(defaultValue = "center") String focalPosition,
-            @RequestParam(defaultValue = "png") String outputFormat
+            @RequestParam(defaultValue = "png") String outputFormat,
+            @RequestParam(required = false) String aiAnalysisId,
+            @RequestParam(required = false) Boolean aiApplied,
+            @RequestParam(required = false) String aiRecommendedResizeMode,
+            @RequestParam(required = false) String aiRecommendedSmartFitStrength,
+            @RequestParam(required = false) String aiRecommendedFocalPosition
     ) throws IOException {
-        BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, specIds, resizeMode, smartFitStrength, focalPosition, outputFormat);
+        BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, specIds, resizeMode,
+                smartFitStrength, focalPosition, outputFormat,
+                aiAnalysisId, aiApplied, aiRecommendedResizeMode, aiRecommendedSmartFitStrength, aiRecommendedFocalPosition);
         return ResponseEntity.ok(job);
     }
 

@@ -30,5 +30,11 @@ public class BannerAiAnalysis {
     private String reason;
     private List<String> warnings;
     private Double confidence;
+
+    // 품질 체크
+    private List<String> cropRiskAreas;      // 잘림 위험 영역
+    private List<String> recommendedBecause; // 추천 근거 bullet
+    private List<String> avoidOptions;       // 피해야 할 설정
+
     private LocalDateTime createdAt;
 }

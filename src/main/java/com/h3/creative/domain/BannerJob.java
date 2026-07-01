@@ -28,6 +28,13 @@ public class BannerJob {
     private String zipPath;
     private List<BannerResult> results;
 
+    // AI 추천 적용 이력
+    private String aiAnalysisId;
+    private Boolean aiApplied;
+    private String aiRecommendedResizeMode;
+    private String aiRecommendedSmartFitStrength;
+    private String aiRecommendedFocalPosition;
+
     private String errorMessage;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

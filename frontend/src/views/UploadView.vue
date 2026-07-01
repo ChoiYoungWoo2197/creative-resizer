@@ -86,7 +86,24 @@
                 <div v-if="aiAnalysis.warnings?.length" class="ai-result-warnings">
                   <div v-for="w in aiAnalysis.warnings" :key="w" class="ai-warn-item">⚠ {{ w }}</div>
                 </div>
-                <button class="ai-apply-btn" @click="applyAiAnalysis">추천 적용</button>
+                <!-- 추천 근거 -->
+                <div v-if="aiAnalysis.recommendedBecause?.length" class="ai-quality-section">
+                  <div class="ai-quality-label">추천 근거</div>
+                  <div v-for="r in aiAnalysis.recommendedBecause" :key="r" class="ai-quality-item ai-quality-good">✓ {{ r }}</div>
+                </div>
+                <!-- 잘림 위험 영역 -->
+                <div v-if="aiAnalysis.cropRiskAreas?.length" class="ai-quality-section">
+                  <div class="ai-quality-label">잘림 위험 영역</div>
+                  <div v-for="a in aiAnalysis.cropRiskAreas" :key="a" class="ai-quality-item ai-quality-warn">⚠ {{ a }}</div>
+                </div>
+                <!-- 피해야 할 옵션 -->
+                <div v-if="aiAnalysis.avoidOptions?.length" class="ai-quality-section">
+                  <div class="ai-quality-label">피해야 할 옵션</div>
+                  <div v-for="o in aiAnalysis.avoidOptions" :key="o" class="ai-quality-item ai-quality-danger">✕ {{ o }}</div>
+                </div>
+                <button class="ai-apply-btn" :class="{ applied: aiApplied }" @click="applyAiAnalysis">
+                  {{ aiApplied ? '✓ 적용됨' : '추천 적용' }}
+                </button>
               </div>
             </div>
             <div class="field-stack">
@@ -327,6 +344,7 @@ const loading      = ref(false)
 const result       = ref(null)
 const aiAnalyzing  = ref(false)
 const aiAnalysis   = ref(null)
+const aiApplied    = ref(false)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
@@ -525,7 +543,7 @@ function getSimpleRatio(w, h) {
 function clearFile() {
   form.psdFile = null
   previewUrl.value = null; previewError.value = false; previewSize.value = ''
-  aiAnalysis.value = null
+  aiAnalysis.value = null; aiApplied.value = false
 }
 
 async function runAiAnalyze() {
@@ -552,6 +570,7 @@ function applyAiAnalysis() {
   form.smartFitStrength = aiAnalysis.value.smartFitStrength ?? form.smartFitStrength
   form.focalPosition = aiAnalysis.value.focalPosition ?? form.focalPosition
   materialType.value = ''
+  aiApplied.value = true
   ElMessage.success('AI 추천 설정이 적용되었습니다.')
 }
 
@@ -604,6 +623,13 @@ async function submit() {
   fd.append('smartFitStrength', form.smartFitStrength)
   fd.append('focalPosition', form.focalPosition)
   fd.append('outputFormat', form.outputFormat)
+  if (aiAnalysis.value?.id) {
+    fd.append('aiAnalysisId', aiAnalysis.value.id)
+    fd.append('aiApplied', String(aiApplied.value))
+    fd.append('aiRecommendedResizeMode', aiAnalysis.value.resizeMode ?? '')
+    fd.append('aiRecommendedSmartFitStrength', aiAnalysis.value.smartFitStrength ?? '')
+    fd.append('aiRecommendedFocalPosition', aiAnalysis.value.focalPosition ?? '')
+  }
 
   loading.value = true
   try {
@@ -790,13 +816,21 @@ onMounted(async () => {
 }
 .ai-result-warnings { margin-bottom: 8px; }
 .ai-warn-item { font-size: 10.5px; color: #B45309; margin-bottom: 3px; line-height: 1.4; }
+.ai-quality-section { margin-bottom: 7px; }
+.ai-quality-label { font-size: 10px; font-weight: 700; color: #8B95A1; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+.ai-quality-item { font-size: 11px; line-height: 1.45; padding: 2px 0; }
+.ai-quality-good { color: #16A34A; }
+.ai-quality-warn { color: #B45309; }
+.ai-quality-danger { color: #DC2626; }
+
 .ai-apply-btn {
   width: 100%; padding: 7px;
   background: #7C3AED; border: none; border-radius: 7px;
   font-size: 12px; font-weight: 700; color: #fff;
-  cursor: pointer; font-family: inherit; transition: opacity 0.12s;
+  cursor: pointer; font-family: inherit; transition: all 0.12s;
 }
 .ai-apply-btn:hover { opacity: 0.88; }
+.ai-apply-btn.applied { background: #16A34A; cursor: default; }
 
 .adv-row-pos { align-items: flex-start; }
 .adv-pos-grid {

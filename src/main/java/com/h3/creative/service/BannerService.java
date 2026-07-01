@@ -36,7 +36,10 @@ public class BannerService {
 
     public BannerJob submit(MultipartFile psdFile, String advertiser, String campaignName,
                             List<String> specIds, String resizeMode, String smartFitStrength,
-                            String focalPosition, String outputFormat) throws IOException {
+                            String focalPosition, String outputFormat,
+                            String aiAnalysisId, Boolean aiApplied,
+                            String aiRecommendedResizeMode, String aiRecommendedSmartFitStrength,
+                            String aiRecommendedFocalPosition) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
 
@@ -60,6 +63,11 @@ public class BannerService {
         job.setOutputFormat(outputFormat);
         job.setPsdPath(dest.getAbsolutePath());
         job.setStatus("pending");
+        job.setAiAnalysisId(aiAnalysisId);
+        job.setAiApplied(aiApplied != null && aiApplied);
+        job.setAiRecommendedResizeMode(aiRecommendedResizeMode);
+        job.setAiRecommendedSmartFitStrength(aiRecommendedSmartFitStrength);
+        job.setAiRecommendedFocalPosition(aiRecommendedFocalPosition);
 
         BannerJob saved = bannerMongoService.save(job);
 
