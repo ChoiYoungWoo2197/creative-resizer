@@ -165,6 +165,11 @@ public class BannerCompareService {
         BannerAiCompare compare = compareMongoService.findById(compareId);
         if (compare == null) throw new IllegalArgumentException("Compare not found: " + compareId);
 
+        if (!jobId.equals(compare.getJobId()))
+            throw new IllegalArgumentException("Compare job mismatch");
+        if (!specId.equals(compare.getSpecId()))
+            throw new IllegalArgumentException("Compare spec mismatch");
+
         BannerAiCompare.CandidateResult chosen = compare.getCandidates().stream()
                 .filter(c -> candidate.equals(c.getStrength()))
                 .findFirst()

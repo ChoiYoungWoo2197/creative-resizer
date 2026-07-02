@@ -157,7 +157,12 @@ public class BannerController {
 
         if (result == null) return ResponseEntity.notFound().build();
 
-        File file = new File(result.getFilePath());
+        // AI 후보 적용됐으면 선택 후보 파일 우선
+        String filePath = (result.getSelectedCandidateFilePath() != null && Boolean.TRUE.equals(result.getAiCompareApplied()))
+                ? result.getSelectedCandidateFilePath()
+                : result.getFilePath();
+
+        File file = new File(filePath);
         if (!file.exists()) return ResponseEntity.notFound().build();
 
         String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
