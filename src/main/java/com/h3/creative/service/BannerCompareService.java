@@ -175,6 +175,10 @@ public class BannerCompareService {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Candidate not found: " + candidate));
 
+        File candidateFile = new File(chosen.getFilePath());
+        if (!candidateFile.exists())
+            throw new IllegalArgumentException("Candidate file not found: " + chosen.getFilePath());
+
         log.info("AI 후보 적용: jobId={} specId={} candidate={}", jobId, specId, candidate);
         return bannerMongoService.applyCompareToResult(jobId, specId, compareId, candidate, chosen.getFilePath());
     }
