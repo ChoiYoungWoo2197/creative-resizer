@@ -68,7 +68,7 @@
           <div class="img-card" v-for="r in job.results" :key="r.fileName" :class="{ invalid: r.valid === false }">
             <div class="img-thumb" :style="thumbStyle(r)">
               <img
-                :src="getPreviewUrl(r.fileName)"
+                :src="resultPreviewUrl(r)"
                 :alt="r.name"
                 @error="onImgError($event)"
               />
@@ -200,6 +200,14 @@ function thumbStyle(r) {
 
 function getPreviewUrl(fileName) {
   return previewUrl(route.params.id, fileName)
+}
+
+function resultPreviewUrl(r) {
+  const base = previewUrl(route.params.id, r.fileName)
+  const version = r.aiCompareApplied
+    ? `${r.selectedCompareId || ''}-${r.selectedCandidate || ''}`
+    : job.value?.updatedAt || ''
+  return version ? `${base}?v=${encodeURIComponent(version)}` : base
 }
 
 function fmtSize(bytes) {
