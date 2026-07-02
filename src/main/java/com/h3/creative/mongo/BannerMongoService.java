@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -66,5 +67,30 @@ public class BannerMongoService {
                 .set("results", results)
                 .set("updatedAt", LocalDateTime.now());
         mongoTemplate.updateFirst(query, update, BannerJob.class);
+    }
+
+    public BannerJob applyCompareToResult(String jobId, String specId,
+            String compareId, String candidate, String candidateFilePath) {
+        BannerJob job = findById(jobId);
+        if (job == null) return null;
+
+        List<BannerJob.BannerResult> results = new ArrayList<>(job.getResults());
+        for (BannerJob.BannerResult r : results) {
+            if (specId.equals(r.getSpecId())) {
+                r.setSelectedCompareId(compareId);
+                r.setSelectedCandidate(candidate);
+                r.setSelectedCandidateFilePath(candidateFilePath);
+                r.setAiCompareApplied(true);
+                break;
+            }
+        }
+
+        Query query = Query.query(Criteria.where("id").is(jobId));
+        Update update = new Update()
+                .set("results", results)
+                .set("updatedAt", LocalDateTime.now());
+        mongoTemplate.updateFirst(query, update, BannerJob.class);
+
+        return findById(jobId);
     }
 }

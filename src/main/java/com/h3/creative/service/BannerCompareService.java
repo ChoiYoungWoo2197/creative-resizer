@@ -161,6 +161,19 @@ public class BannerCompareService {
         return compareMongoService.findById(compareId);
     }
 
+    public BannerJob apply(String jobId, String compareId, String specId, String candidate) {
+        BannerAiCompare compare = compareMongoService.findById(compareId);
+        if (compare == null) throw new IllegalArgumentException("Compare not found: " + compareId);
+
+        BannerAiCompare.CandidateResult chosen = compare.getCandidates().stream()
+                .filter(c -> candidate.equals(c.getStrength()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Candidate not found: " + candidate));
+
+        log.info("AI 후보 적용: jobId={} specId={} candidate={}", jobId, specId, candidate);
+        return bannerMongoService.applyCompareToResult(jobId, specId, compareId, candidate, chosen.getFilePath());
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> callOpenAiCompare(String originalFilePath,
             List<CompareWorkerResponse.CandidateItem> candidates) throws IOException {

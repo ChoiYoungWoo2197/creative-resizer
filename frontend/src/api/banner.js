@@ -39,5 +39,8 @@ export const analyzeBanner = (formData) =>
 export const compareJob = (jobId, specId) =>
   api.post(`/banner/jobs/${jobId}/compare`, { specId }, { timeout: 60000 })
 
+export const applyCompare = (jobId, compareId, specId, candidate) =>
+  api.post(`/banner/jobs/${jobId}/compare/${compareId}/apply`, { specId, candidate })
+
 export const compareFileUrl = (compareId, fileName) =>
   `/api/banner/compare/${compareId}/files/${encodeURIComponent(fileName)}`

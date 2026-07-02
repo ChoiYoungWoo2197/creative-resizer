@@ -52,5 +52,11 @@ public class BannerJob {
         private Long fileSize;
         private Boolean valid;
         private String validationMessage;
+
+        // AI 후보 적용 이력
+        private String selectedCompareId;
+        private String selectedCandidate;       // safe / balanced / fill
+        private String selectedCandidateFilePath;
+        private Boolean aiCompareApplied;
     }
 }

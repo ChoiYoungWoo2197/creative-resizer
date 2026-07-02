@@ -1,5 +1,6 @@
 package com.h3.creative.api;
 
+import com.h3.creative.domain.ApplyRequest;
 import com.h3.creative.domain.BannerAiAnalysis;
 import com.h3.creative.domain.BannerAiCompare;
 import com.h3.creative.domain.BannerJob;
@@ -8,6 +9,7 @@ import com.h3.creative.service.BannerAnalysisService;
 import com.h3.creative.service.BannerCompareService;
 import com.h3.creative.service.BannerService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -16,11 +18,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @RestController
 @RequestMapping("/api/banner")
@@ -78,6 +84,17 @@ public class BannerController {
         return ResponseEntity.ok(bannerCompareService.compare(jobId, body.getSpecId()));
     }
 
+    @PostMapping("/jobs/{jobId}/compare/{compareId}/apply")
+    public ResponseEntity<BannerJob> applyCompare(
+            @PathVariable String jobId,
+            @PathVariable String compareId,
+            @RequestBody ApplyRequest body
+    ) {
+        BannerJob job = bannerCompareService.apply(jobId, compareId, body.getSpecId(), body.getCandidate());
+        if (job == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(job);
+    }
+
     @GetMapping("/compare/{compareId}/files/{filename:.+}")
     public ResponseEntity<Resource> compareFile(
             @PathVariable String compareId,
@@ -110,7 +127,12 @@ public class BannerController {
 
         if (result == null) return ResponseEntity.notFound().build();
 
-        File file = new File(result.getFilePath());
+        // AI 후보 적용됐으면 선택 후보 파일 우선
+        String filePath = (result.getSelectedCandidateFilePath() != null && Boolean.TRUE.equals(result.getAiCompareApplied()))
+                ? result.getSelectedCandidateFilePath()
+                : result.getFilePath();
+
+        File file = new File(filePath);
         if (!file.exists()) return ResponseEntity.notFound().build();
 
         MediaType mediaType = filename.endsWith(".jpg") || filename.endsWith(".jpeg")
@@ -146,24 +168,45 @@ public class BannerController {
     }
 
     @GetMapping("/job/{id}/download")
-    public ResponseEntity<Resource> download(@PathVariable String id) {
+    public ResponseEntity<Resource> download(@PathVariable String id) throws IOException {
         BannerJob job = bannerService.getJob(id);
         if (job == null || !"done".equals(job.getStatus())) {
             return ResponseEntity.notFound().build();
         }
 
-        File zip = new File(job.getZipPath());
-        if (!zip.exists()) {
-            return ResponseEntity.notFound().build();
-        }
-
         String rawName = job.getAdvertiser() + "_" + job.getCampaignName() + ".zip";
         String encoded = URLEncoder.encode(rawName, StandardCharsets.UTF_8).replace("+", "%20");
-        Resource resource = new FileSystemResource(zip);
+
+        boolean hasApplied = job.getResults() != null &&
+                job.getResults().stream().anyMatch(r -> Boolean.TRUE.equals(r.getAiCompareApplied()));
+
+        if (!hasApplied) {
+            File zip = new File(job.getZipPath());
+            if (!zip.exists()) return ResponseEntity.notFound().build();
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                    .body(new FileSystemResource(zip));
+        }
+
+        // AI 후보 적용된 결과가 있으면 ZIP 동적 재생성 (파일명은 원본 규격명 유지)
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            for (BannerJob.BannerResult r : job.getResults()) {
+                String filePath = (Boolean.TRUE.equals(r.getAiCompareApplied()) && r.getSelectedCandidateFilePath() != null)
+                        ? r.getSelectedCandidateFilePath()
+                        : r.getFilePath();
+                File file = new File(filePath);
+                if (!file.exists()) continue;
+                zos.putNextEntry(new ZipEntry(r.getFileName()));
+                zos.write(Files.readAllBytes(file.toPath()));
+                zos.closeEntry();
+            }
+        }
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
-                .body(resource);
+                .body(new ByteArrayResource(baos.toByteArray()));
     }
 }

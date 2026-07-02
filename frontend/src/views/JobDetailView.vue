@@ -84,6 +84,9 @@
                 </span>
               </div>
               <div class="valid-msg" v-if="r.valid === false">{{ r.validationMessage }}</div>
+              <div v-if="r.aiCompareApplied" class="ai-applied-badge">
+                ✦ AI 후보 적용됨 · {{ strengthKr(r.selectedCandidate) }}
+              </div>
             </div>
             <div class="card-actions">
               <button class="btn-dl-single" @click="handleSingleDownload(r)">↓ 다운로드</button>
@@ -127,6 +130,15 @@
             <div v-if="c.cons?.length" class="cmp-cons">
               <div v-for="n in c.cons" :key="n" class="cmp-con-item">✕ {{ n }}</div>
             </div>
+            <div class="cmp-apply-area">
+              <button class="btn-cmp-apply"
+                :class="{ 'btn-cmp-apply-best': c.strength === compareResult?.bestCandidate }"
+                :disabled="applyLoading[`${compareResult?.specId}_${c.strength}`]"
+                @click="runApply(c.strength)">
+                <span v-if="applyLoading[`${compareResult?.specId}_${c.strength}`]" class="spin-xs" />
+                {{ c.strength === compareResult?.bestCandidate ? '★ 추천 적용' : '이 후보 적용' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -137,7 +149,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getJob, downloadZip, downloadImage, previewUrl, compareJob, compareFileUrl } from '../api/banner.js'
+import { getJob, downloadZip, downloadImage, previewUrl, compareJob, compareFileUrl, applyCompare } from '../api/banner.js'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -150,6 +162,9 @@ let pollTimer = null
 const compareLoading = ref({})   // { specId: true/false }
 const compareModal = ref(false)
 const compareResult = ref(null)
+
+// AI 후보 적용
+const applyLoading = ref({})     // { specId_candidate: true/false }
 
 const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움' }
 
@@ -281,6 +296,23 @@ async function runCompare(specId) {
 
 const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움' }
 function strengthKr(v) { return STRENGTH_KR[v] ?? v }
+
+async function runApply(candidate) {
+  if (!compareResult.value) return
+  const key = `${compareResult.value.specId}_${candidate}`
+  if (applyLoading.value[key]) return
+  applyLoading.value[key] = true
+  try {
+    await applyCompare(route.params.id, compareResult.value.id, compareResult.value.specId, candidate)
+    compareModal.value = false
+    await loadJob()
+    ElMessage.success(`${strengthKr(candidate)} 후보가 적용되었습니다.`)
+  } catch (e) {
+    ElMessage.error('적용 실패: ' + (e.response?.data?.message ?? e.message))
+  } finally {
+    applyLoading.value[key] = false
+  }
+}
 
 onMounted(loadJob)
 onUnmounted(stopPolling)
@@ -590,4 +622,39 @@ onUnmounted(stopPolling)
 .cmp-cons { border-top: 1px solid #FEF2F2; }
 .cmp-pro-item { font-size: 11px; color: #16A34A; line-height: 1.5; }
 .cmp-con-item { font-size: 11px; color: #DC2626; line-height: 1.5; }
+
+.cmp-apply-area { padding: 8px 12px 12px; }
+.btn-cmp-apply {
+  width: 100%;
+  padding: 7px 0;
+  border-radius: 7px;
+  border: 1px solid #D1D5DB;
+  background: #F9FAFB;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-cmp-apply:hover:not(:disabled) { background: #F3F4F6; border-color: #9CA3AF; }
+.btn-cmp-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-cmp-apply-best {
+  background: linear-gradient(135deg, #EDE9FE, #DDD6FE);
+  border-color: #7C3AED;
+  color: #6D28D9;
+}
+.btn-cmp-apply-best:hover:not(:disabled) { background: #DDD6FE; }
+
+.ai-applied-badge {
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6D28D9;
+  background: #EDE9FE;
+  border-radius: 6px;
+  padding: 2px 8px;
+  display: inline-block;
+}
 </style>
