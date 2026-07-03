@@ -193,7 +193,7 @@ const compareResult = ref(null)
 // AI 후보 적용
 const applyLoading = ref({})     // { specId_candidate: true/false }
 
-const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움' }
+const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움', 'focus-fill': 'AI 포커스 채움' }
 
 const MEDIA_LABELS = {
   google: 'Google', meta: 'Meta', naver: 'Naver',
@@ -329,7 +329,7 @@ async function runCompare(specId) {
   }
 }
 
-const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움' }
+const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움', 'focus-fill': 'AI 포커스 채움' }
 function strengthKr(v) { return STRENGTH_KR[v] ?? v }
 
 const GROUP_LABELS = {
@@ -608,7 +608,7 @@ onUnmounted(stopPolling)
   z-index: 200; padding: 20px;
 }
 .cmp-modal {
-  background: #fff; border-radius: 16px; width: 100%; max-width: 860px;
+  background: #fff; border-radius: 16px; width: 100%; max-width: 980px;
   max-height: 90vh; overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,0.2);
   padding: 24px;
@@ -631,7 +631,7 @@ onUnmounted(stopPolling)
   font-size: 13px; color: #4E5968; line-height: 1.55;
   background: #F9F8FD; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
 }
-.cmp-candidates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.cmp-candidates { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 @media (max-width: 640px) { .cmp-candidates { grid-template-columns: 1fr; } }
 
 .cmp-card {

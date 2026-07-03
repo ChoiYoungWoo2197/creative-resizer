@@ -26,6 +26,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -52,7 +53,11 @@ public class BannerCompareService {
             3번: balanced 강도 리사이징 결과 (균형)
             4번: fill 강도 리사이징 결과 (최대 확대, 일부 잘림 가능)
 
-            각 후보(2~4번)의 리사이징 품질을 평가해줘.
+            각 후보(2번~)의 리사이징 품질을 평가해줘.
+            이미지가 5장이면 5번(focus-fill)도 평가 대상이다.
+            focus-fill 후보는 AI가 감지한 필수 요소를 기준으로 crop하여 blur를 줄이고 꽉 찬 배너를 만든 결과다.
+            평가 시: required 요소가 잘리지 않았는지, blur 배경이 줄어들었는지, 광고 배너처럼 꽉 차고 자연스러운지 확인하세요.
+            focus-fill이 required 요소를 모두 유지하면서 blur 영역을 줄였다면 높은 점수를 주세요. 단, required 텍스트나 제품이 잘리면 큰 감점 처리하세요.
 
             평가 기준:
             - 원본의 핵심 메시지(텍스트/로고/CTA)가 유지되는가
@@ -62,6 +67,7 @@ public class BannerCompareService {
             - 광고 배너로 자연스러운가
 
             반환은 반드시 JSON 형식으로만 해줘. 다른 텍스트 포함하지 마.
+            candidates 배열에는 실제 비교한 후보만 포함해. (focus-fill 없으면 3개, 있으면 4개)
 
             {
               "bestCandidate": "balanced",
@@ -103,7 +109,7 @@ public class BannerCompareService {
         return sb.toString();
     }
 
-    private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of("safe", "balanced", "fill");
+    private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of("safe", "balanced", "fill", "focus-fill");
 
     @SuppressWarnings("unchecked")
     public BannerAiCompare compare(String jobId, String specId) throws IOException {
@@ -117,6 +123,36 @@ public class BannerCompareService {
         String compareId = UUID.randomUUID().toString();
         String focalPosition = job.getFocalPosition() != null ? job.getFocalPosition() : "center";
 
+        BannerAiAnalysis analysis = (job.getAiAnalysisId() != null)
+                ? analysisMongoService.findById(job.getAiAnalysisId()) : null;
+
+        // AI 분석이 있으면 focus-fill 후보 추가
+        List<String> strengths = new ArrayList<>(List.of("safe", "balanced", "fill"));
+        List<CompareWorkerRequest.DetectedElementPayload> detectedPayloads = List.of();
+        List<String> reqGroups = List.of();
+        List<String> priGroups = List.of();
+
+        if (analysis != null && analysis.getDetectedElements() != null && !analysis.getDetectedElements().isEmpty()) {
+            strengths.add("focus-fill");
+            detectedPayloads = analysis.getDetectedElements().stream()
+                    .map(el -> CompareWorkerRequest.DetectedElementPayload.builder()
+                            .id(el.getId())
+                            .type(el.getType())
+                            .label(el.getLabel())
+                            .group(el.getGroup())
+                            .importance(el.getImportance())
+                            .bbox(el.getBbox() != null ? CompareWorkerRequest.BboxPayload.builder()
+                                    .x(el.getBbox().getX())
+                                    .y(el.getBbox().getY())
+                                    .width(el.getBbox().getWidth())
+                                    .height(el.getBbox().getHeight())
+                                    .build() : null)
+                            .build())
+                    .collect(Collectors.toList());
+            reqGroups = analysis.getRequiredGroups() != null ? analysis.getRequiredGroups() : List.of();
+            priGroups = analysis.getPriorityGroups() != null ? analysis.getPriorityGroups() : List.of();
+        }
+
         CompareWorkerRequest workerReq = CompareWorkerRequest.builder()
                 .compareId(compareId)
                 .psdPath(job.getPsdPath())
@@ -128,17 +164,17 @@ public class BannerCompareService {
                         .build())
                 .resizeMode("smart-fit")
                 .focalPosition(focalPosition)
-                .strengths(List.of("safe", "balanced", "fill"))
+                .strengths(strengths)
+                .detectedElements(detectedPayloads)
+                .requiredGroups(reqGroups)
+                .priorityGroups(priGroups)
                 .build();
 
-        log.info("Compare 요청: compareId={} jobId={} specId={} spec={}x{}", compareId, jobId, specId, spec.getWidth(), spec.getHeight());
+        log.info("Compare 요청: compareId={} jobId={} specId={} spec={}x{} strengths={}", compareId, jobId, specId, spec.getWidth(), spec.getHeight(), strengths);
         CompareWorkerResponse workerResp = workerClient.compare(workerReq);
         if (!workerResp.isSuccess()) {
             throw new IllegalStateException("Worker compare 실패: " + workerResp.getError());
         }
-
-        BannerAiAnalysis analysis = (job.getAiAnalysisId() != null)
-                ? analysisMongoService.findById(job.getAiAnalysisId()) : null;
 
         Map<String, Object> aiResult = callOpenAiCompare(workerResp.getOriginalFilePath(), workerResp.getCandidates(), buildComparePrompt(analysis));
 

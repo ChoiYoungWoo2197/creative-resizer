@@ -189,9 +189,101 @@ RESIZE_FUNCS = {
 }
 
 
+def collect_focus_boxes(elements: list, required_groups: list, priority_groups: list) -> list:
+    """requiredGroups/importance=required bbox 수집, 없으면 priority 사용"""
+    required_boxes = []
+    priority_boxes = []
+    for el in elements:
+        bbox = el.get("bbox")
+        if not bbox:
+            continue
+        x = bbox.get("x", 0)
+        y = bbox.get("y", 0)
+        w = bbox.get("width", 0)
+        h = bbox.get("height", 0)
+        if w <= 0 or h <= 0:
+            continue
+        box = (x, y, x + w, y + h)
+        group = el.get("group", "")
+        importance = el.get("importance", "")
+        if group in required_groups or importance == "required":
+            required_boxes.append(box)
+        elif group in priority_groups or importance == "priority":
+            priority_boxes.append(box)
+    return required_boxes or priority_boxes
+
+
+def union_boxes(boxes: list) -> tuple:
+    x1 = min(b[0] for b in boxes)
+    y1 = min(b[1] for b in boxes)
+    x2 = max(b[2] for b in boxes)
+    y2 = max(b[3] for b in boxes)
+    return (x1, y1, x2, y2)
+
+
+def add_padding(box: tuple, img_w: int, img_h: int, padding_ratio: float = 0.12) -> tuple:
+    x1, y1, x2, y2 = box
+    bw = x2 - x1
+    bh = y2 - y1
+    px = int(bw * padding_ratio)
+    py = int(bh * padding_ratio)
+    return (max(0, x1 - px), max(0, y1 - py), min(img_w, x2 + px), min(img_h, y2 + py))
+
+
+def shift_inside(a: float, b: float, max_val: int) -> tuple:
+    if b > max_val:
+        a -= (b - max_val)
+        b = max_val
+    if a < 0:
+        b += -a
+        a = 0
+    return a, min(b, max_val)
+
+
+def expand_to_ratio(box: tuple, target_ratio: float, img_w: int, img_h: int) -> tuple:
+    x1, y1, x2, y2 = box
+    bw = x2 - x1
+    bh = y2 - y1
+    box_ratio = bw / bh if bh > 0 else 1.0
+    if box_ratio < target_ratio:
+        new_w = bh * target_ratio
+        cx = (x1 + x2) / 2
+        x1, x2 = cx - new_w / 2, cx + new_w / 2
+    else:
+        new_h = bw / target_ratio
+        cy = (y1 + y2) / 2
+        y1, y2 = cy - new_h / 2, cy + new_h / 2
+    x1, x2 = shift_inside(x1, x2, img_w)
+    y1, y2 = shift_inside(y1, y2, img_h)
+    return int(x1), int(y1), int(x2), int(y2)
+
+
+def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
+                      detected_elements: list, required_groups: list, priority_groups: list) -> Image.Image:
+    """AI 분석 bbox 기준으로 crop → blur 없이 꽉 찬 배너 생성. 실패 시 balanced fallback."""
+    boxes = collect_focus_boxes(detected_elements, required_groups, priority_groups)
+    if not boxes:
+        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+
+    union = union_boxes(boxes)
+    padded = add_padding(union, img.width, img.height, padding_ratio=0.12)
+    target_ratio = dst_w / dst_h
+    crop_box = expand_to_ratio(padded, target_ratio, img.width, img.height)
+
+    # crop box가 union box를 포함하는지 검증
+    ux1, uy1, ux2, uy2 = union
+    cx1, cy1, cx2, cy2 = crop_box
+    if not (cx1 <= ux1 and cy1 <= uy1 and cx2 >= ux2 and cy2 >= uy2):
+        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+
+    cropped = img.crop(crop_box)
+    return cropped.resize((dst_w, dst_h), Image.LANCZOS)
+
+
 def generate_candidates(input_path: str, output_dir: str, spec: dict,
                         resize_mode: str = "smart-fit", focal_position: str = "center",
-                        strengths: list = None) -> tuple[str, list]:
+                        strengths: list = None, detected_elements: list = None,
+                        required_groups: list = None, priority_groups: list = None) -> tuple[str, list]:
     if strengths is None:
         strengths = ["safe", "balanced", "fill"]
 
@@ -208,10 +300,16 @@ def generate_candidates(input_path: str, output_dir: str, spec: dict,
 
     results = []
     for strength in strengths:
-        file_name = f"candidate_{strength}_{w}x{h}.png"
+        safe_strength = strength.replace("-", "_")
+        file_name = f"candidate_{safe_strength}_{w}x{h}.png"
         output_path = os.path.join(output_dir, file_name)
 
-        if resize_mode == "smart-fit":
+        if strength == "focus-fill":
+            resized = resize_focus_fill(img, w, h,
+                                        detected_elements or [],
+                                        required_groups or [],
+                                        priority_groups or [])
+        elif resize_mode == "smart-fit":
             resized = resize_smart_fit(img, w, h, strength, focal_position)
         else:
             resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
