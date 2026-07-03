@@ -101,6 +101,34 @@
                   <div class="ai-quality-label">피해야 할 옵션</div>
                   <div v-for="o in aiAnalysis.avoidOptions" :key="o" class="ai-quality-item ai-quality-danger">✕ {{ o }}</div>
                 </div>
+                <!-- AI 요소 분석 (3.5차) -->
+                <div v-if="aiAnalysis.requiredGroups?.length || aiAnalysis.priorityGroups?.length || aiAnalysis.optionalGroups?.length" class="ai-element-section">
+                  <div class="ai-quality-label">AI 요소 분석</div>
+                  <div v-if="aiAnalysis.requiredGroups?.length" class="ai-element-row">
+                    <span class="ai-el-label ai-el-required">필수</span>
+                    <div class="ai-el-tags">
+                      <span v-for="gid in aiAnalysis.requiredGroups" :key="gid" class="ai-el-tag ai-el-tag-required">
+                        {{ getGroupName(gid, aiAnalysis) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div v-if="aiAnalysis.priorityGroups?.length" class="ai-element-row">
+                    <span class="ai-el-label ai-el-priority">우선순위</span>
+                    <div class="ai-el-tags">
+                      <span v-for="gid in aiAnalysis.priorityGroups" :key="gid" class="ai-el-tag ai-el-tag-priority">
+                        {{ getGroupName(gid, aiAnalysis) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div v-if="aiAnalysis.optionalGroups?.length" class="ai-element-row">
+                    <span class="ai-el-label ai-el-optional">선택</span>
+                    <div class="ai-el-tags">
+                      <span v-for="gid in aiAnalysis.optionalGroups" :key="gid" class="ai-el-tag ai-el-tag-optional">
+                        {{ getGroupName(gid, aiAnalysis) }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 <button class="ai-apply-btn" :class="{ applied: aiApplied }" @click="applyAiAnalysis">
                   {{ aiApplied ? '✓ 적용됨' : '추천 적용' }}
                 </button>
@@ -529,6 +557,18 @@ function creativeTypeLabel(v) { return CREATIVE_TYPE_LABELS[v] ?? v }
 function densityLabel(v) { return DENSITY_LABELS[v] ?? v }
 function riskLabel(v) { return RISK_LABELS[v] ?? v }
 
+const GROUP_NAME_MAP = {
+  main_product: '메인 제품', main_copy: '메인 카피', sub_copy: '서브 카피',
+  price_discount: '가격/할인', cta: 'CTA', logo: '로고', decorations: '장식', background: '배경',
+}
+function getGroupName(gid, analysis) {
+  if (analysis?.elementGroups) {
+    const g = analysis.elementGroups.find(eg => eg.id === gid)
+    if (g?.name) return g.name
+  }
+  return GROUP_NAME_MAP[gid] ?? gid
+}
+
 function getSimpleRatio(w, h) {
   const known = [[16,9],[4,3],[1,1],[9,16],[3,4],[2,1],[3,2],[21,9],[1,2],[1,3],[3,1]]
   const ratio = w / h
@@ -822,6 +862,25 @@ onMounted(async () => {
 .ai-quality-good { color: #16A34A; }
 .ai-quality-warn { color: #B45309; }
 .ai-quality-danger { color: #DC2626; }
+
+/* AI 요소 분석 그룹 */
+.ai-element-section { margin-bottom: 8px; display: flex; flex-direction: column; gap: 5px; }
+.ai-element-row { display: flex; align-items: flex-start; gap: 6px; }
+.ai-el-label {
+  font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+  flex-shrink: 0; margin-top: 1px; white-space: nowrap;
+}
+.ai-el-required  { background: #FEF2F2; color: #DC2626; }
+.ai-el-priority  { background: #FEFCE8; color: #CA8A04; }
+.ai-el-optional  { background: #F2F4F6; color: #6B7684; }
+.ai-el-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.ai-el-tag {
+  font-size: 10px; font-weight: 600; padding: 1.5px 7px;
+  border-radius: 4px; border: 1px solid transparent;
+}
+.ai-el-tag-required { background: #FFF0F0; color: #DC2626; border-color: #FCA5A5; }
+.ai-el-tag-priority { background: #FFFBEB; color: #B45309; border-color: #FCD34D; }
+.ai-el-tag-optional { background: #F9FAFB; color: #6B7684; border-color: #E5E8EB; }
 
 .ai-apply-btn {
   width: 100%; padding: 7px;

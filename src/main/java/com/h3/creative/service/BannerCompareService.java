@@ -1,9 +1,11 @@
 package com.h3.creative.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.h3.creative.domain.BannerAiAnalysis;
 import com.h3.creative.domain.BannerAiCompare;
 import com.h3.creative.domain.BannerJob;
 import com.h3.creative.domain.BannerSpec;
+import com.h3.creative.mongo.BannerAnalysisMongoService;
 import com.h3.creative.mongo.BannerCompareMongoService;
 import com.h3.creative.mongo.BannerMongoService;
 import com.h3.creative.mongo.SpecMongoService;
@@ -33,6 +35,7 @@ public class BannerCompareService {
     private final BannerMongoService bannerMongoService;
     private final SpecMongoService specMongoService;
     private final BannerCompareMongoService compareMongoService;
+    private final BannerAnalysisMongoService analysisMongoService;
     private final WorkerClient workerClient;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -42,7 +45,7 @@ public class BannerCompareService {
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
-    private static final String COMPARE_PROMPT = """
+    private static final String COMPARE_PROMPT_BASE = """
             다음 이미지들을 순서대로 분석해줘:
             1번: 원본 이미지 (리사이징 기준)
             2번: safe 강도 리사이징 결과 (원본 최대 보존, 여백 발생 가능)
@@ -64,12 +67,41 @@ public class BannerCompareService {
               "bestCandidate": "balanced",
               "summary": "한국어로 최적 후보 선정 이유 (1문장)",
               "candidates": [
-                { "strength": "safe", "score": 0, "pros": ["..."], "cons": ["..."] },
-                { "strength": "balanced", "score": 0, "pros": ["..."], "cons": [] },
-                { "strength": "fill", "score": 0, "pros": ["..."], "cons": ["..."] }
+                { "strength": "safe", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
+                { "strength": "balanced", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": [] },
+                { "strength": "fill", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] }
               ]
             }
             """;
+
+    private String buildComparePrompt(BannerAiAnalysis analysis) {
+        if (analysis == null
+                || analysis.getDetectedElements() == null
+                || analysis.getDetectedElements().isEmpty()) {
+            return COMPARE_PROMPT_BASE;
+        }
+        StringBuilder sb = new StringBuilder(COMPARE_PROMPT_BASE);
+        sb.append("\n아래 detectedElements는 원본 이미지에서 AI가 감지한 중요 요소입니다.\n");
+        sb.append("평가 시 반드시 확인하세요:\n");
+        sb.append("1. required 요소가 후보 이미지에서 보존되었는가\n");
+        sb.append("2. priority 요소가 잘리지 않았는가\n");
+        sb.append("3. optional 요소가 잘려도 전체 광고 메시지에 영향이 적은가\n");
+        sb.append("4. 제품/사람/메인 카피/가격/CTA가 명확한가\n");
+        sb.append("5. 공간이 부족하면 optional 요소 손실은 허용하되 required 요소 손실은 큰 감점 처리하세요.\n");
+        sb.append("\n감지된 요소:\n");
+        for (BannerAiAnalysis.DetectedElement el : analysis.getDetectedElements()) {
+            sb.append(String.format("- [%s] %s (중요도: %s, 그룹: %s)\n",
+                    el.getType(), el.getLabel(), el.getImportance(), el.getGroup()));
+        }
+        if (analysis.getRequiredGroups() != null && !analysis.getRequiredGroups().isEmpty()) {
+            sb.append("필수 그룹: ").append(String.join(", ", analysis.getRequiredGroups())).append("\n");
+        }
+        if (analysis.getPriorityGroups() != null && !analysis.getPriorityGroups().isEmpty()) {
+            sb.append("우선순위 그룹: ").append(String.join(", ", analysis.getPriorityGroups())).append("\n");
+        }
+        sb.append("\n각 후보의 preservedRequiredGroups/lostRequiredGroups/preservedPriorityGroups/lostPriorityGroups를 위 그룹 ID 기준으로 채워줘.\n");
+        return sb.toString();
+    }
 
     private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of("safe", "balanced", "fill");
 
@@ -105,7 +137,10 @@ public class BannerCompareService {
             throw new IllegalStateException("Worker compare 실패: " + workerResp.getError());
         }
 
-        Map<String, Object> aiResult = callOpenAiCompare(workerResp.getOriginalFilePath(), workerResp.getCandidates());
+        BannerAiAnalysis analysis = (job.getAiAnalysisId() != null)
+                ? analysisMongoService.findById(job.getAiAnalysisId()) : null;
+
+        Map<String, Object> aiResult = callOpenAiCompare(workerResp.getOriginalFilePath(), workerResp.getCandidates(), buildComparePrompt(analysis));
 
         String bestCandidateRaw = (String) aiResult.getOrDefault("bestCandidate", "balanced");
         final String bestCandidate = VALID_CANDIDATES.contains(bestCandidateRaw) ? bestCandidateRaw : "balanced";
@@ -131,6 +166,14 @@ public class BannerCompareService {
                         cr.setPros(pros instanceof List ? (List<String>) pros : List.of());
                         Object cons = m.get("cons");
                         cr.setCons(cons instanceof List ? (List<String>) cons : List.of());
+                        Object preReq = m.get("preservedRequiredGroups");
+                        cr.setPreservedRequiredGroups(preReq instanceof List ? (List<String>) preReq : List.of());
+                        Object lostReq = m.get("lostRequiredGroups");
+                        cr.setLostRequiredGroups(lostReq instanceof List ? (List<String>) lostReq : List.of());
+                        Object prePri = m.get("preservedPriorityGroups");
+                        cr.setPreservedPriorityGroups(prePri instanceof List ? (List<String>) prePri : List.of());
+                        Object lostPri = m.get("lostPriorityGroups");
+                        cr.setLostPriorityGroups(lostPri instanceof List ? (List<String>) lostPri : List.of());
                     });
             results.add(cr);
         }
@@ -185,7 +228,7 @@ public class BannerCompareService {
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> callOpenAiCompare(String originalFilePath,
-            List<CompareWorkerResponse.CandidateItem> candidates) throws IOException {
+            List<CompareWorkerResponse.CandidateItem> candidates, String prompt) throws IOException {
 
         List<Map<String, Object>> content = new ArrayList<>();
 
@@ -206,7 +249,7 @@ public class BannerCompareService {
 
         Map<String, Object> textContent = new LinkedHashMap<>();
         textContent.put("type", "text");
-        textContent.put("text", COMPARE_PROMPT);
+        textContent.put("text", prompt);
         content.add(textContent);
 
         Map<String, Object> message = new LinkedHashMap<>();
@@ -216,7 +259,7 @@ public class BannerCompareService {
         Map<String, Object> requestBody = new LinkedHashMap<>();
         requestBody.put("model", "gpt-4.1-mini");
         requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 1200);
+        requestBody.put("max_tokens", 2000);
         requestBody.put("response_format", Map.of("type", "json_object"));
 
         HttpHeaders headers = new HttpHeaders();

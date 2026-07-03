@@ -56,6 +56,30 @@ public class BannerAnalysisService {
             recommendedBecause: 추천 설정의 근거 bullet (예: ["제품이 좌측에 치우쳐 left 포커스 적용", "텍스트 밀도가 높아 safe 강도 권장"]) — 2~4항목
             avoidOptions: 이 소재에서 피해야 할 설정 목록 (예: ["fill 강도 — 가장자리 텍스트 잘림 위험", "cover 모드 — 배경 손실 가능"]) — 없으면 빈 배열
 
+            [요소 분석 필드]
+            이미지 안의 주요 시각 요소를 분석하세요. 다음 요소 타입을 구분하세요:
+            - product (제품 이미지), person (사람/얼굴), text (텍스트/카피), logo (브랜드 로고),
+              cta (CTA 버튼/링크), price (가격 정보), discount (할인율/배지), badge (기타 배지),
+              decoration (장식 요소), background (배경)
+
+            각 요소에 대해 반환:
+            - id: "el_1", "el_2" 형태
+            - type: 위 타입 중 하나
+            - label: 한국어로 간단히 설명
+            - group: main_product / main_copy / sub_copy / price_discount / cta / logo / decorations / background 중 하나
+            - importance: required (광고 메시지 전달에 반드시 필요) / priority (가능하면 유지) / optional (잘려도 큰 영향 없음)
+            - bbox: 이미지 기준 픽셀 좌표 {x, y, width, height}. 확신이 낮으면 null.
+
+            importance 기준:
+            - required: 제품/사람 얼굴/메인 카피/가격·할인 정보
+            - priority: CTA/로고/보조 설명
+            - optional: 장식 아이콘/배경 패턴/없어도 메시지 전달에 큰 영향 없는 요소
+
+            elementGroups: 요소를 그룹으로 묶어서 반환 (id, name, importance, elementIds)
+            requiredGroups: required 그룹 ID 목록
+            priorityGroups: priority 그룹 ID 목록
+            optionalGroups: optional 그룹 ID 목록
+
             판단 기준:
             - 텍스트/로고/가격/CTA가 가장자리에 많으면 edgeRisk high, smartFitStrength safe
             - 제품/인물이 명확하면 product_focused, 해당 위치를 mainSubjectPosition과 focalPosition에 반영
@@ -82,7 +106,16 @@ public class BannerAnalysisService {
               "confidence": 0.00,
               "cropRiskAreas": ["..."],
               "recommendedBecause": ["...", "..."],
-              "avoidOptions": ["..."]
+              "avoidOptions": ["..."],
+              "detectedElements": [
+                { "id": "el_1", "type": "product", "label": "메인 제품", "group": "main_product", "importance": "required", "bbox": {"x": 0, "y": 0, "width": 100, "height": 100} }
+              ],
+              "elementGroups": [
+                { "id": "main_product", "name": "메인 제품", "importance": "required", "elementIds": ["el_1"] }
+              ],
+              "requiredGroups": ["main_product"],
+              "priorityGroups": ["cta", "logo"],
+              "optionalGroups": ["decorations"]
             }
             """;
 
@@ -97,6 +130,63 @@ public class BannerAnalysisService {
             java.util.Set.of("text_heavy", "product_focused", "balanced_mix");
     private static final java.util.Set<String> VALID_DENSITIES =
             java.util.Set.of("high", "medium", "low");
+
+    private static final java.util.Set<String> VALID_ELEMENT_TYPES =
+            java.util.Set.of("product", "person", "text", "logo", "cta", "price", "discount", "badge", "decoration", "background");
+    private static final java.util.Set<String> VALID_IMPORTANCES =
+            java.util.Set.of("required", "priority", "optional");
+    private static final java.util.Set<String> VALID_GROUPS =
+            java.util.Set.of("main_product", "main_copy", "sub_copy", "price_discount", "cta", "logo", "decorations", "background");
+
+    @SuppressWarnings("unchecked")
+    private List<BannerAiAnalysis.DetectedElement> parseDetectedElements(Map<String, Object> result) {
+        Object raw = result.get("detectedElements");
+        if (!(raw instanceof List)) return List.of();
+        List<Map<String, Object>> list = (List<Map<String, Object>>) raw;
+        List<BannerAiAnalysis.DetectedElement> elements = new java.util.ArrayList<>();
+        for (Map<String, Object> m : list) {
+            BannerAiAnalysis.DetectedElement el = new BannerAiAnalysis.DetectedElement();
+            el.setId((String) m.getOrDefault("id", ""));
+            String type = (String) m.getOrDefault("type", "");
+            el.setType(VALID_ELEMENT_TYPES.contains(type) ? type : "decoration");
+            el.setLabel((String) m.getOrDefault("label", ""));
+            String group = (String) m.getOrDefault("group", "");
+            el.setGroup(VALID_GROUPS.contains(group) ? group : "decorations");
+            String importance = (String) m.getOrDefault("importance", "");
+            el.setImportance(VALID_IMPORTANCES.contains(importance) ? importance : "optional");
+            Object bboxRaw = m.get("bbox");
+            if (bboxRaw instanceof Map) {
+                Map<String, Object> bm = (Map<String, Object>) bboxRaw;
+                BannerAiAnalysis.Bbox bbox = new BannerAiAnalysis.Bbox();
+                bbox.setX(bm.get("x") instanceof Number ? ((Number) bm.get("x")).intValue() : 0);
+                bbox.setY(bm.get("y") instanceof Number ? ((Number) bm.get("y")).intValue() : 0);
+                bbox.setWidth(bm.get("width") instanceof Number ? ((Number) bm.get("width")).intValue() : 0);
+                bbox.setHeight(bm.get("height") instanceof Number ? ((Number) bm.get("height")).intValue() : 0);
+                el.setBbox(bbox);
+            }
+            elements.add(el);
+        }
+        return elements;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<BannerAiAnalysis.ElementGroup> parseElementGroups(Map<String, Object> result) {
+        Object raw = result.get("elementGroups");
+        if (!(raw instanceof List)) return List.of();
+        List<Map<String, Object>> list = (List<Map<String, Object>>) raw;
+        List<BannerAiAnalysis.ElementGroup> groups = new java.util.ArrayList<>();
+        for (Map<String, Object> m : list) {
+            BannerAiAnalysis.ElementGroup g = new BannerAiAnalysis.ElementGroup();
+            g.setId((String) m.getOrDefault("id", ""));
+            g.setName((String) m.getOrDefault("name", ""));
+            String importance = (String) m.getOrDefault("importance", "");
+            g.setImportance(VALID_IMPORTANCES.contains(importance) ? importance : "optional");
+            Object ids = m.get("elementIds");
+            g.setElementIds(ids instanceof List ? (List<String>) ids : List.of());
+            groups.add(g);
+        }
+        return groups;
+    }
 
     private String normalizeResizeMode(String v) {
         return VALID_RESIZE_MODES.contains(v) ? v : "smart-fit";
@@ -140,7 +230,7 @@ public class BannerAnalysisService {
         Map<String, Object> requestBody = new LinkedHashMap<>();
         requestBody.put("model", "gpt-4.1-mini");
         requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 900);
+        requestBody.put("max_tokens", 2000);
         requestBody.put("response_format", Map.of("type", "json_object"));
 
         HttpHeaders headers = new HttpHeaders();
@@ -192,6 +282,16 @@ public class BannerAnalysisService {
 
         Object avoidObj = result.get("avoidOptions");
         analysis.setAvoidOptions(avoidObj instanceof List ? (List<String>) avoidObj : List.of());
+
+        // AI 요소 분석 매핑 (3.5차)
+        analysis.setDetectedElements(parseDetectedElements(result));
+        analysis.setElementGroups(parseElementGroups(result));
+        Object reqGrps = result.get("requiredGroups");
+        analysis.setRequiredGroups(reqGrps instanceof List ? (List<String>) reqGrps : List.of());
+        Object priGrps = result.get("priorityGroups");
+        analysis.setPriorityGroups(priGrps instanceof List ? (List<String>) priGrps : List.of());
+        Object optGrps = result.get("optionalGroups");
+        analysis.setOptionalGroups(optGrps instanceof List ? (List<String>) optGrps : List.of());
 
         analysis.setCreatedAt(LocalDateTime.now());
         return mongoService.save(analysis);

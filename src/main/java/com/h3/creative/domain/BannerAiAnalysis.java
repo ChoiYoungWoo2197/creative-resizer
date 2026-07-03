@@ -36,5 +36,38 @@ public class BannerAiAnalysis {
     private List<String> recommendedBecause; // 추천 근거 bullet
     private List<String> avoidOptions;       // 피해야 할 설정
 
+    // AI 요소 분석 (3.5차)
+    private List<DetectedElement> detectedElements;
+    private List<ElementGroup> elementGroups;
+    private List<String> requiredGroups;
+    private List<String> priorityGroups;
+    private List<String> optionalGroups;
+
     private LocalDateTime createdAt;
+
+    @Data
+    public static class DetectedElement {
+        private String id;
+        private String type;        // product / person / text / logo / cta / price / discount / badge / decoration / background
+        private String label;
+        private String group;
+        private String importance;  // required / priority / optional
+        private Bbox bbox;
+    }
+
+    @Data
+    public static class Bbox {
+        private Integer x;
+        private Integer y;
+        private Integer width;
+        private Integer height;
+    }
+
+    @Data
+    public static class ElementGroup {
+        private String id;
+        private String name;
+        private String importance;  // required / priority / optional
+        private List<String> elementIds;
+    }
 }

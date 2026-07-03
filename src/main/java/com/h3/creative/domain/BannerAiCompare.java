@@ -38,5 +38,10 @@ public class BannerAiCompare {
         private String previewUrl;
         private List<String> pros;
         private List<String> cons;
+        // 요소 보존 평가 (3.5차)
+        private List<String> preservedRequiredGroups;
+        private List<String> lostRequiredGroups;
+        private List<String> preservedPriorityGroups;
+        private List<String> lostPriorityGroups;
     }
 }

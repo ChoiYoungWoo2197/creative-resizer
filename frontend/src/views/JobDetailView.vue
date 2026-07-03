@@ -124,6 +124,33 @@
             <div class="cmp-thumb-wrap">
               <img :src="compareFileUrl(compareResult.id, c.fileName)" class="cmp-thumb" :alt="c.strength" @error="$event.target.style.display='none'" />
             </div>
+            <!-- 요소 보존 평가 (3.5차) -->
+            <div v-if="c.preservedRequiredGroups?.length || c.lostRequiredGroups?.length || c.preservedPriorityGroups?.length || c.lostPriorityGroups?.length" class="cmp-element-section">
+              <div v-if="c.preservedRequiredGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-preserved-req">✓ 필수 유지</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.preservedRequiredGroups" :key="g" class="cmp-el-tag cmp-el-tag-preserved-req">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+              <div v-if="c.lostRequiredGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-lost-req">✕ 필수 손실</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.lostRequiredGroups" :key="g" class="cmp-el-tag cmp-el-tag-lost-req">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+              <div v-if="c.preservedPriorityGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-preserved-pri">△ 우선 유지</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.preservedPriorityGroups" :key="g" class="cmp-el-tag cmp-el-tag-preserved-pri">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+              <div v-if="c.lostPriorityGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-lost-pri">△ 우선 손실</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.lostPriorityGroups" :key="g" class="cmp-el-tag cmp-el-tag-lost-pri">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+            </div>
             <div v-if="c.pros?.length" class="cmp-pros">
               <div v-for="p in c.pros" :key="p" class="cmp-pro-item">✓ {{ p }}</div>
             </div>
@@ -304,6 +331,12 @@ async function runCompare(specId) {
 
 const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움' }
 function strengthKr(v) { return STRENGTH_KR[v] ?? v }
+
+const GROUP_LABELS = {
+  main_product: '메인 제품', main_copy: '메인 카피', sub_copy: '서브 카피',
+  price_discount: '가격/할인', cta: 'CTA', logo: '로고', decorations: '장식', background: '배경',
+}
+function groupLabel(gid) { return GROUP_LABELS[gid] ?? gid }
 
 async function runApply(candidate) {
   if (!compareResult.value) return
@@ -624,6 +657,26 @@ onUnmounted(stopPolling)
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 .cmp-thumb { width: 100%; height: 100%; object-fit: contain; }
+
+/* 요소 보존 평가 (3.5차) */
+.cmp-element-section { padding: 6px 12px 4px; border-top: 1px solid #F0EEF8; display: flex; flex-direction: column; gap: 4px; }
+.cmp-el-row { display: flex; align-items: flex-start; gap: 5px; }
+.cmp-el-label {
+  font-size: 9.5px; font-weight: 700; padding: 2px 5px; border-radius: 4px;
+  flex-shrink: 0; white-space: nowrap; margin-top: 1px;
+}
+.cmp-el-preserved-req { background: #DCFCE7; color: #15803D; }
+.cmp-el-lost-req      { background: #FEE2E2; color: #B91C1C; }
+.cmp-el-preserved-pri { background: #FEF9C3; color: #92400E; }
+.cmp-el-lost-pri      { background: #FEF3C7; color: #B45309; }
+.cmp-el-tags { display: flex; flex-wrap: wrap; gap: 3px; }
+.cmp-el-tag {
+  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+}
+.cmp-el-tag-preserved-req { background: #F0FDF4; color: #15803D; border: 1px solid #BBF7D0; }
+.cmp-el-tag-lost-req      { background: #FFF5F5; color: #B91C1C; border: 1px solid #FECACA; }
+.cmp-el-tag-preserved-pri { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
+.cmp-el-tag-lost-pri      { background: #FFFBEB; color: #B45309; border: 1px solid #FCD34D; }
 
 .cmp-pros, .cmp-cons { padding: 8px 12px; }
 .cmp-pros { border-top: 1px solid #F0FDF4; }
