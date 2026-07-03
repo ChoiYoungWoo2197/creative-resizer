@@ -56,6 +56,7 @@ def compare():
     detected_elements = data.get("detectedElements", [])
     required_groups = data.get("requiredGroups", [])
     priority_groups = data.get("priorityGroups", [])
+    content_bands = data.get("contentBands", [])
 
     if not psd_path or not os.path.exists(psd_path):
         return jsonify({"error": "psd_path not found"}), 400
@@ -67,7 +68,7 @@ def compare():
     try:
         original_path, candidates = resizer.generate_candidates(
             psd_path, compare_output_dir, spec, resize_mode, focal_position, strengths,
-            detected_elements, required_groups, priority_groups
+            detected_elements, required_groups, priority_groups, content_bands
         )
         return jsonify({
             "compareId": compare_id,

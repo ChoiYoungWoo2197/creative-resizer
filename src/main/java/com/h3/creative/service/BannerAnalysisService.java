@@ -40,7 +40,7 @@ public class BannerAnalysisService {
             반환은 반드시 JSON 형식으로만 해줘. 다른 텍스트는 포함하지 마.
 
             [이미지 분석 필드]
-            creativeType: text_heavy (텍스트/로고/CTA가 주를 이룸), product_focused (제품/인물이 주를 이룸), balanced_mix (텍스트와 제품이 균형)
+            creativeType: text_heavy (텍스트/로고/CTA가 주를 이룸), product_focused (제품/인물이 주를 이룸), balanced_mix (텍스트와 제품이 균형), poster_info (정보형 포스터 — 날짜/기간/설명이 상중하에 분산)
             textDensity: high (텍스트가 많고 빽빽함), medium (적당한 텍스트), low (텍스트 거의 없음)
             edgeRisk: high (가장자리에 중요 요소 있어 잘림 위험 높음), medium (주의 필요), low (잘림 위험 없음)
             mainSubjectPosition: 주요 피사체(제품/인물)가 이미지에서 위치하는 방향 (center, top, bottom, left, right, left-top, right-top, left-bottom, right-bottom)
@@ -80,6 +80,29 @@ public class BannerAnalysisService {
             priorityGroups: priority 그룹 ID 목록
             optionalGroups: optional 그룹 ID 목록
 
+            [포스터 레이아웃 분석]
+            이미지가 포스터형/정보형인지 판단하세요.
+
+            포스터형 조건 (아래 대부분 해당하면 poster_info):
+            - 텍스트/날짜/기간/안내 정보가 상단·중단·하단에 분산됨
+            - 배경이 가로 색상 블록으로 구분됨
+            - 날짜·신청기간·마감·기관 로고·CTA 포함
+            - 단순 제품 사진이 아니라 정보 전달형 레이아웃
+
+            포스터형이면:
+            - layoutType: horizontal_bands 또는 poster_info
+            - reflowRecommended: true
+            - contentBands: 이미지를 y1~y2 기준으로 3개 가로 영역으로 분리
+              * top_main: 로고/메인 카피/주요 그래픽 (role: main_title)
+              * middle_date: 날짜/신청기간/가격/CTA 등 핵심 정보 (role: date_info)
+              * bottom_desc: 설명/안내/서브 문구 (role: description)
+              * y1/y2는 원본 이미지 픽셀 기준 정수값
+
+            비포스터형(단순 제품/인물 이미지)이면:
+            - layoutType: single_subject 또는 product_visual
+            - reflowRecommended: false
+            - contentBands: []
+
             판단 기준:
             - 텍스트/로고/가격/CTA가 가장자리에 많으면 edgeRisk high, smartFitStrength safe
             - 제품/인물이 명확하면 product_focused, 해당 위치를 mainSubjectPosition과 focalPosition에 반영
@@ -117,7 +140,10 @@ public class BannerAnalysisService {
               ],
               "requiredGroups": ["main_product"],
               "priorityGroups": ["cta", "logo"],
-              "optionalGroups": ["decorations"]
+              "optionalGroups": ["decorations"],
+              "layoutType": "single_subject",
+              "reflowRecommended": false,
+              "contentBands": []
             }
             """;
 
@@ -129,7 +155,13 @@ public class BannerAnalysisService {
             java.util.Set.of("center", "top", "bottom", "left", "right",
                              "left-top", "right-top", "left-bottom", "right-bottom");
     private static final java.util.Set<String> VALID_CREATIVE_TYPES =
-            java.util.Set.of("text_heavy", "product_focused", "balanced_mix");
+            java.util.Set.of("text_heavy", "product_focused", "balanced_mix", "poster_info");
+    private static final java.util.Set<String> VALID_LAYOUT_TYPES =
+            java.util.Set.of("single_subject", "product_visual", "poster_info",
+                             "horizontal_bands", "vertical_bands", "mixed_layout");
+    private static final java.util.Set<String> VALID_BAND_ROLES =
+            java.util.Set.of("main_title", "date_info", "description", "product_visual",
+                             "sub_copy", "cta", "logo", "decoration");
     private static final java.util.Set<String> VALID_DENSITIES =
             java.util.Set.of("high", "medium", "low");
 
@@ -190,6 +222,33 @@ public class BannerAnalysisService {
         return groups;
     }
 
+    @SuppressWarnings("unchecked")
+    private List<BannerAiAnalysis.ContentBand> parseContentBands(Map<String, Object> result) {
+        Object raw = result.get("contentBands");
+        if (!(raw instanceof List)) return List.of();
+        List<Map<String, Object>> list = (List<Map<String, Object>>) raw;
+        List<BannerAiAnalysis.ContentBand> bands = new java.util.ArrayList<>();
+        for (Map<String, Object> m : list) {
+            Object y1 = m.get("y1");
+            Object y2 = m.get("y2");
+            if (!(y1 instanceof Number) || !(y2 instanceof Number)) continue;
+            int yi1 = ((Number) y1).intValue();
+            int yi2 = ((Number) y2).intValue();
+            if (yi2 <= yi1) continue;
+            BannerAiAnalysis.ContentBand band = new BannerAiAnalysis.ContentBand();
+            band.setId((String) m.getOrDefault("id", ""));
+            band.setName((String) m.getOrDefault("name", ""));
+            String role = (String) m.getOrDefault("role", "");
+            band.setRole(VALID_BAND_ROLES.contains(role) ? role : "description");
+            band.setY1(yi1);
+            band.setY2(yi2);
+            String importance = (String) m.getOrDefault("importance", "");
+            band.setImportance(VALID_IMPORTANCES.contains(importance) ? importance : "priority");
+            bands.add(band);
+        }
+        return bands;
+    }
+
     private String normalizeResizeMode(String v) {
         return VALID_RESIZE_MODES.contains(v) ? v : "smart-fit";
     }
@@ -201,6 +260,9 @@ public class BannerAnalysisService {
     }
     private String normalizeCreativeType(String v) {
         return VALID_CREATIVE_TYPES.contains(v) ? v : "balanced_mix";
+    }
+    private String normalizeLayoutType(String v) {
+        return VALID_LAYOUT_TYPES.contains(v) ? v : "single_subject";
     }
     private String normalizeDensity(String v) {
         return VALID_DENSITIES.contains(v) ? v : "medium";
@@ -294,6 +356,12 @@ public class BannerAnalysisService {
         analysis.setPriorityGroups(priGrps instanceof List ? (List<String>) priGrps : List.of());
         Object optGrps = result.get("optionalGroups");
         analysis.setOptionalGroups(optGrps instanceof List ? (List<String>) optGrps : List.of());
+
+        // Poster Reflow (4차)
+        analysis.setLayoutType(normalizeLayoutType((String) result.getOrDefault("layoutType", "")));
+        Object reflowObj = result.get("reflowRecommended");
+        analysis.setReflowRecommended(reflowObj instanceof Boolean ? (Boolean) reflowObj : Boolean.FALSE);
+        analysis.setContentBands(parseContentBands(result));
 
         analysis.setCreatedAt(LocalDateTime.now());
         return mongoService.save(analysis);

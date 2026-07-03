@@ -43,6 +43,11 @@ public class BannerAiAnalysis {
     private List<String> priorityGroups;
     private List<String> optionalGroups;
 
+    // Poster Reflow (4차)
+    private String layoutType;          // single_subject / product_visual / poster_info / horizontal_bands / vertical_bands / mixed_layout
+    private Boolean reflowRecommended;  // true when poster-type layout detected
+    private List<ContentBand> contentBands;
+
     private LocalDateTime createdAt;
 
     @Data
@@ -69,5 +74,15 @@ public class BannerAiAnalysis {
         private String name;
         private String importance;  // required / priority / optional
         private List<String> elementIds;
+    }
+
+    @Data
+    public static class ContentBand {
+        private String id;          // top_main / middle_date / bottom_desc 등
+        private String name;        // 한국어 설명
+        private String role;        // main_title / date_info / description / product_visual / sub_copy / cta / logo
+        private Integer y1;         // 원본 이미지 기준 시작 y좌표
+        private Integer y2;         // 원본 이미지 기준 끝 y좌표
+        private String importance;  // required / priority / optional
     }
 }

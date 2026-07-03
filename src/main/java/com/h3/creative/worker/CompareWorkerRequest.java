@@ -18,6 +18,7 @@ public class CompareWorkerRequest {
     private List<DetectedElementPayload> detectedElements;
     private List<String> requiredGroups;
     private List<String> priorityGroups;
+    private List<ContentBandPayload> contentBands;
 
     @Data
     @Builder
@@ -46,5 +47,15 @@ public class CompareWorkerRequest {
         private Integer y;
         private Integer width;
         private Integer height;
+    }
+
+    @Data
+    @Builder
+    public static class ContentBandPayload {
+        private String id;
+        private String role;
+        private Integer y1;
+        private Integer y2;
+        private String importance;
     }
 }

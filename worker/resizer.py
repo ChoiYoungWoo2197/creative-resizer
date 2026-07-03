@@ -335,10 +335,56 @@ def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
     return cropped.resize((dst_w, dst_h), Image.LANCZOS)
 
 
+def resize_poster_reflow(img: Image.Image, dst_w: int, dst_h: int,
+                          content_bands: list) -> Image.Image:
+    """포스터형: band별 원본 crop → dst_w×alloc_h로 cover → 세로 합성.
+    content_bands: [{"id":..., "role":..., "y1": N, "y2": N, "importance":...}, ...]
+    """
+    valid_bands = [
+        b for b in content_bands
+        if isinstance(b.get("y1"), (int, float)) and isinstance(b.get("y2"), (int, float))
+        and b.get("y2", 0) > b.get("y1", 0)
+    ]
+    if not valid_bands:
+        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+
+    total_orig_h = sum(b["y2"] - b["y1"] for b in valid_bands)
+    if total_orig_h <= 0:
+        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+
+    # 원본 band 비율 기준으로 target height 배분 (최소 8px 보장)
+    allocated = [max(8, int(dst_h * (b["y2"] - b["y1"]) / total_orig_h)) for b in valid_bands]
+    # 반올림 오차 보정: 마지막 band에 차이 흡수
+    diff = dst_h - sum(allocated)
+    allocated[-1] = max(1, allocated[-1] + diff)
+
+    img_rgba = img.convert("RGBA") if img.mode != "RGBA" else img
+    canvas = Image.new("RGBA", (dst_w, dst_h), (255, 255, 255, 255))
+    y_cursor = 0
+
+    for band, alloc_h in zip(valid_bands, allocated):
+        if alloc_h <= 0:
+            y_cursor += alloc_h
+            continue
+        y1 = max(0, int(band["y1"]))
+        y2 = min(img.height, int(band["y2"]))
+        if y2 <= y1:
+            y_cursor += alloc_h
+            continue
+        band_crop = img_rgba.crop((0, y1, img.width, y2))
+        # cover crop으로 band 영역을 dst_w × alloc_h에 꽉 채움
+        band_resized = resize_cover(band_crop, dst_w, alloc_h)
+        canvas.alpha_composite(band_resized, (0, y_cursor))
+        y_cursor += alloc_h
+
+    return canvas
+
+
 def generate_candidates(input_path: str, output_dir: str, spec: dict,
                         resize_mode: str = "smart-fit", focal_position: str = "center",
                         strengths: list = None, detected_elements: list = None,
-                        required_groups: list = None, priority_groups: list = None) -> tuple[str, list]:
+                        required_groups: list = None, priority_groups: list = None,
+                        content_bands: list = None) -> tuple[str, list]:
     if strengths is None:
         strengths = ["safe", "balanced", "fill"]
 
@@ -364,6 +410,8 @@ def generate_candidates(input_path: str, output_dir: str, spec: dict,
                                         detected_elements or [],
                                         required_groups or [],
                                         priority_groups or [])
+        elif strength == "poster-reflow":
+            resized = resize_poster_reflow(img, w, h, content_bands or [])
         elif resize_mode == "smart-fit":
             resized = resize_smart_fit(img, w, h, strength, focal_position)
         else:

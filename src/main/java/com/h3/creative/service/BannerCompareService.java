@@ -55,9 +55,15 @@ public class BannerCompareService {
 
             각 후보(2번~)의 리사이징 품질을 평가해줘.
             이미지가 5장이면 5번(focus-fill)도 평가 대상이다.
-            focus-fill 후보는 AI가 감지한 필수 요소를 기준으로 crop하여 blur를 줄이고 꽉 찬 배너를 만든 결과다.
+            이미지가 6장이면 6번(poster-reflow)도 평가 대상이다.
+
+            focus-fill 후보: AI가 감지한 필수 요소를 기준으로 crop하여 blur를 줄이고 꽉 찬 배너를 만든 결과.
             평가 시: required 요소가 잘리지 않았는지, blur 배경이 줄어들었는지, 광고 배너처럼 꽉 차고 자연스러운지 확인하세요.
             focus-fill이 required 요소를 모두 유지하면서 blur 영역을 줄였다면 높은 점수를 주세요. 단, required 텍스트나 제품이 잘리면 큰 감점 처리하세요.
+
+            poster-reflow 후보: 정보형 포스터 이미지를 여러 가로 영역으로 나누고, 각 영역을 타겟 배너 높이에 맞게 압축/재조립한 결과.
+            평가 시: 상단 메인 카피가 보이는지, 날짜/신청기간/핵심 정보가 유지되는지, 하단 설명 문구가 유지되는지,
+            텍스트가 지나치게 찌그러지지 않는지, 원본의 정보 구조가 유지되는지, 광고 배너로 자연스러운지 확인하세요.
 
             평가 기준:
             - 원본의 핵심 메시지(텍스트/로고/CTA)가 유지되는가
@@ -67,7 +73,7 @@ public class BannerCompareService {
             - 광고 배너로 자연스러운가
 
             반환은 반드시 JSON 형식으로만 해줘. 다른 텍스트 포함하지 마.
-            candidates 배열에는 실제 비교한 후보만 포함해. (focus-fill 없으면 3개, 있으면 4개)
+            candidates 배열에는 실제 비교한 후보만 포함해. (3개, 4개, 또는 5개)
 
             {
               "bestCandidate": "balanced",
@@ -109,7 +115,7 @@ public class BannerCompareService {
         return sb.toString();
     }
 
-    private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of("safe", "balanced", "fill", "focus-fill");
+    private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of("safe", "balanced", "fill", "focus-fill", "poster-reflow");
 
     @SuppressWarnings("unchecked")
     public BannerAiCompare compare(String jobId, String specId) throws IOException {
@@ -126,11 +132,12 @@ public class BannerCompareService {
         BannerAiAnalysis analysis = (job.getAiAnalysisId() != null)
                 ? analysisMongoService.findById(job.getAiAnalysisId()) : null;
 
-        // AI 분석이 있으면 focus-fill 후보 추가
+        // AI 분석이 있으면 focus-fill / poster-reflow 후보 추가
         List<String> strengths = new ArrayList<>(List.of("safe", "balanced", "fill"));
         List<CompareWorkerRequest.DetectedElementPayload> detectedPayloads = List.of();
         List<String> reqGroups = List.of();
         List<String> priGroups = List.of();
+        List<CompareWorkerRequest.ContentBandPayload> contentBandPayloads = List.of();
 
         if (analysis != null && analysis.getDetectedElements() != null && !analysis.getDetectedElements().isEmpty()) {
             strengths.add("focus-fill");
@@ -153,6 +160,23 @@ public class BannerCompareService {
             priGroups = analysis.getPriorityGroups() != null ? analysis.getPriorityGroups() : List.of();
         }
 
+        // poster-reflow 후보: reflowRecommended=true && contentBands 존재
+        if (analysis != null
+                && Boolean.TRUE.equals(analysis.getReflowRecommended())
+                && analysis.getContentBands() != null
+                && !analysis.getContentBands().isEmpty()) {
+            strengths.add("poster-reflow");
+            contentBandPayloads = analysis.getContentBands().stream()
+                    .map(b -> CompareWorkerRequest.ContentBandPayload.builder()
+                            .id(b.getId())
+                            .role(b.getRole())
+                            .y1(b.getY1())
+                            .y2(b.getY2())
+                            .importance(b.getImportance())
+                            .build())
+                    .collect(Collectors.toList());
+        }
+
         CompareWorkerRequest workerReq = CompareWorkerRequest.builder()
                 .compareId(compareId)
                 .psdPath(job.getPsdPath())
@@ -168,6 +192,7 @@ public class BannerCompareService {
                 .detectedElements(detectedPayloads)
                 .requiredGroups(reqGroups)
                 .priorityGroups(priGroups)
+                .contentBands(contentBandPayloads)
                 .build();
 
         log.info("Compare 요청: compareId={} jobId={} specId={} spec={}x{} strengths={}", compareId, jobId, specId, spec.getWidth(), spec.getHeight(), strengths);
