@@ -335,9 +335,15 @@ def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
     return cropped.resize((dst_w, dst_h), Image.LANCZOS)
 
 
+# 텍스트/날짜/설명 영역 — direct-resize (찌그러짐 허용, 정보 전체 보존)
+_BAND_DIRECT_RESIZE_ROLES = {"date_info", "description", "sub_copy", "cta", "decoration"}
+
+
 def resize_poster_reflow(img: Image.Image, dst_w: int, dst_h: int,
                           content_bands: list) -> Image.Image:
-    """포스터형: band별 원본 crop → dst_w×alloc_h로 cover → 세로 합성.
+    """포스터형: band별 crop → role 기반 resize → 세로 합성.
+    - 시각 영역(main_title/product_visual/logo): 가로폭 fit → 세로 center crop (soft-cover)
+    - 텍스트 영역(date_info/description 등): direct-resize (정보 전체 보존, 약간 찌그러짐 허용)
     content_bands: [{"id":..., "role":..., "y1": N, "y2": N, "importance":...}, ...]
     """
     valid_bands = [
@@ -371,9 +377,27 @@ def resize_poster_reflow(img: Image.Image, dst_w: int, dst_h: int,
         if y2 <= y1:
             y_cursor += alloc_h
             continue
+
         band_crop = img_rgba.crop((0, y1, img.width, y2))
-        # cover crop으로 band 영역을 dst_w × alloc_h에 꽉 채움
-        band_resized = resize_cover(band_crop, dst_w, alloc_h)
+        role = band.get("role", "")
+
+        if role in _BAND_DIRECT_RESIZE_ROLES:
+            # 텍스트/날짜/설명: 가로 → 세로 직접 리사이징 (정보 전체 보존)
+            band_resized = band_crop.resize((dst_w, alloc_h), Image.LANCZOS)
+        else:
+            # 시각 영역(main_title, product_visual, logo): 가로폭 fit → 세로 center crop
+            scale = dst_w / band_crop.width
+            new_h = max(1, int(band_crop.height * scale))
+            scaled = band_crop.resize((dst_w, new_h), Image.LANCZOS)
+            if new_h <= alloc_h:
+                band_canvas = Image.new("RGBA", (dst_w, alloc_h), (255, 255, 255, 0))
+                paste_y = (alloc_h - new_h) // 2
+                band_canvas.alpha_composite(scaled, (0, paste_y))
+                band_resized = band_canvas
+            else:
+                top = (new_h - alloc_h) // 2
+                band_resized = scaled.crop((0, top, dst_w, top + alloc_h))
+
         canvas.alpha_composite(band_resized, (0, y_cursor))
         y_cursor += alloc_h
 

@@ -73,17 +73,21 @@ public class BannerCompareService {
             - 광고 배너로 자연스러운가
 
             반환은 반드시 JSON 형식으로만 해줘. 다른 텍스트 포함하지 마.
-            candidates 배열에는 실제 비교한 후보만 포함해. (3개, 4개, 또는 5개)
+            candidates 배열에는 실제 전달된 이미지 순서대로 후보만 포함해. 이미지가 없는 후보(focus-fill, poster-reflow 등)는 제외해.
 
+            아래 JSON 형식을 따르되, 실제 비교한 strength 값만 포함해:
             {
               "bestCandidate": "balanced",
               "summary": "한국어로 최적 후보 선정 이유 (1문장)",
               "candidates": [
                 { "strength": "safe", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
                 { "strength": "balanced", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": [] },
-                { "strength": "fill", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] }
+                { "strength": "fill", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
+                { "strength": "focus-fill", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
+                { "strength": "poster-reflow", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] }
               ]
             }
+            focus-fill / poster-reflow 이미지가 없으면 해당 항목은 candidates에서 제외하세요.
             """;
 
     private String buildComparePrompt(BannerAiAnalysis analysis) {
