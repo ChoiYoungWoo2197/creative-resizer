@@ -33,7 +33,7 @@ export const initSpecs = (reset = false) =>
 export const analyzeBanner = (formData) =>
   api.post('/banner/analyze', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 30000,
+    timeout: 90000,
   })
 
 export const compareJob = (jobId, specId) =>
