@@ -360,8 +360,17 @@ public class BannerAnalysisService {
         // Poster Reflow (4차)
         analysis.setLayoutType(normalizeLayoutType((String) result.getOrDefault("layoutType", "")));
         Object reflowObj = result.get("reflowRecommended");
-        analysis.setReflowRecommended(reflowObj instanceof Boolean ? (Boolean) reflowObj : Boolean.FALSE);
-        analysis.setContentBands(parseContentBands(result));
+        if (reflowObj instanceof Boolean) {
+            analysis.setReflowRecommended((Boolean) reflowObj);
+        } else if (reflowObj instanceof String) {
+            analysis.setReflowRecommended("true".equalsIgnoreCase((String) reflowObj));
+        } else {
+            analysis.setReflowRecommended(Boolean.FALSE);
+        }
+        List<BannerAiAnalysis.ContentBand> parsedBands = parseContentBands(result);
+        analysis.setContentBands(parsedBands);
+        log.info("AI 분석 poster 결과: layoutType={} reflowRecommended={} contentBands={}개",
+                analysis.getLayoutType(), analysis.getReflowRecommended(), parsedBands.size());
 
         analysis.setCreatedAt(LocalDateTime.now());
         return mongoService.save(analysis);

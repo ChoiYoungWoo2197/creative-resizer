@@ -164,11 +164,20 @@ public class BannerCompareService {
             priGroups = analysis.getPriorityGroups() != null ? analysis.getPriorityGroups() : List.of();
         }
 
-        // poster-reflow 후보: reflowRecommended=true && contentBands 존재
-        if (analysis != null
-                && Boolean.TRUE.equals(analysis.getReflowRecommended())
+        // poster-reflow 후보: reflowRecommended=true 또는 layoutType이 포스터형 && contentBands 존재
+        boolean isPosterType = analysis != null && (
+                Boolean.TRUE.equals(analysis.getReflowRecommended())
+                || "poster_info".equals(analysis.getLayoutType())
+                || "horizontal_bands".equals(analysis.getLayoutType()));
+        boolean hasContentBands = analysis != null
                 && analysis.getContentBands() != null
-                && !analysis.getContentBands().isEmpty()) {
+                && !analysis.getContentBands().isEmpty();
+        log.info("poster-reflow 조건: isPoster={} hasBands={} reflowRecommended={} layoutType={} bandsCount={}",
+                isPosterType, hasContentBands,
+                analysis != null ? analysis.getReflowRecommended() : null,
+                analysis != null ? analysis.getLayoutType() : null,
+                analysis != null && analysis.getContentBands() != null ? analysis.getContentBands().size() : 0);
+        if (isPosterType && hasContentBands) {
             strengths.add("poster-reflow");
             contentBandPayloads = analysis.getContentBands().stream()
                     .map(b -> CompareWorkerRequest.ContentBandPayload.builder()
