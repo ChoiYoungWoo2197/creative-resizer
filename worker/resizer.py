@@ -189,21 +189,33 @@ RESIZE_FUNCS = {
 }
 
 
-def collect_focus_boxes(elements: list, required_groups: list, priority_groups: list) -> list:
-    """requiredGroups/importance=required bbox 수집, 없으면 priority 사용"""
+def collect_focus_boxes(elements: list, required_groups: list, priority_groups: list,
+                        img_w: int = 0, img_h: int = 0) -> list:
+    """requiredGroups/importance=required bbox 수집, 없으면 priority 사용.
+    img_w/img_h 가 주어지면 이미지 범위 밖 bbox를 클램핑."""
     required_boxes = []
     priority_boxes = []
     for el in elements:
         bbox = el.get("bbox")
         if not bbox:
             continue
-        x = bbox.get("x", 0)
-        y = bbox.get("y", 0)
+        x = max(0, bbox.get("x", 0))
+        y = max(0, bbox.get("y", 0))
         w = bbox.get("width", 0)
         h = bbox.get("height", 0)
         if w <= 0 or h <= 0:
             continue
-        box = (x, y, x + w, y + h)
+        x2 = x + w
+        y2 = y + h
+        if img_w > 0:
+            x = min(x, img_w)
+            x2 = min(x2, img_w)
+        if img_h > 0:
+            y = min(y, img_h)
+            y2 = min(y2, img_h)
+        if x2 <= x or y2 <= y:
+            continue
+        box = (x, y, x2, y2)
         group = el.get("group", "")
         importance = el.get("importance", "")
         if group in required_groups or importance == "required":
@@ -261,7 +273,7 @@ def expand_to_ratio(box: tuple, target_ratio: float, img_w: int, img_h: int) -> 
 def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
                       detected_elements: list, required_groups: list, priority_groups: list) -> Image.Image:
     """AI 분석 bbox 기준으로 crop → blur 없이 꽉 찬 배너 생성. 실패 시 balanced fallback."""
-    boxes = collect_focus_boxes(detected_elements, required_groups, priority_groups)
+    boxes = collect_focus_boxes(detected_elements, required_groups, priority_groups, img.width, img.height)
     if not boxes:
         return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
 
