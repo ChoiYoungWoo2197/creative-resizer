@@ -72,7 +72,7 @@ public class BannerAnalysisService {
 
             importance 기준:
             - required: 제품/사람 얼굴/메인 카피/가격·할인 정보
-            - priority: CTA/로고/보조 설명
+            - priority: CTA 버튼·날짜·신청기간·마감일·기한 텍스트·기관 로고·하단 설명 문구·주요 안내 문구 — 반드시 priority 이상으로 분류
             - optional: 장식 아이콘/배경 패턴/없어도 메시지 전달에 큰 영향 없는 요소
 
             elementGroups: 요소를 그룹으로 묶어서 반환 (id, name, importance, elementIds)
@@ -90,6 +90,8 @@ public class BannerAnalysisService {
             - creativeType=text_heavy 이면 → smartFitStrength=safe 우선, fill 절대 지양
             - creativeType=product_focused 이고 textDensity=low 이면 → smartFitStrength=balanced 또는 fill 적극 추천
             - 제품이 한쪽에 치우쳐 있어도 텍스트가 이미지 여러 방향에 분산되어 있으면 → focalPosition=center 추천
+            - type=cta, type=text(날짜/기간/안내문구 포함), type=logo 는 importance를 priority 이상으로 분류
+            - 날짜·신청기간·마감일·기한이 포함된 텍스트 요소는 반드시 priority 또는 required로 분류
 
             반환 JSON:
             {

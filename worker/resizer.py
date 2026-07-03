@@ -191,7 +191,8 @@ RESIZE_FUNCS = {
 
 def collect_focus_boxes(elements: list, required_groups: list, priority_groups: list,
                         img_w: int = 0, img_h: int = 0) -> list:
-    """requiredGroups/importance=required bbox 수집, 없으면 priority 사용.
+    """requiredGroups/priority 요소 bbox 수집.
+    required 있으면 required + priority 모두 반환 (Point 3: 핵심 정보 손실 방지).
     img_w/img_h 가 주어지면 이미지 범위 밖 bbox를 클램핑."""
     required_boxes = []
     priority_boxes = []
@@ -222,7 +223,37 @@ def collect_focus_boxes(elements: list, required_groups: list, priority_groups: 
             required_boxes.append(box)
         elif group in priority_groups or importance == "priority":
             priority_boxes.append(box)
-    return required_boxes or priority_boxes
+    # required 있으면 priority도 함께 포함 (날짜/CTA 등 하단 정보 손실 방지)
+    if required_boxes:
+        return required_boxes + priority_boxes
+    return priority_boxes
+
+
+def get_text_density(elements: list) -> float:
+    """텍스트 계열 요소 비율 반환 (0.0~1.0)."""
+    if not elements:
+        return 0.0
+    text_types = {"text", "cta", "price", "discount"}
+    text_count = sum(1 for el in elements if el.get("type", "") in text_types)
+    return text_count / len(elements)
+
+
+def get_focal_from_union(union: tuple, img_w: int, img_h: int) -> str:
+    """union box 중심 좌표를 focal_position 문자열로 변환."""
+    x1, y1, x2, y2 = union
+    cx = (x1 + x2) / 2 / img_w if img_w > 0 else 0.5
+    cy = (y1 + y2) / 2 / img_h if img_h > 0 else 0.5
+
+    h = "left" if cx < 0.35 else ("right" if cx > 0.65 else "center")
+    v = "top" if cy < 0.35 else ("bottom" if cy > 0.65 else "center")
+
+    if h == "center" and v == "center":
+        return "center"
+    if h == "center":
+        return v
+    if v == "center":
+        return h
+    return f"{h}-{v}"
 
 
 def union_boxes(boxes: list) -> tuple:
@@ -278,7 +309,17 @@ def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
         return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
 
     union = union_boxes(boxes)
-    padded = add_padding(union, img.width, img.height, padding_ratio=0.12)
+
+    # Point 2: 텍스트 밀도 high → padding 더 넓게, crop 덜 공격적
+    text_density = get_text_density(detected_elements)
+    if text_density > 0.6:
+        padding_ratio = 0.20
+    elif text_density > 0.3:
+        padding_ratio = 0.15
+    else:
+        padding_ratio = 0.12
+
+    padded = add_padding(union, img.width, img.height, padding_ratio=padding_ratio)
     target_ratio = dst_w / dst_h
     crop_box = expand_to_ratio(padded, target_ratio, img.width, img.height)
 
@@ -286,7 +327,9 @@ def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
     ux1, uy1, ux2, uy2 = union
     cx1, cy1, cx2, cy2 = crop_box
     if not (cx1 <= ux1 and cy1 <= uy1 and cx2 >= ux2 and cy2 >= uy2):
-        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+        # Point 4: fallback 시 union 위치 기반 focal_position 사용 (항상 center 아님)
+        focal = get_focal_from_union(union, img.width, img.height)
+        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position=focal)
 
     cropped = img.crop(crop_box)
     return cropped.resize((dst_w, dst_h), Image.LANCZOS)
