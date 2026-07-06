@@ -49,21 +49,17 @@ public class BannerCompareService {
     private static final String COMPARE_PROMPT_BASE = """
             다음 이미지들을 순서대로 분석해줘:
             1번: 원본 이미지 (리사이징 기준)
-            2번: safe 강도 리사이징 결과 (원본 최대 보존, 여백 발생 가능)
-            3번: balanced 강도 리사이징 결과 (균형)
-            4번: fill 강도 리사이징 결과 (최대 확대, 일부 잘림 가능)
+            2번 이후: 리사이징 후보들 (전달된 순서대로)
 
-            각 후보(2번~)의 리사이징 품질을 평가해줘.
-            이미지가 5장이면 5번(focus-fill)도 평가 대상이다.
-            이미지가 6장이면 6번(poster-reflow)도 평가 대상이다.
-
-            focus-fill 후보: AI가 감지한 필수 요소를 기준으로 crop하여 blur를 줄이고 꽉 찬 배너를 만든 결과.
-            평가 시: required 요소가 잘리지 않았는지, blur 배경이 줄어들었는지, 광고 배너처럼 꽉 차고 자연스러운지 확인하세요.
-            focus-fill이 required 요소를 모두 유지하면서 blur 영역을 줄였다면 높은 점수를 주세요. 단, required 텍스트나 제품이 잘리면 큰 감점 처리하세요.
-
-            poster-reflow 후보: 정보형 포스터 이미지를 여러 가로 영역으로 나누고, 각 영역을 타겟 배너 높이에 맞게 압축/재조립한 결과.
-            평가 시: 상단 메인 카피가 보이는지, 날짜/신청기간/핵심 정보가 유지되는지, 하단 설명 문구가 유지되는지,
-            텍스트가 지나치게 찌그러지지 않는지, 원본의 정보 구조가 유지되는지, 광고 배너로 자연스러운지 확인하세요.
+            각 후보 알고리즘의 목적은 다음과 같습니다:
+            safe: 원본 정보를 안정적으로 보존하는 후보. 여백/blur 배경이 생길 수 있음.
+            balanced: 정보 보존과 시각적 크기의 균형을 맞춘 후보.
+            fill: 화면을 크게 채우지만 텍스트/로고 손실 위험이 있는 후보.
+            center-crop: 목표 규격을 완전히 채우는 crop 후보. 꽉 차지만 가장자리 정보 손실 위험이 큼.
+            letterbox: 원본을 절대 자르지 않는 후보. 정보 손실은 적지만 여백/배경이 많을 수 있음.
+            focus-fill: AI가 감지한 핵심 요소 중심으로 crop하여 blur를 줄이는 후보. 단일 제품/인물 중심 소재에 적합.
+            object-aware-fit: 필수/우선순위 요소가 잘리지 않도록 scale을 조정하면서 가능한 한 크게 보여주는 후보. 텍스트가 많은 광고나 정보형 포스터에 적합.
+            poster-reflow: 정보형 포스터를 가로 영역으로 나누어 압축/재조립한 후보. 상단/중앙/하단 정보를 모두 보호.
 
             평가 기준:
             - 원본의 핵심 메시지(텍스트/로고/CTA)가 유지되는가
@@ -71,9 +67,12 @@ public class BannerCompareService {
             - 제품/인물/로고가 잘 보이는가
             - 여백이 과하거나 답답하지 않은가
             - 광고 배너로 자연스러운가
+            - 정보형 포스터에서는 required/priority 요소 보존을 최우선으로 평가하세요.
+            - 제품형/비주얼형에서는 시각적 임팩트와 피사체 크기도 함께 평가하세요.
+            - required 텍스트, 날짜, 로고, CTA가 잘리면 큰 감점 처리하세요.
 
             반환은 반드시 JSON 형식으로만 해줘. 다른 텍스트 포함하지 마.
-            candidates 배열에는 실제 전달된 이미지 순서대로 후보만 포함해. 이미지가 없는 후보(focus-fill, poster-reflow 등)는 제외해.
+            candidates 배열에는 실제 전달된 이미지 순서대로 후보만 포함해. 이미지가 없는 후보는 제외해.
 
             아래 JSON 형식을 따르되, 실제 비교한 strength 값만 포함해:
             {
@@ -82,12 +81,15 @@ public class BannerCompareService {
               "candidates": [
                 { "strength": "safe", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
                 { "strength": "balanced", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": [] },
+                { "strength": "letterbox", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
+                { "strength": "object-aware-fit", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
                 { "strength": "fill", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
+                { "strength": "center-crop", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
                 { "strength": "focus-fill", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] },
                 { "strength": "poster-reflow", "score": 0, "preservedRequiredGroups": [], "lostRequiredGroups": [], "preservedPriorityGroups": [], "lostPriorityGroups": [], "pros": ["..."], "cons": ["..."] }
               ]
             }
-            focus-fill / poster-reflow 이미지가 없으면 해당 항목은 candidates에서 제외하세요.
+            실제 전달되지 않은 후보는 candidates에서 반드시 제외하세요.
             """;
 
     private String buildComparePrompt(BannerAiAnalysis analysis) {
@@ -119,7 +121,9 @@ public class BannerCompareService {
         return sb.toString();
     }
 
-    private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of("safe", "balanced", "fill", "focus-fill", "poster-reflow");
+    private static final java.util.Set<String> VALID_CANDIDATES = java.util.Set.of(
+            "safe", "balanced", "fill", "focus-fill", "poster-reflow",
+            "center-crop", "letterbox", "object-aware-fit");
 
     @SuppressWarnings("unchecked")
     public BannerAiCompare compare(String jobId, String specId) throws IOException {
@@ -136,15 +140,33 @@ public class BannerCompareService {
         BannerAiAnalysis analysis = (job.getAiAnalysisId() != null)
                 ? analysisMongoService.findById(job.getAiAnalysisId()) : null;
 
-        // AI 분석이 있으면 focus-fill / poster-reflow 후보 추가
-        List<String> strengths = new ArrayList<>(List.of("safe", "balanced", "fill"));
+        boolean hasElements = analysis != null
+                && analysis.getDetectedElements() != null
+                && !analysis.getDetectedElements().isEmpty();
+        boolean posterType = analysis != null && isPosterType(analysis);
+        boolean productType = !posterType && analysis != null && isProductType(analysis);
+
+        List<String> strengths = new ArrayList<>();
+        if (posterType) {
+            // 포스터형: 정보 보존 우선 (꽉 채우는 후보 제외)
+            strengths.addAll(List.of("safe", "balanced", "letterbox", "object-aware-fit"));
+        } else if (productType) {
+            // 제품형: 피사체 중심, 시각적 임팩트 다양화
+            strengths.addAll(List.of("safe", "balanced", "fill", "center-crop", "focus-fill", "object-aware-fit"));
+        } else if (analysis != null) {
+            // 일반형 (분석 있음)
+            strengths.addAll(List.of("safe", "balanced", "fill", "object-aware-fit"));
+        } else {
+            // 분석 없음: 기본 3종
+            strengths.addAll(List.of("safe", "balanced", "fill"));
+        }
+
         List<CompareWorkerRequest.DetectedElementPayload> detectedPayloads = List.of();
         List<String> reqGroups = List.of();
         List<String> priGroups = List.of();
         List<CompareWorkerRequest.ContentBandPayload> contentBandPayloads = List.of();
 
-        if (analysis != null && analysis.getDetectedElements() != null && !analysis.getDetectedElements().isEmpty()) {
-            strengths.add("focus-fill");
+        if (hasElements) {
             detectedPayloads = analysis.getDetectedElements().stream()
                     .map(el -> CompareWorkerRequest.DetectedElementPayload.builder()
                             .id(el.getId())
@@ -164,20 +186,16 @@ public class BannerCompareService {
             priGroups = analysis.getPriorityGroups() != null ? analysis.getPriorityGroups() : List.of();
         }
 
-        // poster-reflow 후보: reflowRecommended=true 또는 layoutType이 포스터형 && contentBands 존재
-        boolean isPosterType = analysis != null && (
-                Boolean.TRUE.equals(analysis.getReflowRecommended())
-                || "poster_info".equals(analysis.getLayoutType())
-                || "horizontal_bands".equals(analysis.getLayoutType()));
+        // poster-reflow 추가 조건: poster형 && contentBands 존재
         boolean hasContentBands = analysis != null
                 && analysis.getContentBands() != null
                 && !analysis.getContentBands().isEmpty();
-        log.info("poster-reflow 조건: isPoster={} hasBands={} reflowRecommended={} layoutType={} bandsCount={}",
-                isPosterType, hasContentBands,
+        log.info("poster-reflow 조건: posterType={} productType={} hasBands={} reflowRecommended={} layoutType={} bandsCount={}",
+                posterType, productType, hasContentBands,
                 analysis != null ? analysis.getReflowRecommended() : null,
                 analysis != null ? analysis.getLayoutType() : null,
                 analysis != null && analysis.getContentBands() != null ? analysis.getContentBands().size() : 0);
-        if (isPosterType && hasContentBands) {
+        if (posterType && hasContentBands) {
             strengths.add("poster-reflow");
             contentBandPayloads = analysis.getContentBands().stream()
                     .map(b -> CompareWorkerRequest.ContentBandPayload.builder()
@@ -353,5 +371,38 @@ public class BannerCompareService {
         log.info("OpenAI Compare 응답: {}", responseContent);
 
         return objectMapper.readValue(responseContent, Map.class);
+    }
+
+    private boolean isPosterType(BannerAiAnalysis analysis) {
+        if (analysis == null) return false;
+        // reflowRecommended 또는 포스터형 layoutType
+        if (Boolean.TRUE.equals(analysis.getReflowRecommended())) return true;
+        String layout = analysis.getLayoutType();
+        if ("poster_info".equals(layout) || "horizontal_bands".equals(layout)) return true;
+        // 텍스트 밀도 high + edgeRisk high + 그룹/날짜 키워드 다수 → 정보형 포스터
+        if ("high".equals(analysis.getTextDensity()) && "high".equals(analysis.getEdgeRisk())) {
+            List<BannerAiAnalysis.DetectedElement> els = analysis.getDetectedElements();
+            if (els != null) {
+                long dateOrGroupCount = els.stream()
+                        .filter(e -> {
+                            String lbl = e.getLabel() != null ? e.getLabel().toLowerCase() : "";
+                            String grp = e.getGroup() != null ? e.getGroup().toLowerCase() : "";
+                            return lbl.contains("날짜") || lbl.contains("기간") || lbl.contains("신청")
+                                    || grp.contains("date") || grp.contains("period") || grp.contains("info");
+                        })
+                        .count();
+                if (dateOrGroupCount >= 2) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isProductType(BannerAiAnalysis analysis) {
+        if (analysis == null) return false;
+        // creativeType이 product_focused인 경우
+        if ("product_focused".equals(analysis.getCreativeType())) return true;
+        String density = analysis.getTextDensity();
+        // 텍스트 밀도가 낮거나 중간이면 제품형으로 판단
+        return "low".equals(density) || "medium".equals(density);
     }
 }

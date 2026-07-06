@@ -75,6 +75,16 @@ def resize_contain(img: Image.Image, width: int, height: int) -> Image.Image:
     return canvas
 
 
+def make_blur_background(img: Image.Image, width: int, height: int) -> Image.Image:
+    """블러 배경 캔버스만 생성 (전경 미포함)."""
+    from PIL import ImageFilter
+    bg = img.copy()
+    if bg.mode != "RGBA":
+        bg = bg.convert("RGBA")
+    bg = bg.resize((width, height), Image.LANCZOS)
+    return bg.filter(ImageFilter.GaussianBlur(radius=24))
+
+
 def resize_blur_bg(img: Image.Image, width: int, height: int) -> Image.Image:
     from PIL import ImageFilter
 
@@ -404,6 +414,95 @@ def resize_poster_reflow(img: Image.Image, dst_w: int, dst_h: int,
     return canvas
 
 
+def adjust_offset(paste_x: int, paste_y: int, resized_w: int, resized_h: int,
+                  dst_w: int, dst_h: int) -> tuple[int, int]:
+    """이미지가 캔버스보다 작으면 중앙, 크면 캔버스 범위로 클램핑."""
+    if resized_w <= dst_w:
+        paste_x = (dst_w - resized_w) // 2
+    else:
+        if paste_x > 0:
+            paste_x = 0
+        if paste_x + resized_w < dst_w:
+            paste_x = dst_w - resized_w
+    if resized_h <= dst_h:
+        paste_y = (dst_h - resized_h) // 2
+    else:
+        if paste_y > 0:
+            paste_y = 0
+        if paste_y + resized_h < dst_h:
+            paste_y = dst_h - resized_h
+    return paste_x, paste_y
+
+
+def resize_center_crop(img: Image.Image, dst_w: int, dst_h: int) -> Image.Image:
+    """꽉 찬 기준 후보: 목표 규격을 완전히 채우도록 확대 후 중앙 crop."""
+    src_w, src_h = img.size
+    scale = max(dst_w / src_w, dst_h / src_h)
+    new_w = max(1, int(src_w * scale))
+    new_h = max(1, int(src_h * scale))
+    resized = img.resize((new_w, new_h), Image.LANCZOS)
+    left = max(0, (new_w - dst_w) // 2)
+    top = max(0, (new_h - dst_h) // 2)
+    return resized.crop((left, top, left + dst_w, top + dst_h))
+
+
+def resize_letterbox(img: Image.Image, dst_w: int, dst_h: int) -> Image.Image:
+    """무손실 후보: 원본 전체 보존, blur 배경으로 여백 채움."""
+    src_w, src_h = img.size
+    scale = min(dst_w / src_w, dst_h / src_h)
+    new_w = max(1, int(src_w * scale))
+    new_h = max(1, int(src_h * scale))
+    src_rgba = img.convert("RGBA") if img.mode != "RGBA" else img.copy()
+    resized = src_rgba.resize((new_w, new_h), Image.LANCZOS)
+    bg = make_blur_background(img, dst_w, dst_h)
+    x = (dst_w - new_w) // 2
+    y = (dst_h - new_h) // 2
+    bg.alpha_composite(resized, (x, y))
+    return bg
+
+
+def resize_object_aware_fit(img: Image.Image, dst_w: int, dst_h: int,
+                             detected_elements: list, required_groups: list,
+                             priority_groups: list) -> Image.Image:
+    """필수/우선순위 요소가 캔버스 안에 들어오도록 scale + 위치 조정.
+    focus-fill보다 덜 공격적 — crop 없이 blur 배경 사용."""
+    boxes = collect_focus_boxes(detected_elements, required_groups, priority_groups, img.width, img.height)
+    if not boxes:
+        return resize_letterbox(img, dst_w, dst_h)
+
+    union = union_boxes(boxes)
+    src_w, src_h = img.size
+    ux1, uy1, ux2, uy2 = union
+    union_w = max(1, ux2 - ux1)
+    union_h = max(1, uy2 - uy1)
+
+    padding_ratio = 0.12
+    fit_w = dst_w * (1 - padding_ratio * 2)
+    fit_h = dst_h * (1 - padding_ratio * 2)
+
+    scale_by_union = min(fit_w / union_w, fit_h / union_h)
+    contain_scale = min(dst_w / src_w, dst_h / src_h)
+    max_scale = contain_scale * 1.25
+    scale = min(scale_by_union, max_scale)
+    scale = max(scale, contain_scale)
+
+    resized_w = max(1, int(src_w * scale))
+    resized_h = max(1, int(src_h * scale))
+    src_rgba = img.convert("RGBA") if img.mode != "RGBA" else img.copy()
+    resized = src_rgba.resize((resized_w, resized_h), Image.LANCZOS)
+
+    union_cx = ((ux1 + ux2) / 2) * scale
+    union_cy = ((uy1 + uy2) / 2) * scale
+    paste_x = int(dst_w / 2 - union_cx)
+    paste_y = int(dst_h / 2 - union_cy)
+
+    paste_x, paste_y = adjust_offset(paste_x, paste_y, resized_w, resized_h, dst_w, dst_h)
+
+    bg = make_blur_background(img, dst_w, dst_h)
+    bg.alpha_composite(resized, (paste_x, paste_y))
+    return bg
+
+
 def generate_candidates(input_path: str, output_dir: str, spec: dict,
                         resize_mode: str = "smart-fit", focal_position: str = "center",
                         strengths: list = None, detected_elements: list = None,
@@ -436,6 +535,15 @@ def generate_candidates(input_path: str, output_dir: str, spec: dict,
                                         priority_groups or [])
         elif strength == "poster-reflow":
             resized = resize_poster_reflow(img, w, h, content_bands or [])
+        elif strength == "center-crop":
+            resized = resize_center_crop(img, w, h)
+        elif strength == "letterbox":
+            resized = resize_letterbox(img, w, h)
+        elif strength == "object-aware-fit":
+            resized = resize_object_aware_fit(img, w, h,
+                                              detected_elements or [],
+                                              required_groups or [],
+                                              priority_groups or [])
         elif resize_mode == "smart-fit":
             resized = resize_smart_fit(img, w, h, strength, focal_position)
         else:

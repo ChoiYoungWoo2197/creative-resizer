@@ -193,7 +193,7 @@ const compareResult = ref(null)
 // AI 후보 적용
 const applyLoading = ref({})     // { specId_candidate: true/false }
 
-const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움', 'focus-fill': 'AI 포커스 채움', 'poster-reflow': 'AI 포스터 재배치' }
+const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움', 'center-crop': '비율 크롭', letterbox: '전체 보존', 'focus-fill': 'AI 포커스 채움', 'object-aware-fit': '오브젝트 보호 맞춤', 'poster-reflow': 'AI 포스터 재배치' }
 
 const MEDIA_LABELS = {
   google: 'Google', meta: 'Meta', naver: 'Naver',
@@ -329,7 +329,7 @@ async function runCompare(specId) {
   }
 }
 
-const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움', 'focus-fill': 'AI 포커스 채움', 'poster-reflow': 'AI 포스터 재배치' }
+const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움', 'center-crop': '비율 크롭', letterbox: '전체 보존', 'focus-fill': 'AI 포커스 채움', 'object-aware-fit': '오브젝트 보호 맞춤', 'poster-reflow': 'AI 포스터 재배치' }
 function strengthKr(v) { return STRENGTH_KR[v] ?? v }
 
 const GROUP_LABELS = {
