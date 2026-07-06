@@ -345,73 +345,174 @@ def resize_focus_fill(img: Image.Image, dst_w: int, dst_h: int,
     return cropped.resize((dst_w, dst_h), Image.LANCZOS)
 
 
-# 텍스트/날짜/설명 영역 — direct-resize (찌그러짐 허용, 정보 전체 보존)
-_BAND_DIRECT_RESIZE_ROLES = {"date_info", "description", "sub_copy", "cta", "decoration"}
+def get_target_layout_type(dst_w: int, dst_h: int) -> str:
+    """타겟 규격의 비율로 레이아웃 유형 판단."""
+    ratio = dst_w / max(dst_h, 1)
+    if ratio >= 2.5:
+        return "extreme_horizontal"   # 728×90, 320×100
+    elif ratio >= 1.3:
+        return "horizontal"           # 1250×560, 1200×628
+    elif ratio >= 0.8:
+        return "square"               # 1080×1080
+    else:
+        return "vertical"             # 300×600, 1080×1920
+
+
+def normalize_content_bands(content_bands: list, img_height: int) -> list:
+    result = []
+    for b in content_bands:
+        y1 = b.get("y1")
+        y2 = b.get("y2")
+        if not isinstance(y1, (int, float)) or not isinstance(y2, (int, float)):
+            continue
+        y1 = max(0, int(y1))
+        y2 = min(img_height, int(y2))
+        if y2 <= y1:
+            continue
+        result.append({**b, "y1": y1, "y2": y2})
+    return sorted(result, key=lambda b: b["y1"])
+
+
+def _infer_reflow_priority(band: dict) -> str:
+    """reflowPriority 필드가 없으면 role로 추정."""
+    role = band.get("role", "")
+    if role in ("headline", "main_title"):
+        return "hero"
+    elif role in ("date_cta", "date_info", "cta", "logo"):
+        return "support"
+    else:
+        return "optional"
+
+
+def select_reflow_bands(bands: list, layout_type: str) -> list:
+    """role/reflowPriority 기준으로 band를 선택한다.
+    - extreme_horizontal: hero + date_cta 계열 support 1개만
+    - horizontal: hero + support (canDrop=False optional 1개 허용)
+    - square/vertical: 모두 포함 시도
+    """
+    def priority(b):
+        rp = b.get("reflowPriority") or _infer_reflow_priority(b)
+        return rp
+
+    hero_bands    = [b for b in bands if priority(b) == "hero"]
+    support_bands = [b for b in bands if priority(b) == "support"]
+    optional_bands = [b for b in bands if priority(b) == "optional"]
+
+    # hero가 없으면 importance=required 중에서 선택
+    if not hero_bands:
+        hero_bands = [b for b in bands if b.get("importance") == "required"]
+        support_bands = [b for b in bands if b not in hero_bands]
+        optional_bands = []
+
+    if layout_type == "extreme_horizontal":
+        selected = hero_bands[:1]
+        date_cta = [b for b in support_bands
+                    if b.get("role") in ("date_cta", "date_info", "cta")]
+        if date_cta:
+            selected.append(date_cta[0])
+    elif layout_type == "horizontal":
+        selected = hero_bands + support_bands
+        non_droppable = [b for b in optional_bands if not b.get("canDrop", True)]
+        selected.extend(non_droppable[:1])
+    else:
+        selected = hero_bands + support_bands + optional_bands
+
+    return selected
+
+
+def build_reflow_slots(dst_w: int, dst_h: int, layout_type: str, selected: list) -> list:
+    """선택된 band마다 (x, y, w, h) 슬롯을 계산한다."""
+    if not selected:
+        return []
+
+    def area_ratio(band):
+        rp = band.get("reflowPriority") or _infer_reflow_priority(band)
+        if rp == "hero":
+            return 0.60
+        role = band.get("role", "")
+        if role == "logo":
+            return 0.10
+        if rp == "support":
+            return 0.22
+        return 0.08
+
+    # extreme_horizontal: 가로 분할
+    if layout_type == "extreme_horizontal":
+        hero = [b for b in selected if (b.get("reflowPriority") or _infer_reflow_priority(b)) == "hero"]
+        others = [b for b in selected if b not in hero]
+        slots = []
+        if hero and others:
+            hero_w = int(dst_w * 0.60)
+            slots.append({"band": hero[0],   "x": 0,      "y": 0, "w": hero_w,         "h": dst_h, "position": (0, 0)})
+            slots.append({"band": others[0], "x": hero_w, "y": 0, "w": dst_w - hero_w, "h": dst_h, "position": (hero_w, 0)})
+        else:
+            slots.append({"band": selected[0], "x": 0, "y": 0, "w": dst_w, "h": dst_h, "position": (0, 0)})
+        return slots
+
+    # 세로 배치 (가로형/정방형/세로형)
+    ratios = [area_ratio(b) for b in selected]
+    total = sum(ratios)
+
+    slots = []
+    y_cursor = 0
+    for i, (band, ratio) in enumerate(zip(selected, ratios)):
+        if i == len(selected) - 1:
+            h = max(1, dst_h - y_cursor)
+        else:
+            h = max(1, int(dst_h * ratio / total))
+        slots.append({"band": band, "x": 0, "y": y_cursor, "w": dst_w, "h": h, "position": (0, y_cursor)})
+        y_cursor += h
+
+    return slots
+
+
+def crop_band(img: Image.Image, band: dict) -> Image.Image:
+    y1 = max(0, int(band["y1"]))
+    y2 = min(img.height, int(band["y2"]))
+    return img.crop((0, y1, img.width, y2))
+
+
+def fit_band_to_slot(band_img: Image.Image, slot: dict) -> Image.Image:
+    slot_w, slot_h = slot["w"], slot["h"]
+    src_w, src_h = band_img.size
+    if src_w == 0 or src_h == 0:
+        return Image.new("RGBA", (slot_w, slot_h), (0, 0, 0, 0))
+    scale = min(slot_w / src_w, slot_h / src_h)
+    new_w = max(1, int(src_w * scale))
+    new_h = max(1, int(src_h * scale))
+    src_rgba = band_img.convert("RGBA") if band_img.mode != "RGBA" else band_img.copy()
+    resized = src_rgba.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new("RGBA", (slot_w, slot_h), (0, 0, 0, 0))
+    x = (slot_w - new_w) // 2
+    y = (slot_h - new_h) // 2
+    canvas.alpha_composite(resized, (x, y))
+    return canvas
 
 
 def resize_poster_reflow(img: Image.Image, dst_w: int, dst_h: int,
                           content_bands: list) -> Image.Image:
-    """포스터형: band별 crop → role 기반 resize → 세로 합성.
-    - 시각 영역(main_title/product_visual/logo): 가로폭 fit → 세로 center crop (soft-cover)
-    - 텍스트 영역(date_info/description 등): direct-resize (정보 전체 보존, 약간 찌그러짐 허용)
-    content_bands: [{"id":..., "role":..., "y1": N, "y2": N, "importance":...}, ...]
+    """재구성형 poster-reflow: band를 role/reflowPriority 기준으로 분류 → 슬롯 배치.
+    원본 전체 보존이 목표가 아니라, 타겟 배너 규격에 맞게 핵심 메시지를 재구성.
     """
-    valid_bands = [
-        b for b in content_bands
-        if isinstance(b.get("y1"), (int, float)) and isinstance(b.get("y2"), (int, float))
-        and b.get("y2", 0) > b.get("y1", 0)
-    ]
-    if not valid_bands:
-        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+    layout_type = get_target_layout_type(dst_w, dst_h)
+    bands = normalize_content_bands(content_bands, img.height)
 
-    total_orig_h = sum(b["y2"] - b["y1"] for b in valid_bands)
-    if total_orig_h <= 0:
-        return resize_smart_fit(img, dst_w, dst_h, strength="balanced", focal_position="center")
+    if not bands:
+        return resize_letterbox(img, dst_w, dst_h)
 
-    # 원본 band 비율 기준으로 target height 배분 (최소 8px 보장)
-    allocated = [max(8, int(dst_h * (b["y2"] - b["y1"]) / total_orig_h)) for b in valid_bands]
-    # 반올림 오차 보정: 마지막 band에 차이 흡수
-    diff = dst_h - sum(allocated)
-    allocated[-1] = max(1, allocated[-1] + diff)
+    selected = select_reflow_bands(bands, layout_type)
+    if not selected:
+        return resize_letterbox(img, dst_w, dst_h)
 
-    img_rgba = img.convert("RGBA") if img.mode != "RGBA" else img
-    canvas = Image.new("RGBA", (dst_w, dst_h), (255, 255, 255, 255))
-    y_cursor = 0
+    slots = build_reflow_slots(dst_w, dst_h, layout_type, selected)
+    bg = make_blur_background(img, dst_w, dst_h)
 
-    for band, alloc_h in zip(valid_bands, allocated):
-        if alloc_h <= 0:
-            y_cursor += alloc_h
-            continue
-        y1 = max(0, int(band["y1"]))
-        y2 = min(img.height, int(band["y2"]))
-        if y2 <= y1:
-            y_cursor += alloc_h
-            continue
+    for slot in slots:
+        band_img = crop_band(img, slot["band"])
+        fitted = fit_band_to_slot(band_img, slot)
+        bg.alpha_composite(fitted, slot["position"])
 
-        band_crop = img_rgba.crop((0, y1, img.width, y2))
-        role = band.get("role", "")
-
-        if role in _BAND_DIRECT_RESIZE_ROLES:
-            # 텍스트/날짜/설명: 가로 → 세로 직접 리사이징 (정보 전체 보존)
-            band_resized = band_crop.resize((dst_w, alloc_h), Image.LANCZOS)
-        else:
-            # 시각 영역(main_title, product_visual, logo): 가로폭 fit → 세로 center crop
-            scale = dst_w / band_crop.width
-            new_h = max(1, int(band_crop.height * scale))
-            scaled = band_crop.resize((dst_w, new_h), Image.LANCZOS)
-            if new_h <= alloc_h:
-                band_canvas = Image.new("RGBA", (dst_w, alloc_h), (255, 255, 255, 0))
-                paste_y = (alloc_h - new_h) // 2
-                band_canvas.alpha_composite(scaled, (0, paste_y))
-                band_resized = band_canvas
-            else:
-                top = (new_h - alloc_h) // 2
-                band_resized = scaled.crop((0, top, dst_w, top + alloc_h))
-
-        canvas.alpha_composite(band_resized, (0, y_cursor))
-        y_cursor += alloc_h
-
-    return canvas
+    return bg
 
 
 def adjust_offset(paste_x: int, paste_y: int, resized_w: int, resized_h: int,

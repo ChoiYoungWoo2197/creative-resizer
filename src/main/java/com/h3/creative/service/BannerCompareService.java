@@ -59,9 +59,12 @@ public class BannerCompareService {
             letterbox: 원본을 절대 자르지 않는 후보. 정보 손실은 적지만 여백/배경이 많을 수 있음.
             focus-fill: AI가 감지한 핵심 요소 중심으로 crop하여 blur를 줄이는 후보. 단일 제품/인물 중심 소재에 적합.
             object-aware-fit: 필수/우선순위 요소가 잘리지 않도록 scale을 조정하면서 가능한 한 크게 보여주는 후보. 텍스트가 많은 광고나 정보형 포스터에 적합.
-            poster-reflow: 정보형 포스터를 가로 영역으로 나누어 압축/재조립한 후보. 상단/중앙/하단 정보를 모두 보호.
+            poster-reflow: 포스터를 배너 규격에 맞게 재구성하는 공격형 후보. 원본 전체 보존이 목표가 아님.
+              - 평가 시 우선 기준: 메인 메시지가 크고 명확한가 / 신청기간·CTA가 읽기 쉽게 배치되었는가 / 배너 비율에 맞는 구성인가 / 광고 임팩트가 있는가
+              - 감점 제외: 원본 전체 미보존 / 장식 요소 사라짐 / 보조 문구 생략 / 상중하 구조 미유지
+              - 감점 대상: 메인 제목 잘림 / 신청기간·CTA 완전 소멸 / 로고·주최 정보 과도 왜곡 / band 경계 어색 / 글자 심하게 찌그러짐
 
-            평가 기준:
+            평가 기준 (poster-reflow 외 모든 후보):
             - 원본의 핵심 메시지(텍스트/로고/CTA)가 유지되는가
             - 주요 텍스트가 잘리지 않았는가
             - 제품/인물/로고가 잘 보이는가
@@ -204,6 +207,10 @@ public class BannerCompareService {
                             .y1(b.getY1())
                             .y2(b.getY2())
                             .importance(b.getImportance())
+                            .reflowPriority(b.getReflowPriority())
+                            .canDrop(b.getCanDrop())
+                            .canCrop(b.getCanCrop())
+                            .targetPlacement(b.getTargetPlacement())
                             .build())
                     .collect(Collectors.toList());
         }

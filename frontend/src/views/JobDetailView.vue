@@ -121,6 +121,10 @@
               <span class="cmp-score" :class="scoreClass(c.score)">{{ c.score }}점</span>
               <span v-if="c.strength === compareResult?.bestCandidate" class="cmp-crown">★ 추천</span>
             </div>
+            <div class="cmp-tags" v-if="strengthTags(c.strength).length">
+              <span v-for="tag in strengthTags(c.strength)" :key="tag" class="cmp-tag">{{ tag }}</span>
+            </div>
+            <div class="cmp-desc" v-if="strengthDesc(c.strength)">{{ strengthDesc(c.strength) }}</div>
             <div class="cmp-thumb-wrap">
               <img :src="compareFileUrl(compareResult.id, c.fileName)" class="cmp-thumb" :alt="c.strength" @error="$event.target.style.display='none'" />
             </div>
@@ -193,7 +197,7 @@ const compareResult = ref(null)
 // AI 후보 적용
 const applyLoading = ref({})     // { specId_candidate: true/false }
 
-const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움', 'center-crop': '비율 크롭', letterbox: '전체 보존', 'focus-fill': 'AI 포커스 채움', 'object-aware-fit': '오브젝트 보호 맞춤', 'poster-reflow': 'AI 포스터 재배치' }
+const strengthLabel = { safe: '안전', balanced: '균형', fill: '채움', 'center-crop': '비율 크롭', letterbox: '전체 보존', 'focus-fill': 'AI 포커스 채움', 'object-aware-fit': '오브젝트 보호 맞춤', 'poster-reflow': 'AI 포스터 재구성' }
 
 const MEDIA_LABELS = {
   google: 'Google', meta: 'Meta', naver: 'Naver',
@@ -329,8 +333,26 @@ async function runCompare(specId) {
   }
 }
 
-const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움', 'center-crop': '비율 크롭', letterbox: '전체 보존', 'focus-fill': 'AI 포커스 채움', 'object-aware-fit': '오브젝트 보호 맞춤', 'poster-reflow': 'AI 포스터 재배치' }
+const STRENGTH_KR = { safe: '안전', balanced: '균형', fill: '채움', 'center-crop': '비율 크롭', letterbox: '전체 보존', 'focus-fill': 'AI 포커스 채움', 'object-aware-fit': '오브젝트 보호 맞춤', 'poster-reflow': 'AI 포스터 재구성' }
 function strengthKr(v) { return STRENGTH_KR[v] ?? v }
+
+const STRENGTH_DESC = {
+  'object-aware-fit': '중요 요소를 보존하면서 최대한 크게 맞춤',
+  'poster-reflow': '포스터를 배너 규격에 맞게 재구성',
+  'focus-fill': 'AI가 감지한 핵심 피사체 중심으로 채움',
+  'letterbox': '원본을 절대 자르지 않고 전체 보존',
+  'center-crop': '목표 규격을 완전히 채우도록 중앙 crop',
+}
+function strengthDesc(v) { return STRENGTH_DESC[v] ?? '' }
+
+const STRENGTH_TAGS = {
+  'object-aware-fit': ['보존형', '안전형', '중요 요소 유지'],
+  'poster-reflow': ['재구성형', '공격형', '일부 생략 가능'],
+  'letterbox': ['무손실', '여백 발생'],
+  'center-crop': ['꽉 채움', '가장자리 손실 위험'],
+  'focus-fill': ['피사체 중심', 'AI 크롭'],
+}
+function strengthTags(v) { return STRENGTH_TAGS[v] ?? [] }
 
 const GROUP_LABELS = {
   main_product: '메인 제품', main_copy: '메인 카피', sub_copy: '서브 카피',
@@ -651,6 +673,17 @@ onUnmounted(stopPolling)
 .cmp-score.score-mid  { background: #FEF3C7; color: #92400E; }
 .cmp-score.score-low  { background: #FEE2E2; color: #991B1B; }
 .cmp-crown { margin-left: auto; font-size: 11px; font-weight: 700; color: #7C3AED; }
+
+.cmp-tags {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 12px 0;
+}
+.cmp-tag {
+  font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 10px;
+  background: #EDE9FE; color: #5B21B6;
+}
+.cmp-desc {
+  font-size: 11px; color: #6B7280; padding: 3px 12px 6px;
+}
 
 .cmp-thumb-wrap {
   background: #F2F4F6; width: 100%; aspect-ratio: 4/3;

@@ -78,11 +78,15 @@ public class BannerAiAnalysis {
 
     @Data
     public static class ContentBand {
-        private String id;          // top_main / middle_date / bottom_desc 등
-        private String name;        // 한국어 설명
-        private String role;        // main_title / date_info / description / product_visual / sub_copy / cta / logo
-        private Integer y1;         // 원본 이미지 기준 시작 y좌표
-        private Integer y2;         // 원본 이미지 기준 끝 y좌표
-        private String importance;  // required / priority / optional
+        private String id;               // top_main / middle_date / bottom_desc 등
+        private String name;             // 한국어 설명
+        private String role;             // logo / headline / date_cta / subcopy / decoration / background / visual
+        private Integer y1;              // 원본 이미지 기준 시작 y좌표
+        private Integer y2;              // 원본 이미지 기준 끝 y좌표
+        private String importance;       // required / priority / optional
+        private String reflowPriority;   // hero / support / optional
+        private Boolean canDrop;         // 공간 부족 시 삭제 가능 여부
+        private Boolean canCrop;         // 일부 crop 가능 여부
+        private String targetPlacement;  // top / center / bottom / left / right
     }
 }

@@ -89,14 +89,31 @@ public class BannerAnalysisService {
             - 날짜·신청기간·마감·기관 로고·CTA 포함
             - 단순 제품 사진이 아니라 정보 전달형 레이아웃
 
+            poster-reflow 모드는 원본 전체 보존을 목표로 하지 않습니다.
+            타겟 배너 규격에 맞게 포스터의 핵심 메시지를 재구성하는 것이 목표입니다.
+            contentBands를 분석할 때 각 band에 다음 정보를 포함하세요.
+
             포스터형이면:
             - layoutType: horizontal_bands 또는 poster_info
             - reflowRecommended: true
-            - contentBands: 이미지를 y1~y2 기준으로 3개 가로 영역으로 분리
-              * top_main: 로고/메인 카피/주요 그래픽 (role: main_title)
-              * middle_date: 날짜/신청기간/가격/CTA 등 핵심 정보 (role: date_info)
-              * bottom_desc: 설명/안내/서브 문구 (role: description)
-              * y1/y2는 원본 이미지 픽셀 기준 정수값
+            - contentBands: 이미지를 y1~y2 기준으로 3~4개 가로 영역으로 분리
+              각 band 필드:
+              * id: "top_main" / "middle_date" / "bottom_desc" 등
+              * name: 한국어 설명
+              * role: logo / headline / date_cta / subcopy / decoration / background / visual 중 하나
+              * y1, y2: 원본 이미지 픽셀 기준 정수값
+              * importance: required / priority / optional
+              * reflowPriority: hero (가장 중요 메시지, 배너에서 크게 노출) / support (보조 정보, 공간 있으면 유지) / optional (장식/부가 정보, 공간 부족 시 삭제 가능)
+              * canDrop: true/false (공간 부족 시 삭제 가능 여부)
+              * canCrop: true/false (일부 crop 가능 여부)
+              * targetPlacement: top / center / bottom / left / right (타겟 배너에서 배치 위치)
+
+              reflowPriority 판단 기준:
+              - 메인 제목/핵심 카피 → hero
+              - 신청기간, 날짜, CTA → support 이상
+              - 하단 설명 문구 → optional 또는 support
+              - 장식 요소 → optional
+              - 기관 로고 → support
 
             비포스터형(단순 제품/인물 이미지)이면:
             - layoutType: single_subject 또는 product_visual
@@ -143,8 +160,13 @@ public class BannerAnalysisService {
               "optionalGroups": ["decorations"],
               "layoutType": "single_subject",
               "reflowRecommended": false,
-              "contentBands": []
+              "contentBands": [
+                { "id": "top_main", "name": "메인 타이틀", "role": "headline", "y1": 0, "y2": 300, "importance": "required", "reflowPriority": "hero", "canDrop": false, "canCrop": false, "targetPlacement": "center" },
+                { "id": "middle_date", "name": "신청기간", "role": "date_cta", "y1": 300, "y2": 500, "importance": "required", "reflowPriority": "support", "canDrop": false, "canCrop": false, "targetPlacement": "bottom" },
+                { "id": "bottom_desc", "name": "설명 문구", "role": "subcopy", "y1": 500, "y2": 700, "importance": "priority", "reflowPriority": "optional", "canDrop": true, "canCrop": true, "targetPlacement": "bottom" }
+              ]
             }
+            비포스터형이면 contentBands는 빈 배열 []로 반환하세요.
             """;
 
     private static final java.util.Set<String> VALID_RESIZE_MODES =
@@ -161,7 +183,12 @@ public class BannerAnalysisService {
                              "horizontal_bands", "vertical_bands", "mixed_layout");
     private static final java.util.Set<String> VALID_BAND_ROLES =
             java.util.Set.of("main_title", "date_info", "description", "product_visual",
-                             "sub_copy", "cta", "logo", "decoration");
+                             "sub_copy", "cta", "logo", "decoration",
+                             "headline", "date_cta", "subcopy", "background", "visual");
+    private static final java.util.Set<String> VALID_REFLOW_PRIORITIES =
+            java.util.Set.of("hero", "support", "optional");
+    private static final java.util.Set<String> VALID_TARGET_PLACEMENTS =
+            java.util.Set.of("top", "center", "bottom", "left", "right");
     private static final java.util.Set<String> VALID_DENSITIES =
             java.util.Set.of("high", "medium", "low");
 
@@ -244,6 +271,14 @@ public class BannerAnalysisService {
             band.setY2(yi2);
             String importance = (String) m.getOrDefault("importance", "");
             band.setImportance(VALID_IMPORTANCES.contains(importance) ? importance : "priority");
+            String reflowPriority = (String) m.getOrDefault("reflowPriority", "");
+            band.setReflowPriority(VALID_REFLOW_PRIORITIES.contains(reflowPriority) ? reflowPriority : "support");
+            Object canDrop = m.get("canDrop");
+            band.setCanDrop(canDrop instanceof Boolean ? (Boolean) canDrop : Boolean.FALSE);
+            Object canCrop = m.get("canCrop");
+            band.setCanCrop(canCrop instanceof Boolean ? (Boolean) canCrop : Boolean.FALSE);
+            String targetPlacement = (String) m.getOrDefault("targetPlacement", "");
+            band.setTargetPlacement(VALID_TARGET_PLACEMENTS.contains(targetPlacement) ? targetPlacement : "center");
             bands.add(band);
         }
         return bands;

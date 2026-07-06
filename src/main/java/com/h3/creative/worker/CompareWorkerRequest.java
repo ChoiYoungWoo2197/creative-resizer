@@ -57,5 +57,9 @@ public class CompareWorkerRequest {
         private Integer y1;
         private Integer y2;
         private String importance;
+        private String reflowPriority;
+        private Boolean canDrop;
+        private Boolean canCrop;
+        private String targetPlacement;
     }
 }
