@@ -30,6 +30,9 @@ creative:
     url: http://banner-worker:5000
   openai:
     api-key: ${OPENAI_API_KEY:}
+    analysis-model: ${OPENAI_ANALYSIS_MODEL:gpt-4.1-mini}
+    compare-model: ${OPENAI_COMPARE_MODEL:gpt-4.1-mini}
+    image-detail: ${OPENAI_IMAGE_DETAIL:low}
 
 ---
 spring:

@@ -420,6 +420,56 @@ def select_reflow_bands(bands: list, layout_type: str) -> list:
     return selected
 
 
+def _build_horizontal_banner_slots(dst_w: int, dst_h: int, selected: list) -> list:
+    """horizontal(1250×560 등): targetPlacement/role 기준 배너형 슬롯 배치.
+    logo → top(12%), hero/headline → center(크게), support/date_cta → bottom(25%).
+    """
+    top_bands, center_bands, bottom_bands = [], [], []
+    for b in selected:
+        tp   = b.get("targetPlacement", "")
+        role = b.get("role", "")
+        rp   = b.get("reflowPriority") or _infer_reflow_priority(b)
+        if tp == "top" or role == "logo":
+            top_bands.append(b)
+        elif tp == "bottom" or role in ("date_cta", "date_info", "cta"):
+            bottom_bands.append(b)
+        elif tp == "center" or rp == "hero":
+            center_bands.append(b)
+        else:
+            bottom_bands.append(b)
+
+    top_h    = int(dst_h * 0.12) if top_bands    else 0
+    bottom_h = int(dst_h * 0.25) if bottom_bands else 0
+    center_h = max(1, dst_h - top_h - bottom_h)
+
+    slots = []
+    y = 0
+    if top_bands:
+        unit = top_h // len(top_bands)
+        for i, b in enumerate(top_bands):
+            h = unit if i < len(top_bands) - 1 else max(1, top_h - unit * i)
+            slots.append({"band": b, "x": 0, "y": y, "w": dst_w, "h": h, "position": (0, y)})
+            y += h
+
+    cy = y
+    if center_bands:
+        unit = center_h // len(center_bands)
+        for i, b in enumerate(center_bands):
+            h = unit if i < len(center_bands) - 1 else max(1, center_h - unit * i)
+            slots.append({"band": b, "x": 0, "y": cy, "w": dst_w, "h": h, "position": (0, cy)})
+            cy += h
+
+    by = dst_h - bottom_h
+    if bottom_bands:
+        unit = bottom_h // len(bottom_bands)
+        for i, b in enumerate(bottom_bands):
+            h = unit if i < len(bottom_bands) - 1 else max(1, bottom_h - unit * i)
+            slots.append({"band": b, "x": 0, "y": by, "w": dst_w, "h": h, "position": (0, by)})
+            by += h
+
+    return slots
+
+
 def build_reflow_slots(dst_w: int, dst_h: int, layout_type: str, selected: list) -> list:
     """선택된 band마다 (x, y, w, h) 슬롯을 계산한다."""
     if not selected:
@@ -449,7 +499,11 @@ def build_reflow_slots(dst_w: int, dst_h: int, layout_type: str, selected: list)
             slots.append({"band": selected[0], "x": 0, "y": 0, "w": dst_w, "h": dst_h, "position": (0, 0)})
         return slots
 
-    # 세로 배치 (가로형/정방형/세로형)
+    # horizontal: targetPlacement/role 기반 배너형 슬롯 배치
+    if layout_type == "horizontal":
+        return _build_horizontal_banner_slots(dst_w, dst_h, selected)
+
+    # 세로 배치 (square/vertical)
     ratios = [area_ratio(b) for b in selected]
     total = sum(ratios)
 
@@ -477,16 +531,28 @@ def fit_band_to_slot(band_img: Image.Image, slot: dict) -> Image.Image:
     src_w, src_h = band_img.size
     if src_w == 0 or src_h == 0:
         return Image.new("RGBA", (slot_w, slot_h), (0, 0, 0, 0))
-    scale = min(slot_w / src_w, slot_h / src_h)
-    new_w = max(1, int(src_w * scale))
-    new_h = max(1, int(src_h * scale))
+    can_crop = slot.get("band", {}).get("canCrop", False)
     src_rgba = band_img.convert("RGBA") if band_img.mode != "RGBA" else band_img.copy()
-    resized = src_rgba.resize((new_w, new_h), Image.LANCZOS)
-    canvas = Image.new("RGBA", (slot_w, slot_h), (0, 0, 0, 0))
-    x = (slot_w - new_w) // 2
-    y = (slot_h - new_h) // 2
-    canvas.alpha_composite(resized, (x, y))
-    return canvas
+    if can_crop:
+        # cover 방식: slot을 꽉 채우고 중앙 crop
+        scale = max(slot_w / src_w, slot_h / src_h)
+        new_w = max(1, int(src_w * scale))
+        new_h = max(1, int(src_h * scale))
+        resized = src_rgba.resize((new_w, new_h), Image.LANCZOS)
+        cx = (new_w - slot_w) // 2
+        cy = (new_h - slot_h) // 2
+        return resized.crop((cx, cy, cx + slot_w, cy + slot_h))
+    else:
+        # contain 방식: 비율 유지하며 축소, 투명 여백
+        scale = min(slot_w / src_w, slot_h / src_h)
+        new_w = max(1, int(src_w * scale))
+        new_h = max(1, int(src_h * scale))
+        resized = src_rgba.resize((new_w, new_h), Image.LANCZOS)
+        canvas = Image.new("RGBA", (slot_w, slot_h), (0, 0, 0, 0))
+        x = (slot_w - new_w) // 2
+        y = (slot_h - new_h) // 2
+        canvas.alpha_composite(resized, (x, y))
+        return canvas
 
 
 def resize_poster_reflow(img: Image.Image, dst_w: int, dst_h: int,

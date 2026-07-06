@@ -33,6 +33,12 @@ public class BannerAnalysisService {
     @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
+    @Value("${creative.openai.analysis-model:gpt-4.1-mini}")
+    private String openAiModel;
+
+    @Value("${creative.openai.image-detail:low}")
+    private String openAiImageDetail;
+
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
     private static final String PROMPT = """
@@ -316,7 +322,7 @@ public class BannerAnalysisService {
 
         Map<String, Object> imageContent = new LinkedHashMap<>();
         imageContent.put("type", "image_url");
-        imageContent.put("image_url", Map.of("url", dataUrl, "detail", "low"));
+        imageContent.put("image_url", Map.of("url", dataUrl, "detail", openAiImageDetail));
 
         Map<String, Object> textContent = new LinkedHashMap<>();
         textContent.put("type", "text");
@@ -327,7 +333,7 @@ public class BannerAnalysisService {
         message.put("content", List.of(imageContent, textContent));
 
         Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", "gpt-4.1-mini");
+        requestBody.put("model", openAiModel);
         requestBody.put("messages", List.of(message));
         requestBody.put("max_tokens", 2000);
         requestBody.put("response_format", Map.of("type", "json_object"));
