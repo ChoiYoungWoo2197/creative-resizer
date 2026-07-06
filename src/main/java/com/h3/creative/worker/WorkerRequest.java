@@ -16,6 +16,8 @@ public class WorkerRequest {
     private String smartFitStrength;
     private String focalPosition;
     private String outputFormat;
+    private String sourceType;   // image / psd
+    private String psdMode;      // artboard-first / flatten
 
     @Data
     @Builder

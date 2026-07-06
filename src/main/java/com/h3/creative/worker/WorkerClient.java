@@ -56,6 +56,25 @@ public class WorkerClient {
         }
     }
 
+    public PsdAnalyzeResponse analyzePsd(String filePath) {
+        String url = workerUrl + "/analyze-psd";
+        log.info("Calling worker analyze-psd: {}", filePath);
+        try {
+            PsdAnalyzeRequest req = new PsdAnalyzeRequest();
+            req.setFilePath(filePath);
+            ResponseEntity<PsdAnalyzeResponse> response =
+                    restTemplate.postForEntity(url, req, PsdAnalyzeResponse.class);
+            PsdAnalyzeResponse body = response.getBody();
+            if (body == null) throw new IllegalStateException("Worker returned empty response");
+            return body;
+        } catch (Exception e) {
+            log.error("Worker analyze-psd failed filePath={} error={}", filePath, e.getMessage());
+            PsdAnalyzeResponse error = new PsdAnalyzeResponse();
+            error.setError(e.getMessage());
+            return error;
+        }
+    }
+
     public boolean isHealthy() {
         try {
             restTemplate.getForEntity(workerUrl + "/health", String.class);

@@ -731,10 +731,87 @@ def generate_candidates(input_path: str, output_dir: str, spec: dict,
 
 def generate(psd_path: str, specs: list[dict], resize_mode: str,
              output_format: str, output_dir: str, smart_fit_strength: str = "balanced",
-             focal_position: str = "center") -> list[dict]:
+             focal_position: str = "center", source_type: str = "image",
+             psd_mode: str = "artboard-first") -> list[dict]:
+
+    os.makedirs(output_dir, exist_ok=True)
+    results = []
+
+    # PSD 아트보드 모드: 각 spec마다 최적 아트보드를 선택해 렌더링
+    if source_type == "psd" and psd_mode == "artboard-first":
+        import psd_analyzer
+        from psd_tools import PSDImage
+
+        psd = PSDImage.open(psd_path)
+        composed = psd.composite()
+        if composed is None:
+            composed = Image.new("RGB", (psd.width, psd.height), (255, 255, 255))
+
+        analysis = psd_analyzer.analyze_psd_file(psd_path)
+        artboards = analysis["artboards"]
+
+        for spec in specs:
+            media = spec["media"]
+            w = spec["width"]
+            h = spec["height"]
+            slug = spec.get("slug", "")
+            name = spec.get("name", "")
+
+            best_ab = psd_analyzer.select_best_artboard(artboards, w, h)
+            is_full_canvas = (best_ab is None or best_ab.get("id") == "full_canvas")
+
+            if not is_full_canvas:
+                ab_img = psd_analyzer.render_artboard_from_composed(composed, best_ab)
+                resized = resize_smart_fit(ab_img, w, h,
+                                           strength=smart_fit_strength or "balanced",
+                                           focal_position=focal_position or "center")
+                selected_ab_id = best_ab["id"]
+                selected_ab_name = best_ab["name"]
+            else:
+                img = load_psd_as_image(psd_path)
+                if resize_mode == "smart-fit":
+                    resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
+                else:
+                    resized = RESIZE_FUNCS.get(resize_mode, resize_cover)(img, w, h)
+                selected_ab_id = None
+                selected_ab_name = None
+
+            if output_format in ("jpg", "jpeg"):
+                resized = resized.convert("RGB")
+                ext = "jpg"
+            else:
+                ext = output_format
+
+            slug_part = f"_{slug}" if slug else ""
+            filename = f"{media}{slug_part}_{w}x{h}.{ext}"
+            out_path = os.path.join(output_dir, filename)
+            resized.save(out_path)
+
+            file_size = os.path.getsize(out_path)
+            with Image.open(out_path) as check_img:
+                actual_w, actual_h = check_img.size
+            valid = (actual_w == w and actual_h == h)
+            validation_message = "정상" if valid else f"expected={w}x{h}, actual={actual_w}x{actual_h}"
+
+            results.append({
+                "media": media,
+                "name": name,
+                "slug": slug,
+                "width": w,
+                "height": h,
+                "fileName": filename,
+                "filePath": out_path,
+                "fileSize": file_size,
+                "valid": valid,
+                "validationMessage": validation_message,
+                "selectedArtboardId": selected_ab_id,
+                "selectedArtboardName": selected_ab_name,
+            })
+        return results
+
+    # 기존 이미지/PSD flatten 처리
     img = load_psd_as_image(psd_path)
     resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
-    results = []
 
     for spec in specs:
         media = spec["media"]
@@ -757,7 +834,6 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         slug_part = f"_{slug}" if slug else ""
         filename = f"{media}{slug_part}_{w}x{h}.{ext}"
         out_path = os.path.join(output_dir, filename)
-        os.makedirs(output_dir, exist_ok=True)
         resized.save(out_path)
 
         file_size = os.path.getsize(out_path)
@@ -777,6 +853,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "fileSize": file_size,
             "valid": valid,
             "validationMessage": validation_message,
+            "selectedArtboardId": None,
+            "selectedArtboardName": None,
         })
 
     return results

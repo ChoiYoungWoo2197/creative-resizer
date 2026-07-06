@@ -39,14 +39,18 @@ public class BannerService {
                             String focalPosition, String outputFormat,
                             String aiAnalysisId, Boolean aiApplied,
                             String aiRecommendedResizeMode, String aiRecommendedSmartFitStrength,
-                            String aiRecommendedFocalPosition) throws IOException {
+                            String aiRecommendedFocalPosition,
+                            String psdMode) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
+        if (psdMode == null || psdMode.isBlank()) psdMode = "artboard-first";
 
         String filename = UUID.randomUUID() + "_" + psdFile.getOriginalFilename();
         File dest = new File(uploadDir, filename);
         dest.getParentFile().mkdirs();
         psdFile.transferTo(dest);
+
+        String sourceType = detectSourceType(psdFile.getOriginalFilename());
 
         List<BannerSpec> selectedSpecs = specMongoService.findByIds(specIds);
         List<String> targetMedia = selectedSpecs.stream()
@@ -62,12 +66,27 @@ public class BannerService {
         job.setFocalPosition(focalPosition);
         job.setOutputFormat(outputFormat);
         job.setPsdPath(dest.getAbsolutePath());
+        job.setSourceType(sourceType);
+        job.setPsdMode("psd".equals(sourceType) ? psdMode : null);
         job.setStatus("pending");
         job.setAiAnalysisId(aiAnalysisId);
         job.setAiApplied(aiApplied != null && aiApplied);
         job.setAiRecommendedResizeMode(aiRecommendedResizeMode);
         job.setAiRecommendedSmartFitStrength(aiRecommendedSmartFitStrength);
         job.setAiRecommendedFocalPosition(aiRecommendedFocalPosition);
+
+        // PSD이면 Worker에 분석 요청 → 결과를 job에 저장 (프론트 즉시 표시용)
+        if ("psd".equals(sourceType)) {
+            try {
+                com.h3.creative.worker.PsdAnalyzeResponse analysis =
+                        workerClient.analyzePsd(dest.getAbsolutePath());
+                if (analysis.getError() == null) {
+                    job.setPsdAnalysis(analysis.toPsdAnalysis());
+                }
+            } catch (Exception e) {
+                log.warn("PSD analyze failed, continuing without psdAnalysis: {}", e.getMessage());
+            }
+        }
 
         BannerJob saved = bannerMongoService.save(job);
 
@@ -80,10 +99,19 @@ public class BannerService {
                 .smartFitStrength(smartFitStrength)
                 .focalPosition(focalPosition)
                 .outputFormat(outputFormat)
+                .sourceType(sourceType)
+                .psdMode(job.getPsdMode())
                 .build();
 
         bannerProducer.publish(message);
         return saved;
+    }
+
+    private String detectSourceType(String originalFilename) {
+        if (originalFilename != null && originalFilename.toLowerCase().endsWith(".psd")) {
+            return "psd";
+        }
+        return "image";
     }
 
     public void process(BannerMessage message) {
@@ -122,6 +150,8 @@ public class BannerService {
                 .smartFitStrength(message.getSmartFitStrength())
                 .focalPosition(message.getFocalPosition())
                 .outputFormat(message.getOutputFormat())
+                .sourceType(message.getSourceType() != null ? message.getSourceType() : "image")
+                .psdMode(message.getPsdMode() != null ? message.getPsdMode() : "artboard-first")
                 .build();
 
         WorkerResponse response = workerClient.generate(request);
@@ -147,6 +177,8 @@ public class BannerService {
                         br.setFileSize(r.getFileSize());
                         br.setValid(r.getValid());
                         br.setValidationMessage(r.getValidationMessage());
+                        br.setSelectedArtboardId(r.getSelectedArtboardId());
+                        br.setSelectedArtboardName(r.getSelectedArtboardName());
                         return br;
                     }).toList()
                     : List.of();

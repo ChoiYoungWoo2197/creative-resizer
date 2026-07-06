@@ -29,5 +29,7 @@ public class WorkerResponse {
         private Long fileSize;
         private Boolean valid;
         private String validationMessage;
+        private String selectedArtboardId;
+        private String selectedArtboardName;
     }
 }

@@ -21,4 +21,6 @@ public class BannerMessage {
     private String smartFitStrength;
     private String focalPosition;
     private String outputFormat;
+    private String sourceType;
+    private String psdMode;
 }

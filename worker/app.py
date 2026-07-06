@@ -2,6 +2,7 @@ import os
 import zipfile
 from flask import Flask, request, jsonify
 import resizer
+import psd_analyzer
 
 app = Flask(__name__)
 
@@ -14,6 +15,19 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/analyze-psd", methods=["POST"])
+def analyze_psd():
+    data = request.json
+    file_path = data.get("filePath")
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "filePath not found"}), 400
+    try:
+        result = psd_analyzer.analyze_psd_file(file_path)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.json
@@ -24,6 +38,8 @@ def generate():
     smart_fit_strength = data.get("smartFitStrength", "balanced")
     focal_position = data.get("focalPosition", "center")
     output_format = data.get("outputFormat", "png")
+    source_type = data.get("sourceType", "image")
+    psd_mode = data.get("psdMode", "artboard-first")
 
     if not psd_path or not os.path.exists(psd_path):
         return jsonify({"error": "psd_path not found"}), 400
@@ -31,7 +47,10 @@ def generate():
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
 
     try:
-        result_items = resizer.generate(psd_path, specs, resize_mode, output_format, job_output_dir, smart_fit_strength, focal_position)
+        result_items = resizer.generate(
+            psd_path, specs, resize_mode, output_format, job_output_dir,
+            smart_fit_strength, focal_position, source_type, psd_mode
+        )
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)
         return jsonify({

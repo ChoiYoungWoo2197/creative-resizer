@@ -7,6 +7,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 import java.util.List;
 
+
+
 @Data
 @Document(collection = "banner_job")
 public class BannerJob {
@@ -22,6 +24,10 @@ public class BannerJob {
     private String smartFitStrength; // safe / balanced / fill (smart-fit 전용)
     private String focalPosition;    // center / top / bottom / left / right / left-top / right-top / left-bottom / right-bottom
     private String outputFormat;     // png / jpg / webp
+
+    private String sourceType;        // image / psd
+    private String psdMode;          // artboard-first / flatten
+    private PsdAnalysis psdAnalysis;
 
     private String status;           // pending / processing / done / fail
     private String psdPath;
@@ -52,6 +58,10 @@ public class BannerJob {
         private Long fileSize;
         private Boolean valid;
         private String validationMessage;
+
+        // PSD 아트보드 선택 정보
+        private String selectedArtboardId;
+        private String selectedArtboardName;
 
         // AI 후보 적용 이력
         private String selectedCompareId;
