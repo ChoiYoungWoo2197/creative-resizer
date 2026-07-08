@@ -111,6 +111,19 @@
               <div v-if="r.fallbackUsed" class="fallback-notice">
                 ⚠ PSD 호환 문제로 이미지 기반 리사이징이 적용되었습니다.
               </div>
+              <!-- 4차-4: wide-banner-smart-fit 뱃지 -->
+              <div v-if="r.resizeStrategy === 'wide-banner-smart-fit'" class="wide-banner-badge">
+                ◈ AI 스마트 맞춤
+                <span class="wide-banner-candidate">{{ candidateTypeLabel(r.candidateType) }}</span>
+                <span v-if="r.candidateScore != null" class="wide-banner-score">{{ r.candidateScore }}점</span>
+              </div>
+              <!-- 4차-5: Layer Reflow 품질 뱃지 -->
+              <div v-if="r.safeZonePass != null" class="safe-zone-badge" :class="r.safeZonePass ? 'safe-zone-ok' : 'safe-zone-fail'">
+                {{ r.safeZonePass ? '✓ 세이프존 통과' : '✕ 세이프존 미달' }}
+              </div>
+              <div v-if="r.requiredLayerMissing" class="required-missing-badge">
+                ⚠ 필수 레이어 부족
+              </div>
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
                 ✦ AI 후보 적용됨 · {{ strengthKr(r.selectedCandidate) }}
               </div>
@@ -418,6 +431,14 @@ const ROLE_LABELS = {
   badge: '배지', price: '가격',
 }
 function roleLabel(role) { return ROLE_LABELS[role] ?? role }
+
+const CANDIDATE_TYPE_LABELS = {
+  safe:          '안전형',
+  balanced:      '균형형',
+  fill:          '채움형',
+  'focus-crop':  '포커스 크롭',
+}
+function candidateTypeLabel(t) { return CANDIDATE_TYPE_LABELS[t] ?? (t || '') }
 
 async function runApply(candidate) {
   if (!compareResult.value) return
@@ -870,6 +891,42 @@ onUnmounted(stopPolling)
   background: #EDE9FE;
   border-radius: 6px;
   padding: 2px 8px;
+  display: inline-block;
+}
+
+/* 4차-4: Wide-Banner Smart-Fit */
+.wide-banner-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 600;
+  color: #1E40AF; background: #EFF6FF;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.wide-banner-candidate {
+  font-size: 10px; font-weight: 500;
+  color: #1D4ED8; background: #BFDBFE;
+  border-radius: 4px; padding: 1px 5px;
+}
+.wide-banner-score {
+  font-size: 10px; font-weight: 700;
+  color: #065F46; background: #D1FAE5;
+  border-radius: 4px; padding: 1px 5px;
+}
+
+/* 4차-5: Safe Zone / Required Layer */
+.safe-zone-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 500;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block;
+}
+.safe-zone-ok   { color: #065F46; background: #D1FAE5; }
+.safe-zone-fail { color: #B45309; background: #FEF3C7; }
+.required-missing-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 500;
+  color: #B91C1C; background: #FEE2E2;
+  border-radius: 6px; padding: 2px 8px;
   display: inline-block;
 }
 </style>

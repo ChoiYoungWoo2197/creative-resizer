@@ -193,6 +193,14 @@ public class BannerService {
                         br.setFallbackErrors(r.getFallbackErrors());
                         br.setSourceWidth(r.getSourceWidth());
                         br.setSourceHeight(r.getSourceHeight());
+                        br.setResizeStrategy(r.getResizeStrategy());
+                        br.setCandidateType(r.getCandidateType());
+                        br.setCandidateScore(r.getCandidateScore());
+                        br.setBlurAreaRatio(r.getBlurAreaRatio());
+                        br.setCropRatio(r.getCropRatio());
+                        br.setSubjectScale(r.getSubjectScale());
+                        br.setSafeZonePass(r.getSafeZonePass());
+                        br.setRequiredLayerMissing(r.getRequiredLayerMissing());
                         br.setLayerReflowAttempted(r.getLayerReflowAttempted());
                         br.setLayerReflowSucceeded(r.getLayerReflowSucceeded());
                         br.setLayerReflowError(r.getLayerReflowError());

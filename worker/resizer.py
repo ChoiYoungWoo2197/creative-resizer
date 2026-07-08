@@ -277,6 +277,159 @@ RESIZE_FUNCS = {
 }
 
 
+# ──────────── 4차-4: Wide-Banner Smart-Fit ────────────
+
+def is_wide_banner_case(src_w: int, src_h: int, dst_w: int, dst_h: int) -> bool:
+    """정사각형/세로형 소스 → 가로형 타겟 변환 여부."""
+    src_ratio = src_w / max(src_h, 1)
+    dst_ratio = dst_w / max(dst_h, 1)
+    return src_ratio <= 1.3 and dst_ratio >= 1.8
+
+
+def _wide_banner_metrics(src_w: int, src_h: int, dst_w: int, dst_h: int, actual_scale: float) -> dict:
+    contain_scale = min(dst_w / src_w, dst_h / src_h)
+    contain_w = int(src_w * contain_scale)
+    contain_h = int(src_h * contain_scale)
+    total_area = dst_w * dst_h
+    blur_area_ratio = max(0.0, (total_area - contain_w * contain_h) / total_area)
+
+    actual_w = int(src_w * actual_scale)
+    actual_h = int(src_h * actual_scale)
+    crop_w = max(0, actual_w - dst_w)
+    crop_h = max(0, actual_h - dst_h)
+    crop_ratio = min(1.0, (crop_w / max(actual_w, 1) + crop_h / max(actual_h, 1)) / 2)
+    subject_scale = actual_scale / max(contain_scale, 1e-9)
+
+    # 중요 영역(center 70%) 잘림 비율
+    imp_x = src_w * 0.15
+    imp_y = src_h * 0.15
+    imp_w = src_w * 0.70
+    imp_h = src_h * 0.70
+    paste_x = (dst_w - actual_w) / 2
+    paste_y = (dst_h - actual_h) / 2
+    ic_x1 = paste_x + imp_x * actual_scale
+    ic_y1 = paste_y + imp_y * actual_scale
+    ic_x2 = paste_x + (imp_x + imp_w) * actual_scale
+    ic_y2 = paste_y + (imp_y + imp_h) * actual_scale
+    vis_x = max(0, min(ic_x2, dst_w) - max(ic_x1, 0))
+    vis_y = max(0, min(ic_y2, dst_h) - max(ic_y1, 0))
+    imp_area = imp_w * imp_h * (actual_scale ** 2)
+    imp_crop = 1.0 - (vis_x * vis_y) / max(imp_area, 1)
+    imp_crop = max(0.0, min(1.0, imp_crop))
+
+    return {
+        "blurAreaRatio": round(blur_area_ratio, 4),
+        "cropRatio":     round(crop_ratio, 4),
+        "subjectScale":  round(subject_scale, 4),
+        "impCropRatio":  round(imp_crop, 4),
+    }
+
+
+def _wide_banner_score(m: dict) -> float:
+    target_fill = max(0.0, 1.0 - m["blurAreaRatio"])
+    subj_size = min(1.0, max(0.0, (m["subjectScale"] - 1.0) * 0.8 + 0.3))
+    crop_pen = min(1.0, m["cropRatio"] + m["impCropRatio"] * 0.5)
+    text_risk = min(1.0, m["cropRatio"] * 1.5 + m["impCropRatio"])
+    score = (target_fill * 35 + subj_size * 25
+             - m["blurAreaRatio"] * 20 - crop_pen * 25 - text_risk * 15)
+    return round(max(0.0, min(100.0, score)), 2)
+
+
+def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int) -> tuple:
+    """정사각형/세로형 → 가로형 전용 smart-fit.
+    4개 후보(safe/balanced/fill/focus-crop) 생성 후 점수 기준 best 선택.
+    반환: (best_image, enhance_meta_dict)
+    """
+    from PIL import ImageFilter, ImageEnhance
+
+    src = img.convert("RGBA") if img.mode != "RGBA" else img.copy()
+    src_w, src_h = src.size
+    contain_scale = min(dst_w / src_w, dst_h / src_h)
+
+    candidate_scales = {
+        "safe":       contain_scale,
+        "balanced":   contain_scale * 1.12,
+        "fill":       contain_scale * 1.25,
+        "focus-crop": contain_scale * 1.18,
+    }
+    candidates = []
+
+    for ctype, scale in candidate_scales.items():
+        try:
+            # 상하 잘림 <= 18% 제한
+            if int(src_h * scale) > dst_h:
+                h_crop = (int(src_h * scale) - dst_h) / int(src_h * scale)
+                if h_crop > 0.18:
+                    scale = dst_h / src_h
+
+            new_w = int(src_w * scale)
+            new_h = int(src_h * scale)
+            fg = src.resize((new_w, new_h), Image.LANCZOS)
+
+            bg = resize_cover(src, dst_w, dst_h)
+            bg = bg.filter(ImageFilter.GaussianBlur(radius=30))
+            bg = ImageEnhance.Brightness(bg).enhance(0.92)
+            bg = ImageEnhance.Contrast(bg).enhance(0.97)
+            canvas = bg.convert("RGBA")
+
+            x, y = (dst_w - new_w) // 2, (dst_h - new_h) // 2
+            px, py = max(x, 0), max(y, 0)
+            cl, ct = max(-x, 0), max(-y, 0)
+            cr, cb = min(cl + dst_w, fg.width), min(ct + dst_h, fg.height)
+            if cr > cl and cb > ct:
+                canvas.alpha_composite(fg.crop((cl, ct, cr, cb)), (px, py))
+
+            m = _wide_banner_metrics(src_w, src_h, dst_w, dst_h, scale)
+            score = _wide_banner_score(m)
+            candidates.append({"type": ctype, "image": canvas, "score": score, "m": m})
+        except Exception as e:
+            print(f"[WideBanner] candidate {ctype} failed: {e}")
+
+    if not candidates:
+        fallback = resize_smart_fit(img, dst_w, dst_h, "balanced", "center")
+        return fallback, {
+            "resizeStrategy": "smart-fit", "candidateType": "balanced",
+            "candidateScore": None, "blurAreaRatio": None,
+            "cropRatio": None, "subjectScale": None,
+        }
+
+    best = max(candidates, key=lambda c: c["score"])
+    print(f"[WideBanner] best={best['type']} score={best['score']}"
+          f" blur={best['m']['blurAreaRatio']:.3f} crop={best['m']['cropRatio']:.3f}")
+    return best["image"], {
+        "resizeStrategy": "wide-banner-smart-fit",
+        "candidateType":  best["type"],
+        "candidateScore": best["score"],
+        "blurAreaRatio":  best["m"]["blurAreaRatio"],
+        "cropRatio":      best["m"]["cropRatio"],
+        "subjectScale":   best["m"]["subjectScale"],
+    }
+
+
+def _apply_resize(img: Image.Image, w: int, h: int,
+                  resize_mode: str, smart_fit_strength: str, focal_position: str) -> tuple:
+    """리사이징 적용 통합 헬퍼. wide-banner 조건이면 enhanced 처리.
+    반환: (resized_image, enhance_meta)
+    """
+    if resize_mode == "smart-fit" and is_wide_banner_case(img.width, img.height, w, h):
+        return resize_wide_banner_smart_fit(img, w, h)
+
+    if resize_mode == "smart-fit":
+        resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
+    else:
+        resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
+        resized = resize_fn(img, w, h)
+
+    return resized, {
+        "resizeStrategy": resize_mode,
+        "candidateType":  smart_fit_strength if resize_mode == "smart-fit" else None,
+        "candidateScore": None,
+        "blurAreaRatio":  None,
+        "cropRatio":      None,
+        "subjectScale":   None,
+    }
+
+
 def collect_focus_boxes(elements: list, required_groups: list, priority_groups: list,
                         img_w: int = 0, img_h: int = 0) -> list:
     """requiredGroups/priority 요소 bbox 수집.
@@ -844,10 +997,19 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             flat_meta = None
             ab_img = None
 
+            enhance_meta = {
+                "resizeStrategy": None, "candidateType": None, "candidateScore": None,
+                "blurAreaRatio": None, "cropRatio": None, "subjectScale": None,
+            }
+            lr_quality = lr.get("quality", {})
+            safe_zone_pass = lr_quality.get("safeZonePass")
+            required_layer_missing = lr_quality.get("requiredLayerMissing")
+
             if layer_reflow_succeeded:
                 actual_render_mode = "layer-reflow"
                 layer_reflow_template = lr.get("template")
                 used_layer_roles = lr.get("usedLayerRoles", [])
+                enhance_meta["resizeStrategy"] = "psd-layer-reflow"
                 if output_format in ("jpg", "jpeg"):
                     img = Image.open(out_path).convert("RGB")
                     img.save(out_path)
@@ -866,9 +1028,12 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                     ab_img = Image.new("RGBA", (w, h), (200, 200, 200, 255))
                     actual_render_mode = "failed"
 
-                resized = resize_smart_fit(ab_img, w, h,
-                                           strength=smart_fit_strength or "balanced",
-                                           focal_position=focal_position or "center")
+                resized, enhance_meta = _apply_resize(
+                    ab_img, w, h, "smart-fit",
+                    smart_fit_strength or "balanced",
+                    focal_position or "center",
+                )
+                enhance_meta["resizeStrategy"] = enhance_meta.get("resizeStrategy") or "smart-fit-enhanced"
                 if output_format in ("jpg", "jpeg"):
                     resized = resized.convert("RGB")
                 resized.save(out_path)
@@ -939,6 +1104,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "layerReflowDetectedRoles": layer_reflow_detected_roles,
                 "layerReflowTemplate": layer_reflow_template,
                 "usedLayerRoles": used_layer_roles,
+                "resizeStrategy":       enhance_meta.get("resizeStrategy"),
+                "candidateType":        enhance_meta.get("candidateType"),
+                "candidateScore":       enhance_meta.get("candidateScore"),
+                "blurAreaRatio":        enhance_meta.get("blurAreaRatio"),
+                "cropRatio":            enhance_meta.get("cropRatio"),
+                "subjectScale":         enhance_meta.get("subjectScale"),
+                "safeZonePass":         safe_zone_pass,
+                "requiredLayerMissing": required_layer_missing,
             })
         return results
 
@@ -1001,12 +1174,12 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
 
             print(f"[PSD_LOAD] source loaded width={source_w} height={source_h} source={render_source}")
 
-            if actual_render_mode == "artboard" or resize_mode == "smart-fit":
-                resized = resize_smart_fit(ab_img, w, h,
-                                           strength=smart_fit_strength or "balanced",
-                                           focal_position=focal_position or "center")
-            else:
-                resized = RESIZE_FUNCS.get(resize_mode, resize_cover)(ab_img, w, h)
+            eff_mode = resize_mode if actual_render_mode != "artboard" else "smart-fit"
+            resized, enhance_meta = _apply_resize(
+                ab_img, w, h, eff_mode,
+                smart_fit_strength or "balanced",
+                focal_position or "center",
+            )
 
             if output_format in ("jpg", "jpeg"):
                 resized = resized.convert("RGB")
@@ -1057,6 +1230,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "layerReflowDetectedRoles": [],
                 "layerReflowTemplate": None,
                 "usedLayerRoles": [],
+                "resizeStrategy":       enhance_meta.get("resizeStrategy"),
+                "candidateType":        enhance_meta.get("candidateType"),
+                "candidateScore":       enhance_meta.get("candidateScore"),
+                "blurAreaRatio":        enhance_meta.get("blurAreaRatio"),
+                "cropRatio":            enhance_meta.get("cropRatio"),
+                "subjectScale":         enhance_meta.get("subjectScale"),
+                "safeZonePass":         None,
+                "requiredLayerMissing": None,
             })
         return results
 
@@ -1073,10 +1254,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         slug = spec.get("slug", "")
         name = spec.get("name", "")
 
-        if resize_mode == "smart-fit":
-            resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
-        else:
-            resized = resize_fn(img, w, h)
+        resized, enhance_meta = _apply_resize(img, w, h, resize_mode, smart_fit_strength, focal_position)
 
         if output_format in ("jpg", "jpeg"):
             resized = resized.convert("RGB")
@@ -1122,6 +1300,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "layerReflowDetectedRoles": [],
             "layerReflowTemplate": None,
             "usedLayerRoles": [],
+            "resizeStrategy":       enhance_meta.get("resizeStrategy"),
+            "candidateType":        enhance_meta.get("candidateType"),
+            "candidateScore":       enhance_meta.get("candidateScore"),
+            "blurAreaRatio":        enhance_meta.get("blurAreaRatio"),
+            "cropRatio":            enhance_meta.get("cropRatio"),
+            "subjectScale":         enhance_meta.get("subjectScale"),
+            "safeZonePass":         None,
+            "requiredLayerMissing": None,
         })
 
     return results

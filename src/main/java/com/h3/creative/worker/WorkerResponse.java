@@ -41,6 +41,18 @@ public class WorkerResponse {
         private Integer sourceWidth;
         private Integer sourceHeight;
 
+        // 4차-4: Wide-Banner Smart-Fit 메타
+        private String resizeStrategy;    // wide-banner-smart-fit / smart-fit / psd-layer-reflow 등
+        private String candidateType;     // safe / balanced / fill / focus-crop
+        private Double candidateScore;
+        private Double blurAreaRatio;
+        private Double cropRatio;
+        private Double subjectScale;
+
+        // 4차-5: Layer Reflow 품질 메타
+        private Boolean safeZonePass;
+        private Boolean requiredLayerMissing;
+
         // PSD 레이어 재배치 메타 (4차-2 보완)
         private Boolean layerReflowAttempted;
         private Boolean layerReflowSucceeded;
