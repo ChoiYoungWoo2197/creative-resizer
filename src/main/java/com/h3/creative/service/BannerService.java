@@ -179,6 +179,7 @@ public class BannerService {
                         br.setValidationMessage(r.getValidationMessage());
                         br.setSelectedArtboardId(r.getSelectedArtboardId());
                         br.setSelectedArtboardName(r.getSelectedArtboardName());
+                        br.setActualPsdRenderMode(r.getActualPsdRenderMode());
                         return br;
                     }).toList()
                     : List.of();

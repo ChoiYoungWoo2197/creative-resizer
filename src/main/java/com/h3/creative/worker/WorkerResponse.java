@@ -31,5 +31,6 @@ public class WorkerResponse {
         private String validationMessage;
         private String selectedArtboardId;
         private String selectedArtboardName;
+        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / failed
     }
 }
