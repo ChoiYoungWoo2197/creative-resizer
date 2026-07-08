@@ -201,6 +201,8 @@ public class BannerService {
                         br.setSubjectScale(r.getSubjectScale());
                         br.setSafeZonePass(r.getSafeZonePass());
                         br.setRequiredLayerMissing(r.getRequiredLayerMissing());
+                        br.setQualityGate(r.getQualityGate());
+                        br.setQualityLabel(r.getQualityLabel());
                         br.setLayerReflowAttempted(r.getLayerReflowAttempted());
                         br.setLayerReflowSucceeded(r.getLayerReflowSucceeded());
                         br.setLayerReflowError(r.getLayerReflowError());

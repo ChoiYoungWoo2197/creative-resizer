@@ -115,7 +115,19 @@
               <div v-if="r.resizeStrategy === 'wide-banner-smart-fit'" class="wide-banner-badge">
                 ◈ AI 스마트 맞춤
                 <span class="wide-banner-candidate">{{ candidateTypeLabel(r.candidateType) }}</span>
-                <span v-if="r.candidateScore != null" class="wide-banner-score">{{ r.candidateScore }}점</span>
+                <span v-if="r.candidateScore != null"
+                      class="wide-banner-score"
+                      :class="qualityScoreClass(r.candidateScore)">
+                  {{ r.candidateScore }}점
+                </span>
+                <span v-if="r.qualityLabel"
+                      class="quality-label-badge"
+                      :class="qualityLabelClass(r.qualityLabel)">
+                  {{ r.qualityLabel }}
+                </span>
+                <span v-if="r.qualityGate" class="quality-gate-badge">
+                  ⚠ 품질 게이트
+                </span>
               </div>
               <!-- 4차-5: Layer Reflow 품질 뱃지 -->
               <div v-if="r.safeZonePass != null" class="safe-zone-badge" :class="r.safeZonePass ? 'safe-zone-ok' : 'safe-zone-fail'">
@@ -439,6 +451,18 @@ const CANDIDATE_TYPE_LABELS = {
   'focus-crop':  '포커스 크롭',
 }
 function candidateTypeLabel(t) { return CANDIDATE_TYPE_LABELS[t] ?? (t || '') }
+
+function qualityScoreClass(score) {
+  if (score == null) return ''
+  if (score >= 70) return 'score-good'
+  if (score >= 50) return 'score-warn'
+  return 'score-bad'
+}
+function qualityLabelClass(label) {
+  if (label === '정상')    return 'ql-good'
+  if (label === '주의')    return 'ql-warn'
+  return 'ql-bad'
+}
 
 async function runApply(candidate) {
   if (!compareResult.value) return
@@ -910,6 +934,21 @@ onUnmounted(stopPolling)
 .wide-banner-score {
   font-size: 10px; font-weight: 700;
   color: #065F46; background: #D1FAE5;
+  border-radius: 4px; padding: 1px 5px;
+}
+.wide-banner-score.score-good { color: #065F46; background: #D1FAE5; }
+.wide-banner-score.score-warn { color: #92400E; background: #FEF3C7; }
+.wide-banner-score.score-bad  { color: #991B1B; background: #FEE2E2; }
+.quality-label-badge {
+  font-size: 10px; font-weight: 700;
+  border-radius: 4px; padding: 1px 5px;
+}
+.quality-label-badge.ql-good { color: #065F46; background: #D1FAE5; }
+.quality-label-badge.ql-warn { color: #92400E; background: #FEF3C7; }
+.quality-label-badge.ql-bad  { color: #991B1B; background: #FEE2E2; }
+.quality-gate-badge {
+  font-size: 10px; font-weight: 600;
+  color: #7C3AED; background: #EDE9FE;
   border-radius: 4px; padding: 1px 5px;
 }
 

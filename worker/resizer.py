@@ -306,8 +306,8 @@ def _wide_banner_metrics(src_w: int, src_h: int, dst_w: int, dst_h: int, actual_
     imp_y = src_h * 0.15
     imp_w = src_w * 0.70
     imp_h = src_h * 0.70
-    paste_x = (dst_w - actual_w) / 2
-    paste_y = (dst_h - actual_h) / 2
+    paste_x = (dst_w - actual_w) / 2.0
+    paste_y = (dst_h - actual_h) / 2.0
     ic_x1 = paste_x + imp_x * actual_scale
     ic_y1 = paste_y + imp_y * actual_scale
     ic_x2 = paste_x + (imp_x + imp_w) * actual_scale
@@ -318,11 +318,21 @@ def _wide_banner_metrics(src_w: int, src_h: int, dst_w: int, dst_h: int, actual_
     imp_crop = 1.0 - (vis_x * vis_y) / max(imp_area, 1)
     imp_crop = max(0.0, min(1.0, imp_crop))
 
+    # 상단 20% / 하단 25% 텍스트 보호 zone 크롭 비율 (텍스트형 소재 보호)
+    top_crop_px  = max(0.0, -paste_y)
+    bot_crop_px  = max(0.0, paste_y + actual_h - dst_h)
+    top_zone_px  = max(1.0, src_h * 0.20 * actual_scale)
+    bot_zone_px  = max(1.0, src_h * 0.25 * actual_scale)
+    top_zone_crop = min(1.0, top_crop_px / top_zone_px)
+    bot_zone_crop = min(1.0, bot_crop_px / bot_zone_px)
+    vertical_crop_ratio = max(top_zone_crop, bot_zone_crop)
+
     return {
-        "blurAreaRatio": round(blur_area_ratio, 4),
-        "cropRatio":     round(crop_ratio, 4),
-        "subjectScale":  round(subject_scale, 4),
-        "impCropRatio":  round(imp_crop, 4),
+        "blurAreaRatio":      round(blur_area_ratio, 4),
+        "cropRatio":          round(crop_ratio, 4),
+        "subjectScale":       round(subject_scale, 4),
+        "impCropRatio":       round(imp_crop, 4),
+        "verticalCropRatio":  round(vertical_crop_ratio, 4),
     }
 
 
@@ -331,14 +341,30 @@ def _wide_banner_score(m: dict) -> float:
     subj_size = min(1.0, max(0.0, (m["subjectScale"] - 1.0) * 0.8 + 0.3))
     crop_pen = min(1.0, m["cropRatio"] + m["impCropRatio"] * 0.5)
     text_risk = min(1.0, m["cropRatio"] * 1.5 + m["impCropRatio"])
+    # 상단/하단 텍스트 zone 크롭 강력 패널티 (-30점)
+    v_crop_pen = min(1.0, m.get("verticalCropRatio", 0.0))
     score = (target_fill * 35 + subj_size * 25
-             - m["blurAreaRatio"] * 20 - crop_pen * 25 - text_risk * 15)
+             - m["blurAreaRatio"] * 20 - crop_pen * 25 - text_risk * 15
+             - v_crop_pen * 30)
     return round(max(0.0, min(100.0, score)), 2)
 
 
-def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int) -> tuple:
+# smartFitStrength 별 허용 후보 집합
+_WIDE_BANNER_ALLOWED = {
+    "safe":     frozenset(["safe", "balanced"]),
+    "balanced": frozenset(["safe", "balanced", "fill"]),
+    "fill":     frozenset(["safe", "balanced", "fill", "focus-crop"]),
+}
+_QUALITY_GATE_MIN    = 50.0   # 이 점수 미만은 best로 채택 불가
+_FOCUS_CROP_MIN      = 70.0   # focus-crop 허용 최소 점수
+_FOCUS_CROP_MAX_CROP = 0.15   # focus-crop 허용 최대 cropRatio
+_FOCUS_CROP_MAX_VCROP = 0.10  # focus-crop 허용 최대 verticalCropRatio
+
+
+def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int,
+                                  smart_fit_strength: str = "balanced") -> tuple:
     """정사각형/세로형 → 가로형 전용 smart-fit.
-    4개 후보(safe/balanced/fill/focus-crop) 생성 후 점수 기준 best 선택.
+    smartFitStrength 기준으로 허용 후보를 제한하고 품질 게이트(50점)를 적용.
     반환: (best_image, enhance_meta_dict)
     """
     from PIL import ImageFilter, ImageEnhance
@@ -353,9 +379,13 @@ def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int) -> tu
         "fill":       contain_scale * 1.25,
         "focus-crop": contain_scale * 1.18,
     }
+    allowed = _WIDE_BANNER_ALLOWED.get(smart_fit_strength,
+                                        frozenset(["safe", "balanced", "fill", "focus-crop"]))
     candidates = []
 
     for ctype, scale in candidate_scales.items():
+        if ctype not in allowed:
+            continue
         try:
             # 상하 잘림 <= 18% 제한
             if int(src_h * scale) > dst_h:
@@ -382,28 +412,64 @@ def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int) -> tu
 
             m = _wide_banner_metrics(src_w, src_h, dst_w, dst_h, scale)
             score = _wide_banner_score(m)
+
+            # focus-crop 강화 제한: 점수 낮거나 상하 잘림 크면 탈락
+            if ctype == "focus-crop" and (
+                score < _FOCUS_CROP_MIN
+                or m["cropRatio"] > _FOCUS_CROP_MAX_CROP
+                or m["verticalCropRatio"] > _FOCUS_CROP_MAX_VCROP
+            ):
+                print(f"[WideBanner] focus-crop excluded:"
+                      f" score={score:.1f} crop={m['cropRatio']:.3f}"
+                      f" vcrop={m['verticalCropRatio']:.3f}")
+                continue
+
             candidates.append({"type": ctype, "image": canvas, "score": score, "m": m})
         except Exception as e:
             print(f"[WideBanner] candidate {ctype} failed: {e}")
 
     if not candidates:
-        fallback = resize_smart_fit(img, dst_w, dst_h, "balanced", "center")
+        fallback = resize_smart_fit(img, dst_w, dst_h, "safe", "center")
         return fallback, {
-            "resizeStrategy": "smart-fit", "candidateType": "balanced",
+            "resizeStrategy": "smart-fit", "candidateType": "safe",
             "candidateScore": None, "blurAreaRatio": None,
             "cropRatio": None, "subjectScale": None,
+            "qualityGate": False, "qualityLabel": None,
         }
 
-    best = max(candidates, key=lambda c: c["score"])
-    print(f"[WideBanner] best={best['type']} score={best['score']}"
-          f" blur={best['m']['blurAreaRatio']:.3f} crop={best['m']['cropRatio']:.3f}")
+    # 품질 게이트: 50점 이상 후보만 best 대상
+    good = [c for c in candidates if c["score"] >= _QUALITY_GATE_MIN]
+    quality_gate_triggered = False
+    if good:
+        best = max(good, key=lambda c: c["score"])
+    else:
+        # 모든 후보가 50점 미만 → safe 후보로 fallback
+        quality_gate_triggered = True
+        safe_list = [c for c in candidates if c["type"] == "safe"]
+        best = safe_list[0] if safe_list else max(candidates, key=lambda c: c["score"])
+
+    score_val = best["score"]
+    if score_val >= 70:
+        quality_label = "정상"
+    elif score_val >= 50:
+        quality_label = "주의"
+    else:
+        quality_label = "품질 낮음"
+
+    print(f"[WideBanner] best={best['type']} score={score_val} quality={quality_label}"
+          f" gate={quality_gate_triggered}"
+          f" blur={best['m']['blurAreaRatio']:.3f} crop={best['m']['cropRatio']:.3f}"
+          f" vcrop={best['m']['verticalCropRatio']:.3f}")
+
     return best["image"], {
         "resizeStrategy": "wide-banner-smart-fit",
         "candidateType":  best["type"],
-        "candidateScore": best["score"],
+        "candidateScore": score_val,
         "blurAreaRatio":  best["m"]["blurAreaRatio"],
         "cropRatio":      best["m"]["cropRatio"],
         "subjectScale":   best["m"]["subjectScale"],
+        "qualityGate":    quality_gate_triggered,
+        "qualityLabel":   quality_label,
     }
 
 
@@ -413,7 +479,7 @@ def _apply_resize(img: Image.Image, w: int, h: int,
     반환: (resized_image, enhance_meta)
     """
     if resize_mode == "smart-fit" and is_wide_banner_case(img.width, img.height, w, h):
-        return resize_wide_banner_smart_fit(img, w, h)
+        return resize_wide_banner_smart_fit(img, w, h, smart_fit_strength)
 
     if resize_mode == "smart-fit":
         resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
@@ -428,6 +494,8 @@ def _apply_resize(img: Image.Image, w: int, h: int,
         "blurAreaRatio":  None,
         "cropRatio":      None,
         "subjectScale":   None,
+        "qualityGate":    None,
+        "qualityLabel":   None,
     }
 
 
@@ -1111,6 +1179,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "blurAreaRatio":        enhance_meta.get("blurAreaRatio"),
                 "cropRatio":            enhance_meta.get("cropRatio"),
                 "subjectScale":         enhance_meta.get("subjectScale"),
+                "qualityGate":          enhance_meta.get("qualityGate"),
+                "qualityLabel":         enhance_meta.get("qualityLabel"),
                 "safeZonePass":         safe_zone_pass,
                 "requiredLayerMissing": required_layer_missing,
             })
@@ -1237,6 +1307,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "blurAreaRatio":        enhance_meta.get("blurAreaRatio"),
                 "cropRatio":            enhance_meta.get("cropRatio"),
                 "subjectScale":         enhance_meta.get("subjectScale"),
+                "qualityGate":          enhance_meta.get("qualityGate"),
+                "qualityLabel":         enhance_meta.get("qualityLabel"),
                 "safeZonePass":         None,
                 "requiredLayerMissing": None,
             })
@@ -1307,6 +1379,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "blurAreaRatio":        enhance_meta.get("blurAreaRatio"),
             "cropRatio":            enhance_meta.get("cropRatio"),
             "subjectScale":         enhance_meta.get("subjectScale"),
+            "qualityGate":          enhance_meta.get("qualityGate"),
+            "qualityLabel":         enhance_meta.get("qualityLabel"),
             "safeZonePass":         None,
             "requiredLayerMissing": None,
         })

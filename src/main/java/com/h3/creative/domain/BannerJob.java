@@ -84,6 +84,10 @@ public class BannerJob {
         private Boolean safeZonePass;
         private Boolean requiredLayerMissing;
 
+        // wide-banner 품질 게이트 결과
+        private Boolean qualityGate;   // true = 모든 후보가 50점 미만이었음
+        private String  qualityLabel;  // 정상 / 주의 / 품질 낮음
+
         // PSD 레이어 재배치 메타 (4차-2 보완)
         private Boolean layerReflowAttempted;
         private Boolean layerReflowSucceeded;
