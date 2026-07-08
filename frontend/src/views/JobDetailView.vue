@@ -105,8 +105,11 @@
               <div v-if="r.layerReflowAttempted && !r.layerReflowSucceeded" class="fallback-reason">
                 레이어 재배치 실패: {{ r.layerReflowError || '알 수 없는 이유로 대체 렌더링 처리됨' }}
               </div>
-              <div v-if="r.actualPsdRenderMode && r.actualPsdRenderMode !== 'artboard' && r.actualPsdRenderMode !== 'layer-reflow' && !r.layerReflowAttempted" class="psd-fallback-badge">
-                fallback: {{ psdRenderModeLabel(r.actualPsdRenderMode) }}
+              <div v-if="r.renderSource && r.renderSource !== 'unknown'" class="render-source-badge" :class="renderSourceClass(r.renderSource)">
+                {{ renderSourceLabel(r.renderSource) }}
+              </div>
+              <div v-if="r.fallbackUsed" class="fallback-notice">
+                ⚠ PSD 호환 문제로 이미지 기반 리사이징이 적용되었습니다.
               </div>
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
                 ✦ AI 후보 적용됨 · {{ strengthKr(r.selectedCandidate) }}
@@ -391,6 +394,21 @@ const PSD_RENDER_MODE_LABELS = {
   'failed': '렌더링 실패',
 }
 function psdRenderModeLabel(mode) { return PSD_RENDER_MODE_LABELS[mode] ?? mode }
+
+const RENDER_SOURCE_LABELS = {
+  'psd_tools_composite': 'PSD 원본 렌더링',
+  'imagemagick_magick_first_page': 'ImageMagick 합성 (IM7)',
+  'imagemagick_convert_first_page': 'ImageMagick 합성 (IM6)',
+  'imagemagick_flatten': 'ImageMagick flatten',
+  'pillow_image': '이미지 기반 리사이징',
+}
+function renderSourceLabel(src) { return RENDER_SOURCE_LABELS[src] ?? src }
+function renderSourceClass(src) {
+  if (src === 'psd_tools_composite') return 'render-source-ok'
+  if (src === 'pillow_image') return 'render-source-neutral'
+  if (src.startsWith('imagemagick')) return 'render-source-fallback'
+  return ''
+}
 
 const ROLE_LABELS = {
   background: '배경', logo: '로고', headline: '메인 카피',
@@ -794,6 +812,21 @@ onUnmounted(stopPolling)
   color: #B45309; background: #FFFBEB;
   border-radius: 6px; padding: 2px 8px;
   display: inline-block;
+}
+.render-source-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 500;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block;
+}
+.render-source-ok { color: #065F46; background: #ECFDF5; }
+.render-source-fallback { color: #B45309; background: #FFFBEB; }
+.render-source-neutral { color: #374151; background: #F3F4F6; }
+.fallback-notice {
+  margin-top: 3px;
+  font-size: 10px; color: #92400E; background: #FEF3C7;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block; line-height: 1.4;
 }
 .layer-reflow-badge {
   margin-top: 4px;

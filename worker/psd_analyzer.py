@@ -284,24 +284,12 @@ def safe_render_artboard(file_path: str, artboard: dict) -> tuple:
 
 
 def fallback_flatten_psd(file_path: str) -> tuple:
-    """psd-tools composite → ImageMagick 순서로 fallback. (img, mode) 반환."""
-    try:
-        psd, open_meta = open_psd_safe_with_patch(file_path)
-        if not open_meta["success"]:
-            raise ValueError(open_meta.get("error", "PSD open failed"))
-        img = psd.composite()
-        if is_valid_rendered_image(img):
-            return img.convert("RGBA"), "full-canvas"
-    except Exception as e:
-        print(f"[PSD] psd-tools flatten failed: {e}")
-    try:
-        result = subprocess.run(
-            ["convert", f"{file_path}[0]", "-flatten", "PNG:-"],
-            capture_output=True, timeout=120, check=True,
-        )
-        img = Image.open(BytesIO(result.stdout))
-        img.load()
-        return img.convert("RGBA"), "imagemagick-flatten"
-    except Exception as e:
-        print(f"[PSD] ImageMagick fallback failed: {e}")
-    return None, "failed"
+    """psd-tools composite → ImageMagick 4단계 fallback pipeline.
+    반환: (img, mode, meta)  mode는 backward compat 문자열, meta는 render 상세 dict."""
+    from resizer import load_psd_as_flat_image
+    img, meta = load_psd_as_flat_image(file_path)
+    if img is not None:
+        render_source = meta["renderSource"]
+        mode = "full-canvas" if render_source == "psd_tools_composite" else "imagemagick-flatten"
+        return img, mode, meta
+    return None, "failed", meta

@@ -187,6 +187,11 @@ public class BannerService {
                         br.setSelectedArtboardId(r.getSelectedArtboardId());
                         br.setSelectedArtboardName(r.getSelectedArtboardName());
                         br.setActualPsdRenderMode(r.getActualPsdRenderMode());
+                        br.setRenderSource(r.getRenderSource());
+                        br.setFallbackUsed(r.getFallbackUsed());
+                        br.setFallbackReason(r.getFallbackReason());
+                        br.setSourceWidth(r.getSourceWidth());
+                        br.setSourceHeight(r.getSourceHeight());
                         br.setLayerReflowAttempted(r.getLayerReflowAttempted());
                         br.setLayerReflowSucceeded(r.getLayerReflowSucceeded());
                         br.setLayerReflowError(r.getLayerReflowError());

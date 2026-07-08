@@ -33,6 +33,13 @@ public class WorkerResponse {
         private String selectedArtboardName;
         private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
 
+        // PSD fallback pipeline 메타 (4차-3)
+        private String renderSource;   // psd_tools_composite / imagemagick_* / pillow_image / unknown
+        private Boolean fallbackUsed;
+        private String fallbackReason;
+        private Integer sourceWidth;
+        private Integer sourceHeight;
+
         // PSD 레이어 재배치 메타 (4차-2 보완)
         private Boolean layerReflowAttempted;
         private Boolean layerReflowSucceeded;

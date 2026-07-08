@@ -9,6 +9,11 @@ RUN apt-get update && apt-get install -y \
     zlib1g-dev \
     liblcms2-2 \
     imagemagick \
+    libmagickwand-dev \
+    ghostscript \
+    libpng-dev \
+    libtiff-dev \
+    libwebp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ImageMagick 기본 정책에서 PSD 읽기 허용

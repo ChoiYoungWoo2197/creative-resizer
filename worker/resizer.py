@@ -1,52 +1,125 @@
-from psd_tools import PSDImage
 from PIL import Image
 import os
 import subprocess
 from io import BytesIO
+from psd_compat import open_psd_safe_with_patch
 
 
-def _load_psd_via_imagemagick(psd_path: str) -> Image.Image:
-    """psd-tools 미지원 버전일 때 ImageMagick으로 폴백."""
+def _try_imagemagick(cmd: list, label: str, errors: list):
+    """단일 ImageMagick 명령 실행. 성공 시 RGBA Image, 실패 시 None."""
     try:
-        result = subprocess.run(
-            ['convert', f'{psd_path}[0]', '-flatten', 'PNG:-'],
-            capture_output=True, timeout=120, check=True
-        )
+        result = subprocess.run(cmd, capture_output=True, timeout=120, check=True)
         img = Image.open(BytesIO(result.stdout))
         img.load()
-        return img
+        print(f"[PSD_LOAD] {label} success")
+        return img.convert("RGBA")
     except subprocess.CalledProcessError as e:
-        raise ValueError(f"PSD 파일을 열 수 없습니다 (ImageMagick): {e.stderr.decode(errors='replace')}")
+        err = e.stderr.decode(errors='replace')[:200] if e.stderr else str(e)
+        errors.append({"step": label, "message": err})
+        print(f"[PSD_LOAD] {label} failed: {err[:100]}")
     except FileNotFoundError:
-        raise ValueError("ImageMagick(convert)이 설치되지 않았습니다.")
+        errors.append({"step": label, "message": f"{cmd[0]} not found"})
+    except Exception as e:
+        errors.append({"step": label, "message": str(e)})
+    return None
 
 
-def load_psd_as_image(psd_path: str) -> Image.Image:
-    ext = os.path.splitext(psd_path)[1].lower()
+def load_psd_as_flat_image(psd_path: str) -> tuple:
+    """PSD에서 최종 합성 이미지 추출 — 4단계 fallback pipeline.
+    반환: (Image|None, meta_dict)
+    meta keys: renderSource, fallbackUsed, fallbackReason, sourceWidth, sourceHeight"""
+    errors = []
 
-    if ext in ('.psd', '.psb'):
-        try:
-            psd = PSDImage.open(psd_path)
+    # 1. psd-tools composite
+    try:
+        psd, open_meta = open_psd_safe_with_patch(psd_path)
+        if open_meta["success"]:
             img = psd.composite()
-            if img is None:
-                raise ValueError("PSD 합성 이미지를 생성할 수 없습니다. 레이어가 비어있거나 잠겨 있을 수 있습니다.")
-        except ValueError:
-            raise
-        except Exception:
-            # psd-tools 미지원 버전(v8 등) → ImageMagick 폴백
-            img = _load_psd_via_imagemagick(psd_path)
-    else:
-        try:
-            img = Image.open(psd_path)
-            img.load()
-        except Exception as e:
-            raise ValueError(f"이미지 파일을 열 수 없습니다: {e}")
+            if img and img.width > 0 and img.height > 0:
+                img = img.convert("RGBA")
+                print(f"[PSD_LOAD] psd_tools_composite success width={img.width} height={img.height}")
+                return img, {
+                    "renderSource": "psd_tools_composite",
+                    "fallbackUsed": False,
+                    "fallbackReason": None,
+                    "sourceWidth": img.width,
+                    "sourceHeight": img.height,
+                }
+            errors.append({"step": "psd_tools_composite", "message": "composite() returned None or empty"})
+        else:
+            errors.append({"step": "psd_tools_composite",
+                           "message": open_meta.get("error", "PSD open failed")})
+    except Exception as e:
+        errors.append({"step": "psd_tools_composite", "message": str(e)})
 
-    if img.mode in ("CMYK", "P", "LAB"):
-        img = img.convert("RGBA")
-    elif img.mode not in ("RGB", "RGBA"):
-        img = img.convert("RGBA")
-    return img
+    first_reason = errors[0]["message"] if errors else "psd-tools failed"
+    print(f"[PSD_LOAD] psd_tools_composite failed reason={first_reason[:100]}")
+
+    # 2~6. ImageMagick fallbacks (magick=IM7, convert=IM6 모두 시도)
+    im_steps = [
+        ("imagemagick_magick_first_page",
+         ["magick", f"{psd_path}[0]", "-auto-orient", "-colorspace", "sRGB",
+          "-background", "none", "-alpha", "on", "PNG:-"]),
+        ("imagemagick_convert_first_page",
+         ["convert", f"{psd_path}[0]", "-auto-orient", "-colorspace", "sRGB",
+          "-background", "none", "-alpha", "on", "PNG:-"]),
+        ("imagemagick_flatten",
+         ["magick", psd_path, "-auto-orient", "-flatten", "-colorspace", "sRGB", "PNG:-"]),
+        ("imagemagick_flatten",
+         ["convert", psd_path, "-auto-orient", "-flatten", "-colorspace", "sRGB", "PNG:-"]),
+        # 옵션 최소화 최후 시도
+        ("imagemagick_magick_first_page",
+         ["magick", f"{psd_path}[0]", "PNG:-"]),
+        ("imagemagick_convert_first_page",
+         ["convert", f"{psd_path}[0]", "PNG:-"]),
+    ]
+
+    for label, cmd in im_steps:
+        img = _try_imagemagick(cmd, label, errors)
+        if img is not None:
+            return img, {
+                "renderSource": label,
+                "fallbackUsed": True,
+                "fallbackReason": first_reason,
+                "sourceWidth": img.width,
+                "sourceHeight": img.height,
+            }
+
+    print(f"[PSD_LOAD] all fallback failed steps={[e['step'] for e in errors]}")
+    return None, {
+        "renderSource": "unknown",
+        "fallbackUsed": True,
+        "fallbackReason": first_reason,
+        "sourceWidth": 0,
+        "sourceHeight": 0,
+    }
+
+
+def load_source_image(input_path: str) -> tuple:
+    """PSD/PSB → load_psd_as_flat_image, 일반 이미지 → Pillow.
+    반환: (Image, meta_dict)"""
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext in ('.psd', '.psb'):
+        img, meta = load_psd_as_flat_image(input_path)
+        if img is None:
+            raise ValueError(f"PSD 로딩 실패: {meta.get('fallbackReason', 'all fallbacks failed')}")
+        return img, meta
+    try:
+        img = Image.open(input_path)
+        img.load()
+        if img.mode in ("CMYK", "P", "LAB"):
+            img = img.convert("RGBA")
+        elif img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA")
+        return img, {
+            "renderSource": "pillow_image",
+            "fallbackUsed": False,
+            "fallbackReason": None,
+            "sourceWidth": img.width,
+            "sourceHeight": img.height,
+        }
+    except Exception as e:
+        raise ValueError(f"이미지 파일 로딩 실패: {e}")
 
 
 def resize_cover(img: Image.Image, width: int, height: int) -> Image.Image:
@@ -679,7 +752,7 @@ def generate_candidates(input_path: str, output_dir: str, spec: dict,
         strengths = ["safe", "balanced", "fill"]
 
     os.makedirs(output_dir, exist_ok=True)
-    img = load_psd_as_image(input_path)
+    img, _ = load_source_image(input_path)
 
     w = spec["width"]
     h = spec["height"]
@@ -763,9 +836,10 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             layer_reflow_error = lr.get("error")
             layer_reflow_extracted_count = lr.get("extractedLayerCount", 0)
             layer_reflow_detected_roles = lr.get("detectedRoles", [])
+            flat_meta = None
+            ab_img = None
 
             if layer_reflow_succeeded:
-                # layer-reflow 성공
                 actual_render_mode = "layer-reflow"
                 layer_reflow_template = lr.get("template")
                 used_layer_roles = lr.get("usedLayerRoles", [])
@@ -778,12 +852,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 analysis = psd_analyzer.analyze_psd_file(psd_path)
                 best_ab = psd_analyzer.select_best_artboard(analysis["artboards"], w, h)
                 is_full_canvas = (best_ab is None or best_ab.get("id") == "full_canvas")
-                ab_img = None
 
                 if not is_full_canvas:
                     ab_img, actual_render_mode = psd_analyzer.safe_render_artboard(psd_path, best_ab)
                 if ab_img is None:
-                    ab_img, actual_render_mode = psd_analyzer.fallback_flatten_psd(psd_path)
+                    ab_img, actual_render_mode, flat_meta = psd_analyzer.fallback_flatten_psd(psd_path)
                 if ab_img is None:
                     ab_img = Image.new("RGBA", (w, h), (200, 200, 200, 255))
                     actual_render_mode = "failed"
@@ -796,6 +869,30 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 resized.save(out_path)
                 layer_reflow_template = None
                 used_layer_roles = []
+
+            # render meta 계산
+            if layer_reflow_succeeded:
+                render_source = "psd_tools_composite"
+                fallback_used = False
+                fallback_reason = None
+                source_w, source_h = 0, 0
+            elif actual_render_mode in ("artboard", "full-canvas"):
+                render_source = "psd_tools_composite"
+                fallback_used = False
+                fallback_reason = None
+                source_w = ab_img.width if ab_img else 0
+                source_h = ab_img.height if ab_img else 0
+            elif flat_meta:
+                render_source = flat_meta.get("renderSource", "unknown")
+                fallback_used = flat_meta.get("fallbackUsed", True)
+                fallback_reason = flat_meta.get("fallbackReason")
+                source_w = flat_meta.get("sourceWidth", 0)
+                source_h = flat_meta.get("sourceHeight", 0)
+            else:
+                render_source = actual_render_mode or "unknown"
+                fallback_used = True
+                fallback_reason = layer_reflow_error
+                source_w, source_h = 0, 0
 
             file_size = os.path.getsize(out_path)
             with Image.open(out_path) as check_img:
@@ -817,6 +914,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardId": None,
                 "selectedArtboardName": None,
                 "actualPsdRenderMode": actual_render_mode,
+                "renderSource": render_source,
+                "fallbackUsed": fallback_used,
+                "fallbackReason": fallback_reason,
+                "sourceWidth": source_w,
+                "sourceHeight": source_h,
                 "layerReflowAttempted": layer_reflow_attempted,
                 "layerReflowSucceeded": layer_reflow_succeeded,
                 "layerReflowError": layer_reflow_error,
@@ -831,6 +933,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
     if source_type == "psd" and psd_mode == "artboard-first":
         import psd_analyzer
 
+        print(f"[PSD_LOAD] start file={os.path.basename(psd_path)}")
         analysis = psd_analyzer.analyze_psd_file(psd_path)
         artboards = analysis["artboards"]
 
@@ -848,6 +951,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             selected_ab_name = None
             actual_render_mode = None
             ab_img = None
+            flat_meta = None
 
             if not is_full_canvas:
                 ab_img, actual_render_mode = psd_analyzer.safe_render_artboard(psd_path, best_ab)
@@ -856,13 +960,31 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                     selected_ab_name = best_ab["name"]
 
             if ab_img is None:
-                # 아트보드 렌더 실패 또는 full_canvas → flatten fallback 체인
-                ab_img, actual_render_mode = psd_analyzer.fallback_flatten_psd(psd_path)
+                # 아트보드 렌더 실패 또는 full_canvas → 4단계 fallback 체인
+                ab_img, actual_render_mode, flat_meta = psd_analyzer.fallback_flatten_psd(psd_path)
 
             if ab_img is None:
                 # 최종 실패: 회색 빈 이미지로 대체
                 ab_img = Image.new("RGBA", (w, h), (200, 200, 200, 255))
                 actual_render_mode = "failed"
+
+            # render meta 계산
+            if actual_render_mode in ("artboard", "full-canvas"):
+                render_source = "psd_tools_composite"
+                fallback_used = False
+                fallback_reason = None
+            elif flat_meta:
+                render_source = flat_meta.get("renderSource", "unknown")
+                fallback_used = flat_meta.get("fallbackUsed", True)
+                fallback_reason = flat_meta.get("fallbackReason")
+            else:
+                render_source = actual_render_mode or "unknown"
+                fallback_used = actual_render_mode not in ("artboard", "full-canvas", None)
+                fallback_reason = None
+            source_w = ab_img.width
+            source_h = ab_img.height
+
+            print(f"[PSD_LOAD] source loaded width={source_w} height={source_h} source={render_source}")
 
             if actual_render_mode == "artboard" or resize_mode == "smart-fit":
                 resized = resize_smart_fit(ab_img, w, h,
@@ -902,6 +1024,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardId": selected_ab_id,
                 "selectedArtboardName": selected_ab_name,
                 "actualPsdRenderMode": actual_render_mode,
+                "renderSource": render_source,
+                "fallbackUsed": fallback_used,
+                "fallbackReason": fallback_reason,
+                "sourceWidth": source_w,
+                "sourceHeight": source_h,
                 "layerReflowAttempted": False,
                 "layerReflowSucceeded": False,
                 "layerReflowError": None,
@@ -913,7 +1040,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         return results
 
     # 기존 이미지/PSD flatten 처리
-    img = load_psd_as_image(psd_path)
+    print(f"[PSD_LOAD] start file={os.path.basename(psd_path)}")
+    img, source_meta = load_source_image(psd_path)
+    print(f"[PSD_LOAD] source loaded width={img.width} height={img.height} source={source_meta['renderSource']}")
     resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
 
     for spec in specs:
@@ -958,7 +1087,12 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "validationMessage": validation_message,
             "selectedArtboardId": None,
             "selectedArtboardName": None,
-            "actualPsdRenderMode": None,
+            "actualPsdRenderMode": source_meta["renderSource"] if source_type == "psd" else None,
+            "renderSource": source_meta["renderSource"],
+            "fallbackUsed": source_meta["fallbackUsed"],
+            "fallbackReason": source_meta["fallbackReason"],
+            "sourceWidth": source_meta["sourceWidth"],
+            "sourceHeight": source_meta["sourceHeight"],
             "layerReflowAttempted": False,
             "layerReflowSucceeded": False,
             "layerReflowError": None,
