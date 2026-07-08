@@ -42,6 +42,7 @@ def load_psd_as_flat_image(psd_path: str) -> tuple:
                     "renderSource": "psd_tools_composite",
                     "fallbackUsed": False,
                     "fallbackReason": None,
+                    "fallbackErrors": [],
                     "sourceWidth": img.width,
                     "sourceHeight": img.height,
                 }
@@ -77,10 +78,13 @@ def load_psd_as_flat_image(psd_path: str) -> tuple:
     for label, cmd in im_steps:
         img = _try_imagemagick(cmd, label, errors)
         if img is not None:
+            # 이 단계 이전의 실패들만 기록 (현재 성공 step은 미포함)
+            failed_so_far = [e for e in errors if e["step"] != label]
             return img, {
                 "renderSource": label,
                 "fallbackUsed": True,
                 "fallbackReason": first_reason,
+                "fallbackErrors": failed_so_far,
                 "sourceWidth": img.width,
                 "sourceHeight": img.height,
             }
@@ -90,6 +94,7 @@ def load_psd_as_flat_image(psd_path: str) -> tuple:
         "renderSource": "unknown",
         "fallbackUsed": True,
         "fallbackReason": first_reason,
+        "fallbackErrors": errors,
         "sourceWidth": 0,
         "sourceHeight": 0,
     }
@@ -871,11 +876,12 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 used_layer_roles = []
 
             # render meta 계산
+            fallback_errors = []
             if layer_reflow_succeeded:
-                render_source = "psd_tools_composite"
+                render_source = "psd_layer_reflow"   # Fix 3: 전용 enum 값
                 fallback_used = False
                 fallback_reason = None
-                source_w, source_h = 0, 0
+                source_w, source_h = w, h             # Fix 3: 결과 크기로 저장
             elif actual_render_mode in ("artboard", "full-canvas"):
                 render_source = "psd_tools_composite"
                 fallback_used = False
@@ -886,6 +892,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 render_source = flat_meta.get("renderSource", "unknown")
                 fallback_used = flat_meta.get("fallbackUsed", True)
                 fallback_reason = flat_meta.get("fallbackReason")
+                fallback_errors = flat_meta.get("fallbackErrors", [])
                 source_w = flat_meta.get("sourceWidth", 0)
                 source_h = flat_meta.get("sourceHeight", 0)
             else:
@@ -899,6 +906,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 actual_w, actual_h = check_img.size
             valid = (actual_w == w and actual_h == h)
             validation_message = "정상" if valid else f"expected={w}x{h}, actual={actual_w}x{actual_h}"
+
+            # Fix 1: 모든 fallback 실패 시 valid=false 처리 (회색 placeholder는 파일 존재용으로만)
+            if actual_render_mode == "failed":
+                valid = False
+                validation_message = "PSD final image extraction failed"
 
             results.append({
                 "media": media,
@@ -917,6 +929,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "renderSource": render_source,
                 "fallbackUsed": fallback_used,
                 "fallbackReason": fallback_reason,
+                "fallbackErrors": fallback_errors,
                 "sourceWidth": source_w,
                 "sourceHeight": source_h,
                 "layerReflowAttempted": layer_reflow_attempted,
@@ -969,6 +982,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 actual_render_mode = "failed"
 
             # render meta 계산
+            fallback_errors = []
             if actual_render_mode in ("artboard", "full-canvas"):
                 render_source = "psd_tools_composite"
                 fallback_used = False
@@ -977,6 +991,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 render_source = flat_meta.get("renderSource", "unknown")
                 fallback_used = flat_meta.get("fallbackUsed", True)
                 fallback_reason = flat_meta.get("fallbackReason")
+                fallback_errors = flat_meta.get("fallbackErrors", [])
             else:
                 render_source = actual_render_mode or "unknown"
                 fallback_used = actual_render_mode not in ("artboard", "full-canvas", None)
@@ -1010,6 +1025,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             valid = (actual_w == w and actual_h == h)
             validation_message = "정상" if valid else f"expected={w}x{h}, actual={actual_w}x{actual_h}"
 
+            # Fix 1: 모든 fallback 실패 시 valid=false 처리
+            if actual_render_mode == "failed":
+                valid = False
+                validation_message = "PSD final image extraction failed"
+
             results.append({
                 "media": media,
                 "name": name,
@@ -1027,6 +1047,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "renderSource": render_source,
                 "fallbackUsed": fallback_used,
                 "fallbackReason": fallback_reason,
+                "fallbackErrors": fallback_errors,
                 "sourceWidth": source_w,
                 "sourceHeight": source_h,
                 "layerReflowAttempted": False,
@@ -1091,6 +1112,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "renderSource": source_meta["renderSource"],
             "fallbackUsed": source_meta["fallbackUsed"],
             "fallbackReason": source_meta["fallbackReason"],
+            "fallbackErrors": source_meta.get("fallbackErrors", []),
             "sourceWidth": source_meta["sourceWidth"],
             "sourceHeight": source_meta["sourceHeight"],
             "layerReflowAttempted": False,

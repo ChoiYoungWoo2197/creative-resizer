@@ -190,6 +190,7 @@ public class BannerService {
                         br.setRenderSource(r.getRenderSource());
                         br.setFallbackUsed(r.getFallbackUsed());
                         br.setFallbackReason(r.getFallbackReason());
+                        br.setFallbackErrors(r.getFallbackErrors());
                         br.setSourceWidth(r.getSourceWidth());
                         br.setSourceHeight(r.getSourceHeight());
                         br.setLayerReflowAttempted(r.getLayerReflowAttempted());

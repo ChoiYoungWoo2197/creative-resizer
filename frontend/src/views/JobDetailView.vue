@@ -397,6 +397,7 @@ function psdRenderModeLabel(mode) { return PSD_RENDER_MODE_LABELS[mode] ?? mode 
 
 const RENDER_SOURCE_LABELS = {
   'psd_tools_composite': 'PSD 원본 렌더링',
+  'psd_layer_reflow': 'PSD 레이어 재배치',
   'imagemagick_magick_first_page': 'ImageMagick 합성 (IM7)',
   'imagemagick_convert_first_page': 'ImageMagick 합성 (IM6)',
   'imagemagick_flatten': 'ImageMagick flatten',
@@ -404,7 +405,7 @@ const RENDER_SOURCE_LABELS = {
 }
 function renderSourceLabel(src) { return RENDER_SOURCE_LABELS[src] ?? src }
 function renderSourceClass(src) {
-  if (src === 'psd_tools_composite') return 'render-source-ok'
+  if (src === 'psd_tools_composite' || src === 'psd_layer_reflow') return 'render-source-ok'
   if (src === 'pillow_image') return 'render-source-neutral'
   if (src.startsWith('imagemagick')) return 'render-source-fallback'
   return ''

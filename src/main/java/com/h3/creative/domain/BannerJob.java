@@ -65,9 +65,10 @@ public class BannerJob {
         private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
 
         // PSD fallback pipeline 메타 (4차-3)
-        private String renderSource;   // psd_tools_composite / imagemagick_* / pillow_image / unknown
+        private String renderSource;   // psd_tools_composite / imagemagick_* / psd_layer_reflow / pillow_image / unknown
         private Boolean fallbackUsed;
         private String fallbackReason;
+        private List<java.util.Map<String, Object>> fallbackErrors;
         private Integer sourceWidth;
         private Integer sourceHeight;
 
