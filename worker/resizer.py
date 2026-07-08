@@ -754,15 +754,21 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             out_path = os.path.join(output_dir, filename)
             debug_dir = os.path.join(output_dir, "debug_layers")
 
-            reflow_result = psd_layer_reflow.generate_psd_layer_reflow(
+            lr = psd_layer_reflow.generate_psd_layer_reflow(
                 psd_path, w, h, out_path, debug_dir
             )
 
-            if reflow_result is not None:
+            layer_reflow_attempted = True
+            layer_reflow_succeeded = lr.get("success", False)
+            layer_reflow_error = lr.get("error")
+            layer_reflow_extracted_count = lr.get("extractedLayerCount", 0)
+            layer_reflow_detected_roles = lr.get("detectedRoles", [])
+
+            if layer_reflow_succeeded:
                 # layer-reflow 성공
                 actual_render_mode = "layer-reflow"
-                layer_reflow_template = reflow_result.get("template")
-                used_layer_roles = reflow_result.get("usedLayerRoles", [])
+                layer_reflow_template = lr.get("template")
+                used_layer_roles = lr.get("usedLayerRoles", [])
                 if output_format in ("jpg", "jpeg"):
                     img = Image.open(out_path).convert("RGB")
                     img.save(out_path)
@@ -811,6 +817,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardId": None,
                 "selectedArtboardName": None,
                 "actualPsdRenderMode": actual_render_mode,
+                "layerReflowAttempted": layer_reflow_attempted,
+                "layerReflowSucceeded": layer_reflow_succeeded,
+                "layerReflowError": layer_reflow_error,
+                "layerReflowExtractedLayerCount": layer_reflow_extracted_count,
+                "layerReflowDetectedRoles": layer_reflow_detected_roles,
                 "layerReflowTemplate": layer_reflow_template,
                 "usedLayerRoles": used_layer_roles,
             })
@@ -891,6 +902,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardId": selected_ab_id,
                 "selectedArtboardName": selected_ab_name,
                 "actualPsdRenderMode": actual_render_mode,
+                "layerReflowAttempted": False,
+                "layerReflowSucceeded": False,
+                "layerReflowError": None,
+                "layerReflowExtractedLayerCount": 0,
+                "layerReflowDetectedRoles": [],
                 "layerReflowTemplate": None,
                 "usedLayerRoles": [],
             })
@@ -943,6 +959,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "selectedArtboardId": None,
             "selectedArtboardName": None,
             "actualPsdRenderMode": None,
+            "layerReflowAttempted": False,
+            "layerReflowSucceeded": False,
+            "layerReflowError": None,
+            "layerReflowExtractedLayerCount": 0,
+            "layerReflowDetectedRoles": [],
             "layerReflowTemplate": None,
             "usedLayerRoles": [],
         })

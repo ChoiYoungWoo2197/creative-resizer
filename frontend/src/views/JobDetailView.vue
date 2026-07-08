@@ -78,7 +78,15 @@
               <div class="img-meta">
                 <span>{{ r.width }} × {{ r.height }}</span>
                 <span v-if="r.fileSize"> · {{ fmtSize(r.fileSize) }}</span>
-                <span v-if="job.resizeMode" class="mode-badge"> · {{ job.resizeMode }}{{ job.resizeMode === 'smart-fit' && job.smartFitStrength ? ' / ' + strengthLabel[job.smartFitStrength] : '' }}</span>
+                <template v-if="r.actualPsdRenderMode === 'layer-reflow'">
+                  <span class="mode-badge-layer"> · PSD 레이어 재배치</span>
+                </template>
+                <template v-else-if="r.layerReflowAttempted && !r.layerReflowSucceeded">
+                  <span class="mode-badge-fallback"> · PSD 대체 렌더링</span>
+                </template>
+                <template v-else-if="job.resizeMode">
+                  <span class="mode-badge"> · {{ job.resizeMode }}{{ job.resizeMode === 'smart-fit' && job.smartFitStrength ? ' / ' + strengthLabel[job.smartFitStrength] : '' }}</span>
+                </template>
                 <span class="valid-badge" :class="r.valid === false ? 'invalid' : 'ok'">
                   {{ r.valid === false ? '규격 불일치' : '정상' }}
                 </span>
@@ -92,9 +100,12 @@
                 <span v-if="r.layerReflowTemplate" class="reflow-template">{{ r.layerReflowTemplate }}</span>
               </div>
               <div v-if="r.usedLayerRoles && r.usedLayerRoles.length" class="reflow-roles">
-                <span v-for="role in r.usedLayerRoles" :key="role" class="reflow-role-tag">{{ role }}</span>
+                <span v-for="role in r.usedLayerRoles" :key="role" class="reflow-role-tag">{{ roleLabel(role) }}</span>
               </div>
-              <div v-if="r.actualPsdRenderMode && r.actualPsdRenderMode !== 'artboard' && r.actualPsdRenderMode !== 'layer-reflow'" class="psd-fallback-badge">
+              <div v-if="r.layerReflowAttempted && !r.layerReflowSucceeded" class="fallback-reason">
+                레이어 재배치 실패: {{ r.layerReflowError || '알 수 없는 이유로 대체 렌더링 처리됨' }}
+              </div>
+              <div v-if="r.actualPsdRenderMode && r.actualPsdRenderMode !== 'artboard' && r.actualPsdRenderMode !== 'layer-reflow' && !r.layerReflowAttempted" class="psd-fallback-badge">
                 fallback: {{ psdRenderModeLabel(r.actualPsdRenderMode) }}
               </div>
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
@@ -380,6 +391,14 @@ const PSD_RENDER_MODE_LABELS = {
   'failed': '렌더링 실패',
 }
 function psdRenderModeLabel(mode) { return PSD_RENDER_MODE_LABELS[mode] ?? mode }
+
+const ROLE_LABELS = {
+  background: '배경', logo: '로고', headline: '메인 카피',
+  subcopy: '보조 문구', cta: 'CTA', product: '제품',
+  person: '인물', visual: '비주얼', decoration: '장식',
+  badge: '배지', price: '가격',
+}
+function roleLabel(role) { return ROLE_LABELS[role] ?? role }
 
 async function runApply(candidate) {
   if (!compareResult.value) return
@@ -795,6 +814,18 @@ onUnmounted(stopPolling)
   font-size: 10px; font-weight: 500;
   color: #374151; background: #F3F4F6;
   border-radius: 4px; padding: 1px 5px;
+}
+.fallback-reason {
+  margin-top: 3px;
+  font-size: 10px; color: #B45309; background: #FFFBEB;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block; word-break: break-all; line-height: 1.4;
+}
+.mode-badge-layer {
+  font-size: 11px; color: #0369A1; font-weight: 600;
+}
+.mode-badge-fallback {
+  font-size: 11px; color: #B45309; font-weight: 500;
 }
 
 .ai-applied-badge {

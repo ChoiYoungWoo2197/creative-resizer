@@ -64,8 +64,13 @@ public class BannerJob {
         private String selectedArtboardName;
         private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
 
-        // PSD 레이어 재배치 정보 (4차-2)
-        private String layerReflowTemplate;  // horizontal-1250x560-product / horizontal-1250x560-poster / none
+        // PSD 레이어 재배치 메타 (4차-2 보완)
+        private Boolean layerReflowAttempted;
+        private Boolean layerReflowSucceeded;
+        private String layerReflowError;
+        private Integer layerReflowExtractedLayerCount;
+        private List<String> layerReflowDetectedRoles;
+        private String layerReflowTemplate;  // horizontal-1250x560-product / horizontal-1250x560-poster
         private List<String> usedLayerRoles; // headline, product, cta, logo ...
 
         // AI 후보 적용 이력

@@ -250,24 +250,61 @@ def compose_reflow_canvas(psd, layers: list, slots: dict, target_w: int, target_
     return canvas, used_roles
 
 
+def validate_required_roles(layers: list) -> str | None:
+    """필수 role 검증. 실패 사유 문자열 반환, 통과 시 None."""
+    roles = set(l.get("role") for l in layers)
+    has_headline = "headline" in roles
+    has_visual = any(r in roles for r in ["product", "person", "visual"])
+    has_cta = any(r in roles for r in ["cta", "subcopy", "price", "badge"])
+
+    if not has_headline:
+        return "required role not found: headline"
+    if not has_visual and not has_cta:
+        return "required role not found: visual or cta/subcopy"
+    return None
+
+
 def generate_psd_layer_reflow(file_path: str, target_w: int, target_h: int,
-                               output_path: str, debug_dir: str = None) -> dict | None:
-    """PSD 레이어 재배치 배너 생성. 실패 시 None 반환 → 호출자가 fallback 처리."""
+                               output_path: str, debug_dir: str = None) -> dict:
+    """PSD 레이어 재배치 배너 생성. 항상 dict 반환 — success/error 필드로 판별."""
+    result = {
+        "success": False,
+        "error": None,
+        "template": None,
+        "usedLayerRoles": [],
+        "detectedRoles": [],
+        "extractedLayerCount": 0,
+        "outputPath": None,
+    }
+
     # MVP: 1250×560만 지원
     if not (target_w == 1250 and target_h == 560):
+        result["error"] = f"unsupported target size: {target_w}x{target_h}"
         print(f"[LayerReflow] {target_w}x{target_h} not supported in MVP, skipping")
-        return None
+        return result
 
     try:
         psd = PSDImage.open(file_path)
     except Exception as e:
+        result["error"] = f"PSD open failed: {e}"
         print(f"[LayerReflow] PSD open failed: {e}")
-        return None
+        return result
 
     layers = extract_renderable_layers(psd)
+    result["extractedLayerCount"] = len(layers)
+    result["detectedRoles"] = sorted(list(set(l["role"] for l in layers)))
+
     if not layers:
+        result["error"] = "no renderable layers found"
         print("[LayerReflow] No renderable layers found")
-        return None
+        return result
+
+    # 필수 role 검증
+    validation_error = validate_required_roles(layers)
+    if validation_error:
+        result["error"] = validation_error
+        print(f"[LayerReflow] required role validation failed: {validation_error}")
+        return result
 
     # 레이어별 이미지 렌더링
     for layer in layers:
@@ -289,23 +326,24 @@ def generate_psd_layer_reflow(file_path: str, target_w: int, target_h: int,
     try:
         canvas, used_roles = compose_reflow_canvas(psd, layers, slots, target_w, target_h)
     except Exception as e:
+        result["error"] = f"compose failed: {e}"
         print(f"[LayerReflow] compose failed: {e}")
-        return None
+        return result
 
     if not used_roles:
+        result["error"] = "no layers placed on canvas"
         print("[LayerReflow] No layers placed, aborting")
-        return None
+        return result
 
     try:
         canvas.save(output_path, "PNG")
     except Exception as e:
+        result["error"] = f"save failed: {e}"
         print(f"[LayerReflow] save failed: {e}")
-        return None
+        return result
 
-    return {
-        "success": True,
-        "mode": "layer-reflow",
-        "template": template_name,
-        "usedLayerRoles": used_roles,
-        "outputPath": output_path,
-    }
+    result["success"] = True
+    result["template"] = template_name
+    result["usedLayerRoles"] = used_roles
+    result["outputPath"] = output_path
+    return result
