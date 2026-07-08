@@ -31,6 +31,9 @@ public class WorkerResponse {
         private String validationMessage;
         private String selectedArtboardId;
         private String selectedArtboardName;
+        private String selectedArtboardType;   // square / vertical / horizontal / custom / full-canvas
+        private java.util.Map<String, Object> selectedArtboardBox;  // {x, y, width, height}
+        private Double artboardMatchScore;     // 0.0 ~ 1.0 (1.0 = 비율 완전 일치)
         private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
 
         // PSD fallback pipeline 메타 (4차-3)

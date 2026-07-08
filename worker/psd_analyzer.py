@@ -12,6 +12,26 @@ ARTBOARD_KEYWORDS = [
     "1080x1080", "1080x1920", "728x90", "1250x560",
 ]
 
+# 광고 결과물에 포함하면 안 되는 제작 가이드/TIP 영역 키워드
+TIP_EXCLUDE_KEYWORDS = [
+    "tip", "제작", "guide", "참고", "안내", "샘플", "sample", "draft", "tmp", "가이드",
+]
+
+
+def _classify_artboard_type(w: int, h: int) -> str:
+    """너비/높이 비율로 아트보드 유형 분류."""
+    if w <= 0 or h <= 0:
+        return "unknown"
+    ratio = w / h
+    if abs(ratio - 1.0) < 0.15:
+        return "square"       # 정방형 (예: 1200×1200)
+    elif ratio < 0.65:
+        return "vertical"     # 세로형 (예: 300×1200)
+    elif ratio > 1.8:
+        return "horizontal"   # 가로형 (예: 1200×300)
+    else:
+        return "custom"
+
 
 def analyze_psd_file(file_path: str) -> dict:
     try:
@@ -65,6 +85,8 @@ def _analyze_psd_file_inner(file_path: str) -> dict:
         artboards = _infer_artboards_from_groups(psd)
     has_artboards = bool(artboards)
     if not artboards:
+        artboards = _infer_artboards_from_large_layers(psd)
+    if not artboards:
         artboards = _fallback_single_artboard(psd)
     layers = _extract_layers(psd)
     layer_count = len(layers)
@@ -102,6 +124,9 @@ def _extract_artboards(psd) -> list:
         for idx, layer in enumerate(psd):
             if not (hasattr(layer, "is_group") and layer.is_group()):
                 continue
+            name_lower = (layer.name or "").lower()
+            if any(k in name_lower for k in TIP_EXCLUDE_KEYWORDS):
+                continue
             try:
                 tagged = getattr(layer, "tagged_blocks", None) or {}
                 if any(t in tagged for t in artboard_tags):
@@ -116,6 +141,8 @@ def _extract_artboards(psd) -> list:
                             "width": w,
                             "height": h,
                             "ratio": w / h,
+                            "artboardType": _classify_artboard_type(w, h),
+                            "source": "artboard_tag",
                         })
             except Exception:
                 continue
@@ -129,6 +156,8 @@ def _infer_artboards_from_groups(psd) -> list:
     artboards = []
     for idx, layer in enumerate(psd):
         name = (layer.name or "").lower()
+        if any(k in name for k in TIP_EXCLUDE_KEYWORDS):
+            continue
         if not any(k in name for k in ARTBOARD_KEYWORDS):
             continue
         try:
@@ -144,10 +173,75 @@ def _infer_artboards_from_groups(psd) -> list:
                 "width": w,
                 "height": h,
                 "ratio": w / h,
+                "artboardType": _classify_artboard_type(w, h),
+                "source": "group_name",
             })
         except Exception:
             continue
     return artboards
+
+
+def _infer_artboards_from_large_layers(psd) -> list:
+    """Top-level 그룹 레이어 bbox 기반 광고 영역 추정.
+    아트보드 메타/그룹명 키워드 모두 없을 때 최후 cascade 시도.
+    제작 TIP 영역(이름 기반)과 전체 배경 레이어는 제외한다.
+    """
+    canvas_w = psd.width
+    canvas_h = psd.height
+    canvas_area = canvas_w * canvas_h
+    candidates = []
+    seen: set = set()
+
+    for idx, layer in enumerate(psd):
+        if not (hasattr(layer, "is_group") and layer.is_group()):
+            continue
+        name_lower = (layer.name or "").lower()
+        if any(k in name_lower for k in TIP_EXCLUDE_KEYWORDS):
+            continue
+        try:
+            x = int(layer.left)
+            y = int(layer.top)
+            w = max(0, int(layer.right) - x)
+            h = max(0, int(layer.bottom) - y)
+        except Exception:
+            continue
+        if w <= 0 or h <= 0:
+            continue
+
+        area = w * h
+        # 캔버스 면적의 3% 이상
+        if area < canvas_area * 0.03:
+            continue
+        # 전체 캔버스 크기에 너무 가깝다면 배경 레이어로 간주 → skip
+        if w >= canvas_w * 0.92 and h >= canvas_h * 0.92:
+            continue
+
+        # 캔버스 경계 보정
+        cx = max(0, x)
+        cy = max(0, y)
+        cw = min(w, canvas_w - cx)
+        ch = min(h, canvas_h - cy)
+        if cw <= 0 or ch <= 0:
+            continue
+
+        key = (cx, cy, cw, ch)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        candidates.append({
+            "id": f"inferred_layer_{idx}",
+            "name": layer.name or f"영역_{idx}",
+            "x": cx,
+            "y": cy,
+            "width": cw,
+            "height": ch,
+            "ratio": round(cw / ch, 4),
+            "artboardType": _classify_artboard_type(cw, ch),
+            "source": "layer_bbox",
+        })
+
+    return candidates
 
 
 def _fallback_single_artboard(psd) -> list:
@@ -159,6 +253,8 @@ def _fallback_single_artboard(psd) -> list:
         "width": psd.width,
         "height": psd.height,
         "ratio": psd.width / psd.height,
+        "artboardType": "full-canvas",
+        "source": "fallback",
     }]
 
 

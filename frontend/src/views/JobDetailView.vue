@@ -115,8 +115,12 @@
                 </span>
               </div>
               <div class="valid-msg" v-if="r.valid === false">{{ r.validationMessage }}</div>
-              <div v-if="r.selectedArtboardName" class="artboard-badge">
+              <div v-if="r.selectedArtboardName" class="artboard-badge" :class="artboardTypeClass(r.selectedArtboardType)">
                 ▣ PSD 아트보드: {{ r.selectedArtboardName }}
+                <span v-if="r.selectedArtboardType" class="artboard-type-tag">{{ artboardTypeLabel(r.selectedArtboardType) }}</span>
+                <span v-if="r.artboardMatchScore != null" class="artboard-match-score" :class="artboardMatchClass(r.artboardMatchScore)">
+                  매치 {{ Math.round(r.artboardMatchScore * 100) }}%
+                </span>
               </div>
               <div v-if="r.actualPsdRenderMode === 'layer-reflow'" class="layer-reflow-badge">
                 ⊞ PSD 레이어 재배치
@@ -498,6 +502,28 @@ function resultStatusClass(r) {
   if (r.qualityLabel === '주의')     return 'warn'
   if (r.qualityLabel === '품질 낮음') return 'quality-bad'
   return 'ok'
+}
+
+const ARTBOARD_TYPE_LABELS = {
+  'square':      '정방형',
+  'vertical':    '세로형',
+  'horizontal':  '가로형',
+  'custom':      '커스텀',
+  'full-canvas': '전체 캔버스',
+  'unknown':     '미분류',
+}
+function artboardTypeLabel(t) { return ARTBOARD_TYPE_LABELS[t] ?? (t || '') }
+function artboardTypeClass(t) {
+  if (t === 'square')     return 'abt-square'
+  if (t === 'vertical')   return 'abt-vertical'
+  if (t === 'horizontal') return 'abt-horizontal'
+  return ''
+}
+function artboardMatchClass(score) {
+  if (score == null) return ''
+  if (score >= 0.90) return 'match-good'
+  if (score >= 0.60) return 'match-warn'
+  return 'match-bad'
 }
 
 async function runApply(candidate) {
@@ -888,7 +914,29 @@ onUnmounted(stopPolling)
   font-size: 11px; font-weight: 600;
   color: #1D4ED8; background: #EFF6FF;
   border-radius: 6px; padding: 2px 8px;
-  display: inline-block;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.artboard-badge.abt-square     { color: #065F46; background: #ECFDF5; }
+.artboard-badge.abt-vertical   { color: #1E40AF; background: #EFF6FF; }
+.artboard-badge.abt-horizontal { color: #92400E; background: #FFFBEB; }
+.artboard-type-tag {
+  font-size: 10px; font-weight: 700; padding: 1px 5px;
+  border-radius: 4px; background: rgba(0,0,0,0.08);
+}
+.artboard-match-score {
+  font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+}
+.artboard-match-score.match-good { color: #065F46; background: #D1FAE5; }
+.artboard-match-score.match-warn { color: #92400E; background: #FEF3C7; }
+.artboard-match-score.match-bad  { color: #991B1B; background: #FEE2E2; }
+@media (prefers-color-scheme: dark) {
+  .artboard-badge { color: #93C5FD; background: #1E3A5F; }
+  .artboard-badge.abt-square     { color: #6EE7B7; background: #064E3B; }
+  .artboard-badge.abt-vertical   { color: #93C5FD; background: #1E3A5F; }
+  .artboard-badge.abt-horizontal { color: #FCD34D; background: #451A03; }
+  .artboard-match-score.match-good { color: #6EE7B7; background: #064E3B; }
+  .artboard-match-score.match-warn { color: #FCD34D; background: #451A03; }
+  .artboard-match-score.match-bad  { color: #FCA5A5; background: #450A0A; }
 }
 .psd-fallback-badge {
   margin-top: 3px;

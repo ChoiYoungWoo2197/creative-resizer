@@ -186,6 +186,9 @@ public class BannerService {
                         br.setValidationMessage(r.getValidationMessage());
                         br.setSelectedArtboardId(r.getSelectedArtboardId());
                         br.setSelectedArtboardName(r.getSelectedArtboardName());
+                        br.setSelectedArtboardType(r.getSelectedArtboardType());
+                        br.setSelectedArtboardBox(r.getSelectedArtboardBox());
+                        br.setArtboardMatchScore(r.getArtboardMatchScore());
                         br.setActualPsdRenderMode(r.getActualPsdRenderMode());
                         br.setRenderSource(r.getRenderSource());
                         br.setFallbackUsed(r.getFallbackUsed());

@@ -1243,6 +1243,23 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
 
             selected_ab_id = None
             selected_ab_name = None
+            selected_ab_type = None
+            selected_ab_box = None
+            artboard_match_score = None
+            if best_ab:
+                _ab_w = best_ab.get("width", 0)
+                _ab_h = best_ab.get("height", 1)
+                _ab_ratio = _ab_w / max(_ab_h, 1)
+                _tgt_ratio = w / max(h, 1)
+                _ratio_diff = abs(_tgt_ratio - _ab_ratio) / max(_tgt_ratio, 1)
+                artboard_match_score = round(max(0.0, 1.0 - _ratio_diff), 3)
+                selected_ab_type = best_ab.get("artboardType")
+                selected_ab_box = {
+                    "x": best_ab.get("x", 0),
+                    "y": best_ab.get("y", 0),
+                    "width": _ab_w,
+                    "height": _ab_h,
+                }
             actual_render_mode = None
             ab_img = None
             flat_meta = None
@@ -1252,6 +1269,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 if actual_render_mode == "artboard":
                     selected_ab_id = best_ab["id"]
                     selected_ab_name = best_ab["name"]
+                    selected_ab_type = best_ab.get("artboardType")
 
             if ab_img is None:
                 # 아트보드 렌더 실패 또는 full_canvas → 4단계 fallback 체인
@@ -1324,6 +1342,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "validationMessage": validation_message,
                 "selectedArtboardId": selected_ab_id,
                 "selectedArtboardName": selected_ab_name,
+                "selectedArtboardType": selected_ab_type,
+                "selectedArtboardBox": selected_ab_box,
+                "artboardMatchScore": artboard_match_score,
                 "actualPsdRenderMode": actual_render_mode,
                 "renderSource": render_source,
                 "fallbackUsed": fallback_used,
