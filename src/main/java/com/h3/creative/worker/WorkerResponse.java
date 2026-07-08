@@ -31,6 +31,10 @@ public class WorkerResponse {
         private String validationMessage;
         private String selectedArtboardId;
         private String selectedArtboardName;
-        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / failed
+        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
+
+        // PSD 레이어 재배치 정보 (4차-2)
+        private String layerReflowTemplate;
+        private java.util.List<String> usedLayerRoles;
     }
 }

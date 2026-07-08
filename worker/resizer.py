@@ -737,6 +737,85 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
     os.makedirs(output_dir, exist_ok=True)
     results = []
 
+    # PSD 레이어 재배치 모드 (4차-2)
+    if source_type == "psd" and psd_mode == "layer-reflow":
+        import psd_layer_reflow
+
+        for spec in specs:
+            media = spec["media"]
+            w = spec["width"]
+            h = spec["height"]
+            slug = spec.get("slug", "")
+            name = spec.get("name", "")
+
+            ext = "jpg" if output_format in ("jpg", "jpeg") else output_format
+            slug_part = f"_{slug}" if slug else ""
+            filename = f"{media}{slug_part}_{w}x{h}.{ext}"
+            out_path = os.path.join(output_dir, filename)
+            debug_dir = os.path.join(output_dir, "debug_layers")
+
+            reflow_result = psd_layer_reflow.generate_psd_layer_reflow(
+                psd_path, w, h, out_path, debug_dir
+            )
+
+            if reflow_result is not None:
+                # layer-reflow 성공
+                actual_render_mode = "layer-reflow"
+                layer_reflow_template = reflow_result.get("template")
+                used_layer_roles = reflow_result.get("usedLayerRoles", [])
+                if output_format in ("jpg", "jpeg"):
+                    img = Image.open(out_path).convert("RGB")
+                    img.save(out_path)
+            else:
+                # fallback → artboard-first 체인 재사용
+                import psd_analyzer
+                analysis = psd_analyzer.analyze_psd_file(psd_path)
+                best_ab = psd_analyzer.select_best_artboard(analysis["artboards"], w, h)
+                is_full_canvas = (best_ab is None or best_ab.get("id") == "full_canvas")
+                ab_img = None
+
+                if not is_full_canvas:
+                    ab_img, actual_render_mode = psd_analyzer.safe_render_artboard(psd_path, best_ab)
+                if ab_img is None:
+                    ab_img, actual_render_mode = psd_analyzer.fallback_flatten_psd(psd_path)
+                if ab_img is None:
+                    ab_img = Image.new("RGBA", (w, h), (200, 200, 200, 255))
+                    actual_render_mode = "failed"
+
+                resized = resize_smart_fit(ab_img, w, h,
+                                           strength=smart_fit_strength or "balanced",
+                                           focal_position=focal_position or "center")
+                if output_format in ("jpg", "jpeg"):
+                    resized = resized.convert("RGB")
+                resized.save(out_path)
+                layer_reflow_template = None
+                used_layer_roles = []
+
+            file_size = os.path.getsize(out_path)
+            with Image.open(out_path) as check_img:
+                actual_w, actual_h = check_img.size
+            valid = (actual_w == w and actual_h == h)
+            validation_message = "정상" if valid else f"expected={w}x{h}, actual={actual_w}x{actual_h}"
+
+            results.append({
+                "media": media,
+                "name": name,
+                "slug": slug,
+                "width": w,
+                "height": h,
+                "fileName": filename,
+                "filePath": out_path,
+                "fileSize": file_size,
+                "valid": valid,
+                "validationMessage": validation_message,
+                "selectedArtboardId": None,
+                "selectedArtboardName": None,
+                "actualPsdRenderMode": actual_render_mode,
+                "layerReflowTemplate": layer_reflow_template,
+                "usedLayerRoles": used_layer_roles,
+            })
+        return results
+
     # PSD 아트보드 모드: 각 spec마다 최적 아트보드를 선택해 렌더링 (안전 렌더링 + fallback 체인)
     if source_type == "psd" and psd_mode == "artboard-first":
         import psd_analyzer
@@ -812,6 +891,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardId": selected_ab_id,
                 "selectedArtboardName": selected_ab_name,
                 "actualPsdRenderMode": actual_render_mode,
+                "layerReflowTemplate": None,
+                "usedLayerRoles": [],
             })
         return results
 
@@ -862,6 +943,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "selectedArtboardId": None,
             "selectedArtboardName": None,
             "actualPsdRenderMode": None,
+            "layerReflowTemplate": None,
+            "usedLayerRoles": [],
         })
 
     return results

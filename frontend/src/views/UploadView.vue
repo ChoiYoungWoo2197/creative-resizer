@@ -64,12 +64,13 @@
                     <div class="psd-mode-desc">PSD 전체를 하나의 이미지로 렌더링한 뒤 기존 리사이징을 적용합니다.</div>
                   </div>
                 </label>
-                <div class="psd-mode-option psd-mode-disabled">
-                  <div class="psd-mode-body">
-                    <div class="psd-mode-name">레이어 재배치 <span class="psd-mode-soon">Coming soon</span></div>
-                    <div class="psd-mode-desc">레이어를 분석해 규격별로 다시 배치합니다.</div>
+                <label class="psd-mode-option" :class="{ on: psdMode === 'layer-reflow' }">
+                  <input type="radio" name="psdMode" value="layer-reflow" v-model="psdMode" style="display:none" />
+                  <div class="psd-mode-body" @click="psdMode = 'layer-reflow'">
+                    <div class="psd-mode-name">레이어 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span></div>
+                    <div class="psd-mode-desc">PSD 레이어를 분석해 배너 규격에 맞게 다시 배치합니다. 현재 1250×560 가로형 우선 지원.</div>
                   </div>
-                </div>
+                </label>
               </div>
             </div>
             <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
@@ -806,6 +807,9 @@ onMounted(async () => {
 .psd-mode-badge {
   font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
   background: #7C3AED; color: #fff;
+}
+.psd-mode-beta {
+  background: #0891B2; color: #fff;
 }
 .psd-mode-soon {
   font-size: 9.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px;

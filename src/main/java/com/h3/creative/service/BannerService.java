@@ -67,7 +67,7 @@ public class BannerService {
         job.setOutputFormat(outputFormat);
         job.setPsdPath(dest.getAbsolutePath());
         job.setSourceType(sourceType);
-        job.setPsdMode("psd".equals(sourceType) ? psdMode : null);
+        job.setPsdMode("psd".equals(sourceType) ? normalizePsdMode(sourceType, psdMode) : null);
         job.setStatus("pending");
         job.setAiAnalysisId(aiAnalysisId);
         job.setAiApplied(aiApplied != null && aiApplied);
@@ -112,6 +112,13 @@ public class BannerService {
             return "psd";
         }
         return "image";
+    }
+
+    private String normalizePsdMode(String sourceType, String psdMode) {
+        if (!"psd".equals(sourceType)) return null;
+        if ("flatten".equals(psdMode)) return "flatten";
+        if ("layer-reflow".equals(psdMode)) return "layer-reflow";
+        return "artboard-first";
     }
 
     public void process(BannerMessage message) {
@@ -180,6 +187,8 @@ public class BannerService {
                         br.setSelectedArtboardId(r.getSelectedArtboardId());
                         br.setSelectedArtboardName(r.getSelectedArtboardName());
                         br.setActualPsdRenderMode(r.getActualPsdRenderMode());
+                        br.setLayerReflowTemplate(r.getLayerReflowTemplate());
+                        br.setUsedLayerRoles(r.getUsedLayerRoles());
                         return br;
                     }).toList()
                     : List.of();

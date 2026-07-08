@@ -87,7 +87,14 @@
               <div v-if="r.selectedArtboardName" class="artboard-badge">
                 ▣ PSD 아트보드: {{ r.selectedArtboardName }}
               </div>
-              <div v-if="r.actualPsdRenderMode && r.actualPsdRenderMode !== 'artboard'" class="psd-fallback-badge">
+              <div v-if="r.actualPsdRenderMode === 'layer-reflow'" class="layer-reflow-badge">
+                ⊞ PSD 레이어 재배치
+                <span v-if="r.layerReflowTemplate" class="reflow-template">{{ r.layerReflowTemplate }}</span>
+              </div>
+              <div v-if="r.usedLayerRoles && r.usedLayerRoles.length" class="reflow-roles">
+                <span v-for="role in r.usedLayerRoles" :key="role" class="reflow-role-tag">{{ role }}</span>
+              </div>
+              <div v-if="r.actualPsdRenderMode && r.actualPsdRenderMode !== 'artboard' && r.actualPsdRenderMode !== 'layer-reflow'" class="psd-fallback-badge">
                 fallback: {{ psdRenderModeLabel(r.actualPsdRenderMode) }}
               </div>
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
@@ -768,6 +775,26 @@ onUnmounted(stopPolling)
   color: #B45309; background: #FFFBEB;
   border-radius: 6px; padding: 2px 8px;
   display: inline-block;
+}
+.layer-reflow-badge {
+  margin-top: 4px;
+  font-size: 11px; font-weight: 600;
+  color: #0369A1; background: #E0F2FE;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.reflow-template {
+  font-size: 10px; font-weight: 500;
+  color: #0284C7; background: #BAE6FD;
+  border-radius: 4px; padding: 1px 5px;
+}
+.reflow-roles {
+  margin-top: 3px; display: flex; flex-wrap: wrap; gap: 3px;
+}
+.reflow-role-tag {
+  font-size: 10px; font-weight: 500;
+  color: #374151; background: #F3F4F6;
+  border-radius: 4px; padding: 1px 5px;
 }
 
 .ai-applied-badge {

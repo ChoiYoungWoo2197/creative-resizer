@@ -26,7 +26,7 @@ public class BannerJob {
     private String outputFormat;     // png / jpg / webp
 
     private String sourceType;        // image / psd
-    private String psdMode;          // artboard-first / flatten
+    private String psdMode;          // artboard-first / flatten / layer-reflow
     private PsdAnalysis psdAnalysis;
 
     private String status;           // pending / processing / done / fail
@@ -62,7 +62,11 @@ public class BannerJob {
         // PSD 아트보드 선택 정보
         private String selectedArtboardId;
         private String selectedArtboardName;
-        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / failed
+        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
+
+        // PSD 레이어 재배치 정보 (4차-2)
+        private String layerReflowTemplate;  // horizontal-1250x560-product / horizontal-1250x560-poster / none
+        private List<String> usedLayerRoles; // headline, product, cta, logo ...
 
         // AI 후보 적용 이력
         private String selectedCompareId;
