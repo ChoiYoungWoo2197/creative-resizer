@@ -1,5 +1,5 @@
 from PIL import Image, ImageFilter
-from psd_tools import PSDImage
+from psd_compat import open_psd_safe_with_patch
 import os
 
 
@@ -283,11 +283,10 @@ def generate_psd_layer_reflow(file_path: str, target_w: int, target_h: int,
         print(f"[LayerReflow] {target_w}x{target_h} not supported in MVP, skipping")
         return result
 
-    try:
-        psd = PSDImage.open(file_path)
-    except Exception as e:
-        result["error"] = f"PSD open failed: {e}"
-        print(f"[LayerReflow] PSD open failed: {e}")
+    psd, open_meta = open_psd_safe_with_patch(file_path)
+    if not open_meta["success"]:
+        result["error"] = f"PSD open failed: {open_meta.get('error', 'unknown')} [{open_meta.get('errorCode')}]"
+        print(f"[LayerReflow] PSD open failed: {result['error']}")
         return result
 
     layers = extract_renderable_layers(psd)

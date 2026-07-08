@@ -16,6 +16,15 @@ public class PsdAnalyzeResponse {
     private List<PsdLayer> layers;
     private String error;
 
+    // PSD 파서 호환성 진단 (4차-2 보완)
+    private Boolean layerReadable;
+    private Integer layerCount;
+    private String layerReadError;
+    private String layerReadErrorCode;
+    private Boolean layerReflowAvailable;
+    private String psdParserEngine;
+    private Boolean psdCompatPatched;
+
     public PsdAnalysis toPsdAnalysis() {
         PsdAnalysis analysis = new PsdAnalysis();
         analysis.setWidth(width);
@@ -23,6 +32,14 @@ public class PsdAnalyzeResponse {
         analysis.setHasArtboards(hasArtboards);
         analysis.setArtboards(artboards);
         analysis.setLayers(layers);
+        analysis.setLayerReadable(layerReadable);
+        analysis.setLayerCount(layerCount);
+        analysis.setLayerReadError(layerReadError);
+        analysis.setLayerReadErrorCode(layerReadErrorCode);
+        analysis.setLayerReflowAvailable(layerReflowAvailable);
+        analysis.setPsdParserEngine(layerReadable != null && layerReadable && Boolean.TRUE.equals(psdCompatPatched)
+                ? "psd-tools-patched" : psdParserEngine);
+        analysis.setPsdCompatPatched(psdCompatPatched);
         return analysis;
     }
 }

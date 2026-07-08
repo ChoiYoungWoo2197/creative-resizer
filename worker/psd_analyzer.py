@@ -2,6 +2,7 @@ from psd_tools import PSDImage
 from PIL import Image
 import subprocess
 from io import BytesIO
+from psd_compat import open_psd_safe_with_patch
 
 
 ARTBOARD_KEYWORDS = [
@@ -13,17 +14,31 @@ ARTBOARD_KEYWORDS = [
 
 
 def analyze_psd_file(file_path: str) -> dict:
-    try:
-        psd = PSDImage.open(file_path)
-    except Exception as e:
-        print(f"[PSD] psd-tools open failed ({e}), using full_canvas fallback")
+    psd, open_meta = open_psd_safe_with_patch(file_path)
+
+    layer_readable = open_meta["success"]
+    psd_parser_engine = open_meta.get("engine", "psd-tools")
+    psd_compat_patched = open_meta.get("patchedRetry", False)
+    layer_read_error = open_meta.get("error") if not layer_readable else None
+    layer_read_error_code = open_meta.get("errorCode") if not layer_readable else None
+
+    if not layer_readable:
+        print(f"[PSD] psd-tools open failed ({layer_read_error_code}): {layer_read_error}")
         return {
             "width": 0,
             "height": 0,
             "hasArtboards": False,
             "artboards": [],
             "layers": [],
+            "layerReadable": False,
+            "layerCount": 0,
+            "layerReadError": layer_read_error,
+            "layerReadErrorCode": layer_read_error_code,
+            "layerReflowAvailable": False,
+            "psdParserEngine": psd_parser_engine,
+            "psdCompatPatched": psd_compat_patched,
         }
+
     artboards = _extract_artboards(psd)
     if not artboards:
         artboards = _infer_artboards_from_groups(psd)
@@ -31,12 +46,22 @@ def analyze_psd_file(file_path: str) -> dict:
     if not artboards:
         artboards = _fallback_single_artboard(psd)
     layers = _extract_layers(psd)
+    layer_count = len(layers)
+    layer_reflow_available = _check_layer_reflow_available(layers)
+
     return {
         "width": psd.width,
         "height": psd.height,
         "hasArtboards": has_artboards,
         "artboards": artboards,
         "layers": layers,
+        "layerReadable": True,
+        "layerCount": layer_count,
+        "layerReadError": None,
+        "layerReadErrorCode": None,
+        "layerReflowAvailable": layer_reflow_available,
+        "psdParserEngine": psd_parser_engine,
+        "psdCompatPatched": psd_compat_patched,
     }
 
 
@@ -162,6 +187,15 @@ def _infer_layer_role(name: str) -> str:
     return "unknown"
 
 
+def _check_layer_reflow_available(layers: list) -> bool:
+    """레이어 재배치 가능 여부: headline + (visual/product/person 또는 cta) 필요."""
+    roles = set(l.get("role") for l in layers)
+    has_headline = "headline" in roles
+    has_visual = any(r in roles for r in ["visual", "product", "person"])
+    has_cta = "cta" in roles
+    return has_headline and (has_visual or has_cta)
+
+
 def select_best_artboard(artboards: list, target_w: int, target_h: int) -> dict | None:
     if not artboards:
         return None
@@ -227,7 +261,9 @@ def clamp_crop_box(x: int, y: int, w: int, h: int, canvas_w: int, canvas_h: int)
 def safe_render_artboard(file_path: str, artboard: dict) -> tuple:
     """아트보드 렌더링 시도. (img, mode) 반환. 실패 시 (None, 'failed')."""
     try:
-        psd = PSDImage.open(file_path)
+        psd, open_meta = open_psd_safe_with_patch(file_path)
+        if not open_meta["success"]:
+            return None, "failed"
         composed = psd.composite()
         if not is_valid_rendered_image(composed):
             return None, "failed"
@@ -250,7 +286,9 @@ def safe_render_artboard(file_path: str, artboard: dict) -> tuple:
 def fallback_flatten_psd(file_path: str) -> tuple:
     """psd-tools composite → ImageMagick 순서로 fallback. (img, mode) 반환."""
     try:
-        psd = PSDImage.open(file_path)
+        psd, open_meta = open_psd_safe_with_patch(file_path)
+        if not open_meta["success"]:
+            raise ValueError(open_meta.get("error", "PSD open failed"))
         img = psd.composite()
         if is_valid_rendered_image(img):
             return img.convert("RGBA"), "full-canvas"

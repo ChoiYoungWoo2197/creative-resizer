@@ -1,8 +1,11 @@
 import os
 import zipfile
 from flask import Flask, request, jsonify
+import psd_tools
 import resizer
 import psd_analyzer
+
+print(f"[PSD] psd-tools version: {getattr(psd_tools, '__version__', 'unknown')}")
 
 app = Flask(__name__)
 

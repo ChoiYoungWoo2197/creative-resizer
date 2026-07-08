@@ -212,6 +212,26 @@ public class BannerService {
         }
     }
 
+    public com.h3.creative.domain.PsdAnalysis analyzePsdLayers(MultipartFile psdFile) throws IOException {
+        String filename = UUID.randomUUID() + "_" + psdFile.getOriginalFilename();
+        File dest = new File(uploadDir, filename);
+        dest.getParentFile().mkdirs();
+        psdFile.transferTo(dest);
+        try {
+            com.h3.creative.worker.PsdAnalyzeResponse response = workerClient.analyzePsd(dest.getAbsolutePath());
+            if (response.getError() != null) {
+                com.h3.creative.domain.PsdAnalysis failed = new com.h3.creative.domain.PsdAnalysis();
+                failed.setLayerReadable(false);
+                failed.setLayerReadError(response.getError());
+                failed.setLayerReflowAvailable(false);
+                return failed;
+            }
+            return response.toPsdAnalysis();
+        } finally {
+            dest.delete();
+        }
+    }
+
     public BannerJob getJob(String id) {
         return bannerMongoService.findById(id);
     }

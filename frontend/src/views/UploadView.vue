@@ -48,7 +48,55 @@
               </div>
               <!-- PSD 처리 방식 선택 -->
             <div v-if="isPsdFile" class="psd-mode-section">
-              <div class="psd-mode-title">PSD 처리 방식</div>
+              <div class="psd-mode-title">
+                PSD 처리 방식
+                <span v-if="psdLayerAnalyzing" class="psd-compat-loading">
+                  <span class="spinner" style="width:10px;height:10px;border-width:1.5px;display:inline-block;" />
+                  레이어 분석 중...
+                </span>
+              </div>
+              <!-- PSD 호환성 진단 결과 -->
+              <div v-if="!psdLayerAnalyzing && psdLayerAnalysis" class="psd-compat-status">
+                <template v-if="psdLayerAnalysis.layerReadable === false">
+                  <div class="psd-compat-row psd-compat-error">
+                    <span class="psd-compat-icon">✕</span>
+                    <div>
+                      <div class="psd-compat-label">PSD 레이어 분석 불가</div>
+                      <div class="psd-compat-reason">
+                        사유: {{ psdLayerAnalysis.layerReadErrorCode === 'PSD_VERSION_8_UNSUPPORTED' ? 'Invalid version 8' : (psdLayerAnalysis.layerReadError || '알 수 없음') }}
+                      </div>
+                      <div class="psd-compat-hint">이 PSD는 레이어 재배치를 사용할 수 없습니다. 단순 이미지 처리로 자동 전환됩니다.</div>
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="psdLayerAnalysis.psdCompatPatched">
+                  <div class="psd-compat-row psd-compat-warn">
+                    <span class="psd-compat-icon">⚠</span>
+                    <div>
+                      <div class="psd-compat-label">PSD 호환 모드 적용됨</div>
+                      <div class="psd-compat-hint">일부 최신 PSD 기능은 제한될 수 있습니다.</div>
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="psdLayerAnalysis.layerReflowAvailable">
+                  <div class="psd-compat-row psd-compat-ok">
+                    <span class="psd-compat-icon">✓</span>
+                    <div>
+                      <div class="psd-compat-label">PSD 레이어 분석 가능</div>
+                      <div class="psd-compat-hint">레이어 {{ psdLayerAnalysis.layerCount }}개 감지 · 레이어 재배치 Beta를 사용할 수 있습니다.</div>
+                    </div>
+                  </div>
+                </template>
+                <template v-else-if="psdLayerAnalysis.layerReadable">
+                  <div class="psd-compat-row psd-compat-warn">
+                    <span class="psd-compat-icon">⚠</span>
+                    <div>
+                      <div class="psd-compat-label">레이어 재배치 지원 불가</div>
+                      <div class="psd-compat-hint">필수 레이어(메인카피, 제품/비주얼 또는 CTA)가 감지되지 않았습니다.</div>
+                    </div>
+                  </div>
+                </template>
+              </div>
               <div class="psd-mode-options">
                 <label class="psd-mode-option" :class="{ on: psdMode === 'artboard-first' }">
                   <input type="radio" name="psdMode" value="artboard-first" v-model="psdMode" style="display:none" />
@@ -64,11 +112,23 @@
                     <div class="psd-mode-desc">PSD 전체를 하나의 이미지로 렌더링한 뒤 기존 리사이징을 적용합니다.</div>
                   </div>
                 </label>
-                <label class="psd-mode-option" :class="{ on: psdMode === 'layer-reflow' }">
-                  <input type="radio" name="psdMode" value="layer-reflow" v-model="psdMode" style="display:none" />
-                  <div class="psd-mode-body" @click="psdMode = 'layer-reflow'">
-                    <div class="psd-mode-name">레이어 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span></div>
-                    <div class="psd-mode-desc">PSD 레이어를 분석해 배너 규격에 맞게 다시 배치합니다. 현재 1250×560 가로형 우선 지원.</div>
+                <label class="psd-mode-option"
+                  :class="{ on: psdMode === 'layer-reflow', disabled: psdLayerAnalysis && !psdLayerAnalysis.layerReflowAvailable }">
+                  <input type="radio" name="psdMode" value="layer-reflow" v-model="psdMode" style="display:none"
+                    :disabled="psdLayerAnalysis && !psdLayerAnalysis.layerReflowAvailable" />
+                  <div class="psd-mode-body"
+                    @click="(!psdLayerAnalysis || psdLayerAnalysis.layerReflowAvailable) ? psdMode = 'layer-reflow' : null">
+                    <div class="psd-mode-name">
+                      레이어 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span>
+                    </div>
+                    <div class="psd-mode-desc">
+                      <template v-if="psdLayerAnalysis && !psdLayerAnalysis.layerReflowAvailable">
+                        사용 불가: PSD 레이어 분석이 지원되지 않는 파일입니다.
+                      </template>
+                      <template v-else>
+                        PSD 레이어를 분석해 배너 규격에 맞게 다시 배치합니다. 현재 1250×560 가로형 우선 지원.
+                      </template>
+                    </div>
                   </div>
                 </label>
               </div>
@@ -391,7 +451,7 @@ import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { readPsd } from 'ag-psd'
 import 'ag-psd/initialize-canvas'
-import { uploadPsd, listSpecs, analyzeBanner } from '../api/banner.js'
+import { uploadPsd, listSpecs, analyzeBanner, analyzePsdLayers } from '../api/banner.js'
 import { useRouter } from 'vue-router'
 const router = useRouter()
 
@@ -400,6 +460,8 @@ const result       = ref(null)
 const aiAnalyzing  = ref(false)
 const aiAnalysis   = ref(null)
 const aiApplied    = ref(false)
+const psdLayerAnalyzing = ref(false)
+const psdLayerAnalysis  = ref(null)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
@@ -616,6 +678,7 @@ function clearFile() {
   form.psdFile = null
   previewUrl.value = null; previewError.value = false; previewSize.value = ''
   aiAnalysis.value = null; aiApplied.value = false
+  psdLayerAnalysis.value = null; psdLayerAnalyzing.value = false
   psdMode.value = 'artboard-first'
 }
 
@@ -668,16 +731,36 @@ async function loadPreview(file) {
   finally { previewLoading.value = false }
 }
 
+async function runPsdLayerAnalyze(file) {
+  if (!file?.name?.toLowerCase().endsWith('.psd')) return
+  psdLayerAnalyzing.value = true
+  psdLayerAnalysis.value = null
+  try {
+    const fd = new FormData()
+    fd.append('psdFile', file)
+    const { data } = await analyzePsdLayers(fd)
+    psdLayerAnalysis.value = data
+    // 레이어 재배치 불가 시 기본 모드로 전환
+    if (data.layerReadable === false || data.layerReflowAvailable === false) {
+      if (psdMode.value === 'layer-reflow') psdMode.value = 'artboard-first'
+    }
+  } catch (e) {
+    psdLayerAnalysis.value = { layerReadable: null, layerReflowAvailable: null }
+  } finally {
+    psdLayerAnalyzing.value = false
+  }
+}
+
 function onInputChange(e) {
   const f = e.target.files?.[0]
-  if (f) { form.psdFile = f; loadPreview(f) }
+  if (f) { form.psdFile = f; loadPreview(f); runPsdLayerAnalyze(f) }
 }
 function onDrop(e) {
   dragover.value = false
   const f = e.dataTransfer.files?.[0]
   if (!f) return
   const ext = f.name.split('.').pop().toLowerCase()
-  if (ALLOWED_EXTS.includes(ext)) { form.psdFile = f; loadPreview(f) }
+  if (ALLOWED_EXTS.includes(ext)) { form.psdFile = f; loadPreview(f); runPsdLayerAnalyze(f) }
   else ElMessage.warning('지원하지 않는 파일 형식입니다. (PSD, PNG, JPG, WebP, GIF 등)')
 }
 
@@ -815,6 +898,26 @@ onMounted(async () => {
   font-size: 9.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
   background: #F2F4F6; color: #8B95A1;
 }
+.psd-mode-option.disabled { opacity: 0.5; cursor: not-allowed; }
+.psd-mode-option.disabled .psd-mode-body { pointer-events: none; }
+
+/* PSD 호환성 진단 */
+.psd-compat-loading { font-size: 10px; color: #8B95A1; font-weight: 400; margin-left: 6px; display: inline-flex; align-items: center; gap: 4px; }
+.psd-compat-status { margin-bottom: 8px; }
+.psd-compat-row {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 7px 9px; border-radius: 7px; font-size: 11px; margin-bottom: 4px;
+}
+.psd-compat-ok  { background: #F0FFF4; border: 1px solid #D1FAE5; }
+.psd-compat-warn { background: #FFFBEB; border: 1px solid #FDE68A; }
+.psd-compat-error { background: #FFF5F5; border: 1px solid #FED7D7; }
+.psd-compat-icon { font-size: 12px; margin-top: 1px; flex-shrink: 0; }
+.psd-compat-ok .psd-compat-icon  { color: #22C55E; }
+.psd-compat-warn .psd-compat-icon { color: #D97706; }
+.psd-compat-error .psd-compat-icon { color: #EF4444; }
+.psd-compat-label { font-weight: 600; color: #333D4B; }
+.psd-compat-reason { color: #6B7684; font-size: 10px; margin-top: 1px; }
+.psd-compat-hint  { color: #8B95A1; font-size: 10px; margin-top: 2px; line-height: 1.4; }
 
 /* inputs */
 .field-stack { display: flex; flex-direction: column; gap: 8px; }

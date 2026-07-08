@@ -44,3 +44,9 @@ export const applyCompare = (jobId, compareId, specId, candidate) =>
 
 export const compareFileUrl = (compareId, fileName) =>
   `/api/banner/compare/${compareId}/files/${encodeURIComponent(fileName)}`
+
+export const analyzePsdLayers = (formData) =>
+  api.post('/banner/analyze-psd', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  })

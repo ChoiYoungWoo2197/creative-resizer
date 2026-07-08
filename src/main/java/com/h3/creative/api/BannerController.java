@@ -42,6 +42,12 @@ public class BannerController {
         return ResponseEntity.ok(bannerAnalysisService.analyze(file));
     }
 
+    @PostMapping("/analyze-psd")
+    public ResponseEntity<com.h3.creative.domain.PsdAnalysis> analyzePsd(
+            @RequestParam MultipartFile psdFile) throws IOException {
+        return ResponseEntity.ok(bannerService.analyzePsdLayers(psdFile));
+    }
+
     @PostMapping("/upload")
     public ResponseEntity<BannerJob> upload(
             @RequestParam MultipartFile psdFile,
