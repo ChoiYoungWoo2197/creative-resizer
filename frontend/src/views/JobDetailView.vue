@@ -87,8 +87,8 @@
                 <template v-else-if="job.resizeMode">
                   <span class="mode-badge"> · {{ job.resizeMode }}{{ job.resizeMode === 'smart-fit' && job.smartFitStrength ? ' / ' + strengthLabel[job.smartFitStrength] : '' }}</span>
                 </template>
-                <span class="valid-badge" :class="r.valid === false ? 'invalid' : 'ok'">
-                  {{ r.valid === false ? '규격 불일치' : '정상' }}
+                <span class="valid-badge" :class="resultStatusClass(r)">
+                  {{ resultStatusLabel(r) }}
                 </span>
               </div>
               <div class="valid-msg" v-if="r.valid === false">{{ r.validationMessage }}</div>
@@ -464,6 +464,19 @@ function qualityLabelClass(label) {
   return 'ql-bad'
 }
 
+// 결과 카드 상태 뱃지: qualityLabel 우선, 없으면 valid 기준
+function resultStatusLabel(r) {
+  if (r.valid === false) return '규격 불일치'
+  if (r.qualityLabel)   return r.qualityLabel
+  return '정상'
+}
+function resultStatusClass(r) {
+  if (r.valid === false)             return 'invalid'
+  if (r.qualityLabel === '주의')     return 'warn'
+  if (r.qualityLabel === '품질 낮음') return 'quality-bad'
+  return 'ok'
+}
+
 async function runApply(candidate) {
   if (!compareResult.value) return
   const key = `${compareResult.value.specId}_${candidate}`
@@ -687,8 +700,10 @@ onUnmounted(stopPolling)
   padding: 1px 7px;
   border-radius: 20px;
 }
-.valid-badge.ok      { background: #D1FAE5; color: #065F46; }
-.valid-badge.invalid { background: #FEE2E2; color: #991B1B; }
+.valid-badge.ok          { background: #D1FAE5; color: #065F46; }
+.valid-badge.invalid     { background: #FEE2E2; color: #991B1B; }
+.valid-badge.warn        { background: #FEF3C7; color: #92400E; }
+.valid-badge.quality-bad { background: #FEE2E2; color: #991B1B; }
 .valid-msg { font-size: 11px; color: #EF4444; margin-top: 2px; line-height: 1.4; word-break: break-all; }
 
 .card-actions { display: flex; gap: 6px; margin: 0 14px 14px; }
