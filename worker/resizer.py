@@ -737,15 +737,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
     os.makedirs(output_dir, exist_ok=True)
     results = []
 
-    # PSD 아트보드 모드: 각 spec마다 최적 아트보드를 선택해 렌더링
+    # PSD 아트보드 모드: 각 spec마다 최적 아트보드를 선택해 렌더링 (안전 렌더링 + fallback 체인)
     if source_type == "psd" and psd_mode == "artboard-first":
         import psd_analyzer
-        from psd_tools import PSDImage
-
-        psd = PSDImage.open(psd_path)
-        composed = psd.composite()
-        if composed is None:
-            composed = Image.new("RGB", (psd.width, psd.height), (255, 255, 255))
 
         analysis = psd_analyzer.analyze_psd_file(psd_path)
         artboards = analysis["artboards"]
@@ -760,21 +754,32 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             best_ab = psd_analyzer.select_best_artboard(artboards, w, h)
             is_full_canvas = (best_ab is None or best_ab.get("id") == "full_canvas")
 
+            selected_ab_id = None
+            selected_ab_name = None
+            actual_render_mode = None
+            ab_img = None
+
             if not is_full_canvas:
-                ab_img = psd_analyzer.render_artboard_from_composed(composed, best_ab)
+                ab_img, actual_render_mode = psd_analyzer.safe_render_artboard(psd_path, best_ab)
+                if actual_render_mode == "artboard":
+                    selected_ab_id = best_ab["id"]
+                    selected_ab_name = best_ab["name"]
+
+            if ab_img is None:
+                # 아트보드 렌더 실패 또는 full_canvas → flatten fallback 체인
+                ab_img, actual_render_mode = psd_analyzer.fallback_flatten_psd(psd_path)
+
+            if ab_img is None:
+                # 최종 실패: 회색 빈 이미지로 대체
+                ab_img = Image.new("RGBA", (w, h), (200, 200, 200, 255))
+                actual_render_mode = "failed"
+
+            if actual_render_mode == "artboard" or resize_mode == "smart-fit":
                 resized = resize_smart_fit(ab_img, w, h,
                                            strength=smart_fit_strength or "balanced",
                                            focal_position=focal_position or "center")
-                selected_ab_id = best_ab["id"]
-                selected_ab_name = best_ab["name"]
             else:
-                img = load_psd_as_image(psd_path)
-                if resize_mode == "smart-fit":
-                    resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
-                else:
-                    resized = RESIZE_FUNCS.get(resize_mode, resize_cover)(img, w, h)
-                selected_ab_id = None
-                selected_ab_name = None
+                resized = RESIZE_FUNCS.get(resize_mode, resize_cover)(ab_img, w, h)
 
             if output_format in ("jpg", "jpeg"):
                 resized = resized.convert("RGB")
@@ -806,6 +811,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "validationMessage": validation_message,
                 "selectedArtboardId": selected_ab_id,
                 "selectedArtboardName": selected_ab_name,
+                "actualPsdRenderMode": actual_render_mode,
             })
         return results
 
@@ -855,6 +861,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "validationMessage": validation_message,
             "selectedArtboardId": None,
             "selectedArtboardName": None,
+            "actualPsdRenderMode": None,
         })
 
     return results

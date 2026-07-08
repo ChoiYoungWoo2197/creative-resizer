@@ -1,5 +1,7 @@
 from psd_tools import PSDImage
 from PIL import Image
+import subprocess
+from io import BytesIO
 
 
 ARTBOARD_KEYWORDS = [
@@ -184,3 +186,74 @@ def render_artboard_from_composed(composed: Image.Image, artboard: dict) -> Imag
     x2 = min(composed.width, x + w)
     y2 = min(composed.height, y + h)
     return composed.crop((x, y, x2, y2))
+
+
+def is_valid_rendered_image(img) -> bool:
+    """렌더링 결과가 유효한지 검증 (None, 너무 작은 이미지, 빈 이미지 제외)."""
+    if img is None:
+        return False
+    try:
+        w, h = img.size
+    except Exception:
+        return False
+    if w < 10 or h < 10:
+        return False
+    if w * h < 1000:
+        return False
+    return True
+
+
+def clamp_crop_box(x: int, y: int, w: int, h: int, canvas_w: int, canvas_h: int):
+    """crop 좌표를 캔버스 범위 안으로 보정. 유효하지 않으면 None 반환."""
+    x1 = max(0, x)
+    y1 = max(0, y)
+    x2 = min(canvas_w, x + w)
+    y2 = min(canvas_h, y + h)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2, y2)
+
+
+def safe_render_artboard(file_path: str, artboard: dict) -> tuple:
+    """아트보드 렌더링 시도. (img, mode) 반환. 실패 시 (None, 'failed')."""
+    try:
+        psd = PSDImage.open(file_path)
+        composed = psd.composite()
+        if not is_valid_rendered_image(composed):
+            return None, "failed"
+        box = clamp_crop_box(
+            artboard.get("x", 0), artboard.get("y", 0),
+            artboard.get("width", composed.width), artboard.get("height", composed.height),
+            composed.width, composed.height,
+        )
+        if box is None:
+            return None, "failed"
+        rendered = composed.crop(box)
+        if not is_valid_rendered_image(rendered):
+            return None, "failed"
+        return rendered.convert("RGBA"), "artboard"
+    except Exception as e:
+        print(f"[PSD] artboard render failed: {e}")
+        return None, "failed"
+
+
+def fallback_flatten_psd(file_path: str) -> tuple:
+    """psd-tools composite → ImageMagick 순서로 fallback. (img, mode) 반환."""
+    try:
+        psd = PSDImage.open(file_path)
+        img = psd.composite()
+        if is_valid_rendered_image(img):
+            return img.convert("RGBA"), "full-canvas"
+    except Exception as e:
+        print(f"[PSD] psd-tools flatten failed: {e}")
+    try:
+        result = subprocess.run(
+            ["convert", f"{file_path}[0]", "-flatten", "PNG:-"],
+            capture_output=True, timeout=120, check=True,
+        )
+        img = Image.open(BytesIO(result.stdout))
+        img.load()
+        return img.convert("RGBA"), "imagemagick-flatten"
+    except Exception as e:
+        print(f"[PSD] ImageMagick fallback failed: {e}")
+    return None, "failed"

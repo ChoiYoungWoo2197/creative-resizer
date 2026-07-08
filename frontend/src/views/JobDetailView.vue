@@ -84,6 +84,12 @@
                 </span>
               </div>
               <div class="valid-msg" v-if="r.valid === false">{{ r.validationMessage }}</div>
+              <div v-if="r.selectedArtboardName" class="artboard-badge">
+                ▣ PSD 아트보드: {{ r.selectedArtboardName }}
+              </div>
+              <div v-if="r.actualPsdRenderMode && r.actualPsdRenderMode !== 'artboard'" class="psd-fallback-badge">
+                fallback: {{ psdRenderModeLabel(r.actualPsdRenderMode) }}
+              </div>
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
                 ✦ AI 후보 적용됨 · {{ strengthKr(r.selectedCandidate) }}
               </div>
@@ -359,6 +365,14 @@ const GROUP_LABELS = {
   price_discount: '가격/할인', cta: 'CTA', logo: '로고', decorations: '장식', background: '배경',
 }
 function groupLabel(gid) { return GROUP_LABELS[gid] ?? gid }
+
+const PSD_RENDER_MODE_LABELS = {
+  'artboard': '아트보드',
+  'full-canvas': '전체 캔버스 fallback',
+  'imagemagick-flatten': 'ImageMagick fallback',
+  'failed': '렌더링 실패',
+}
+function psdRenderModeLabel(mode) { return PSD_RENDER_MODE_LABELS[mode] ?? mode }
 
 async function runApply(candidate) {
   if (!compareResult.value) return
@@ -740,6 +754,21 @@ onUnmounted(stopPolling)
   color: #6D28D9;
 }
 .btn-cmp-apply-best:hover:not(:disabled) { background: #DDD6FE; }
+
+.artboard-badge {
+  margin-top: 4px;
+  font-size: 11px; font-weight: 600;
+  color: #1D4ED8; background: #EFF6FF;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block;
+}
+.psd-fallback-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 500;
+  color: #B45309; background: #FFFBEB;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block;
+}
 
 .ai-applied-badge {
   margin-top: 5px;

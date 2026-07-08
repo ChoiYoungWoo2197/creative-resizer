@@ -46,7 +46,33 @@
                 </div>
                 <button class="file-change" @click="clearFile">변경</button>
               </div>
-              <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
+              <!-- PSD 처리 방식 선택 -->
+            <div v-if="isPsdFile" class="psd-mode-section">
+              <div class="psd-mode-title">PSD 처리 방식</div>
+              <div class="psd-mode-options">
+                <label class="psd-mode-option" :class="{ on: psdMode === 'artboard-first' }">
+                  <input type="radio" name="psdMode" value="artboard-first" v-model="psdMode" style="display:none" />
+                  <div class="psd-mode-body" @click="psdMode = 'artboard-first'">
+                    <div class="psd-mode-name">아트보드 우선 <span class="psd-mode-badge">기본</span></div>
+                    <div class="psd-mode-desc">PSD 안의 가로형·세로형·정방형 아트보드를 자동 선택합니다.</div>
+                  </div>
+                </label>
+                <label class="psd-mode-option" :class="{ on: psdMode === 'flatten' }">
+                  <input type="radio" name="psdMode" value="flatten" v-model="psdMode" style="display:none" />
+                  <div class="psd-mode-body" @click="psdMode = 'flatten'">
+                    <div class="psd-mode-name">단순 이미지 처리</div>
+                    <div class="psd-mode-desc">PSD 전체를 하나의 이미지로 렌더링한 뒤 기존 리사이징을 적용합니다.</div>
+                  </div>
+                </label>
+                <div class="psd-mode-option psd-mode-disabled">
+                  <div class="psd-mode-body">
+                    <div class="psd-mode-name">레이어 재배치 <span class="psd-mode-soon">Coming soon</span></div>
+                    <div class="psd-mode-desc">레이어를 분석해 규격별로 다시 배치합니다.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
                 <span v-if="aiAnalyzing" class="spinner" style="width:12px;height:12px;border-width:1.5px;" />
                 <span v-else>✦</span>
                 {{ aiAnalyzing ? 'AI 분석 중...' : 'AI 추천 분석' }}
@@ -378,6 +404,11 @@ const specsLoading = ref(true)
 const selectedSpecIds = ref([])
 const dragover     = ref(false)
 const materialType = ref('')
+const psdMode      = ref('artboard-first')
+
+const isPsdFile = computed(() =>
+  form.psdFile?.name?.toLowerCase().endsWith('.psd') ?? false
+)
 
 const uploadOpen = ref(true)
 const mediaOpen  = ref(true)
@@ -584,6 +615,7 @@ function clearFile() {
   form.psdFile = null
   previewUrl.value = null; previewError.value = false; previewSize.value = ''
   aiAnalysis.value = null; aiApplied.value = false
+  psdMode.value = 'artboard-first'
 }
 
 async function runAiAnalyze() {
@@ -663,6 +695,9 @@ async function submit() {
   fd.append('smartFitStrength', form.smartFitStrength)
   fd.append('focalPosition', form.focalPosition)
   fd.append('outputFormat', form.outputFormat)
+  if (isPsdFile.value) {
+    fd.append('psdMode', psdMode.value || 'artboard-first')
+  }
   if (aiAnalysis.value?.id) {
     fd.append('aiAnalysisId', aiAnalysis.value.id)
     fd.append('aiApplied', String(aiApplied.value))
@@ -751,6 +786,31 @@ onMounted(async () => {
 .file-size { font-size: 11px; color: #8B95A1; margin-top: 1px; }
 .file-change { background: none; border: 1px solid #E5E8EB; border-radius: 6px; font-size: 11px; color: #6B7684; padding: 3px 8px; cursor: pointer; font-family: inherit; }
 .file-change:hover { border-color: #7C3AED; color: #7C3AED; }
+
+/* PSD 처리 방식 */
+.psd-mode-section { margin: 10px 0 8px; }
+.psd-mode-title { font-size: 11px; font-weight: 700; color: #6B7684; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+.psd-mode-options { display: flex; flex-direction: column; gap: 5px; }
+.psd-mode-option {
+  border: 1.5px solid #EAEDF0; border-radius: 8px;
+  padding: 8px 10px; cursor: pointer; transition: all 0.12s;
+  display: block;
+}
+.psd-mode-option:hover:not(.psd-mode-disabled) { border-color: #C4B5FD; background: #FAFAFF; }
+.psd-mode-option.on { border-color: #7C3AED; background: #F5F0FF; }
+.psd-mode-disabled { cursor: default; opacity: 0.5; }
+.psd-mode-body { pointer-events: none; }
+.psd-mode-option:not(.psd-mode-disabled) .psd-mode-body { pointer-events: auto; cursor: pointer; }
+.psd-mode-name { font-size: 12px; font-weight: 600; color: #333D4B; display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+.psd-mode-desc { font-size: 10.5px; color: #8B95A1; line-height: 1.4; }
+.psd-mode-badge {
+  font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+  background: #7C3AED; color: #fff;
+}
+.psd-mode-soon {
+  font-size: 9.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
+  background: #F2F4F6; color: #8B95A1;
+}
 
 /* inputs */
 .field-stack { display: flex; flex-direction: column; gap: 8px; }

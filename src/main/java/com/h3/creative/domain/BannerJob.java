@@ -62,6 +62,7 @@ public class BannerJob {
         // PSD 아트보드 선택 정보
         private String selectedArtboardId;
         private String selectedArtboardName;
+        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / failed
 
         // AI 후보 적용 이력
         private String selectedCompareId;
