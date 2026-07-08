@@ -40,7 +40,7 @@ public class BannerService {
                             String aiAnalysisId, Boolean aiApplied,
                             String aiRecommendedResizeMode, String aiRecommendedSmartFitStrength,
                             String aiRecommendedFocalPosition,
-                            String psdMode) throws IOException {
+                            String psdMode, List<String> selectedArtboardIds) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
         if (psdMode == null || psdMode.isBlank()) psdMode = "artboard-first";
@@ -74,6 +74,9 @@ public class BannerService {
         job.setAiRecommendedResizeMode(aiRecommendedResizeMode);
         job.setAiRecommendedSmartFitStrength(aiRecommendedSmartFitStrength);
         job.setAiRecommendedFocalPosition(aiRecommendedFocalPosition);
+        if (selectedArtboardIds != null && !selectedArtboardIds.isEmpty()) {
+            job.setSelectedArtboardIds(selectedArtboardIds);
+        }
 
         // PSD이면 Worker에 분석 요청 → 결과를 job에 저장 (프론트 즉시 표시용)
         if ("psd".equals(sourceType)) {
@@ -101,6 +104,7 @@ public class BannerService {
                 .outputFormat(outputFormat)
                 .sourceType(sourceType)
                 .psdMode(job.getPsdMode())
+                .selectedArtboardIds(job.getSelectedArtboardIds())
                 .build();
 
         bannerProducer.publish(message);
@@ -159,6 +163,7 @@ public class BannerService {
                 .outputFormat(message.getOutputFormat())
                 .sourceType(message.getSourceType() != null ? message.getSourceType() : "image")
                 .psdMode(message.getPsdMode() != null ? message.getPsdMode() : "artboard-first")
+                .selectedArtboardIds(message.getSelectedArtboardIds())
                 .build();
 
         WorkerResponse response = workerClient.generate(request);
@@ -189,6 +194,8 @@ public class BannerService {
                         br.setSelectedArtboardType(r.getSelectedArtboardType());
                         br.setSelectedArtboardBox(r.getSelectedArtboardBox());
                         br.setArtboardMatchScore(r.getArtboardMatchScore());
+                        br.setSelectedSourceArtboardSize(r.getSelectedSourceArtboardSize());
+                        br.setSourceMatchType(r.getSourceMatchType());
                         br.setActualPsdRenderMode(r.getActualPsdRenderMode());
                         br.setRenderSource(r.getRenderSource());
                         br.setFallbackUsed(r.getFallbackUsed());
@@ -216,6 +223,15 @@ public class BannerService {
                         return br;
                     }).toList()
                     : List.of();
+
+            // missingRatioTypes: 워커가 감지하지 못한 비율 타입 목록 → job에 저장
+            if (response.getMissingRatioTypes() != null && !response.getMissingRatioTypes().isEmpty()) {
+                BannerJob job = bannerMongoService.findById(jobId);
+                if (job != null) {
+                    job.setMissingRatioTypes(response.getMissingRatioTypes());
+                    bannerMongoService.save(job);
+                }
+            }
 
             boolean hasInvalid = results.stream().anyMatch(r -> Boolean.FALSE.equals(r.getValid()));
             if (hasInvalid) {

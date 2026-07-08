@@ -1069,7 +1069,9 @@ def generate_candidates(input_path: str, output_dir: str, spec: dict,
 def generate(psd_path: str, specs: list[dict], resize_mode: str,
              output_format: str, output_dir: str, smart_fit_strength: str = "balanced",
              focal_position: str = "center", source_type: str = "image",
-             psd_mode: str = "artboard-first") -> list[dict]:
+             psd_mode: str = "artboard-first",
+             selected_artboard_ids: list[str] | None = None) -> tuple[list[dict], list[str]]:
+    """returns (results, missingRatioTypes)"""
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
@@ -1221,7 +1223,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "safeZonePass":         safe_zone_pass,
                 "requiredLayerMissing": required_layer_missing,
             })
-        return results
+        return results, []
 
     # PSD 아트보드 모드: 각 spec마다 최적 아트보드를 선택해 렌더링 (안전 렌더링 + fallback 체인)
     if source_type == "psd" and psd_mode == "artboard-first":
@@ -1229,7 +1231,21 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
 
         print(f"[PSD_LOAD] start file={os.path.basename(psd_path)}")
         analysis = psd_analyzer.analyze_psd_file(psd_path)
-        artboards = analysis["artboards"]
+        all_artboards = analysis["artboards"]
+
+        # 사용자가 선택한 아트보드만 필터링 (빈 목록이면 전체 사용)
+        if selected_artboard_ids:
+            filtered = [ab for ab in all_artboards if ab.get("id") in selected_artboard_ids]
+            artboards = filtered if filtered else all_artboards
+        else:
+            artboards = all_artboards
+
+        # 감지된 비율 타입 vs 전체 기대 타입 → missing 계산
+        _ALL_RATIO_TYPES = {"square", "vertical", "horizontal"}
+        _detected_types = {ab.get("artboardType") for ab in artboards
+                           if ab.get("artboardType") in _ALL_RATIO_TYPES}
+        missing_ratio_types = sorted(_ALL_RATIO_TYPES - _detected_types)
+        print(f"[PSD_LOAD] artboards={len(artboards)} detected={_detected_types} missing={missing_ratio_types}")
 
         for spec in specs:
             media = spec["media"]
@@ -1246,6 +1262,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             selected_ab_type = None
             selected_ab_box = None
             artboard_match_score = None
+            selected_source_artboard_size = None
+            source_match_type = None
             if best_ab:
                 _ab_w = best_ab.get("width", 0)
                 _ab_h = best_ab.get("height", 1)
@@ -1260,6 +1278,13 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                     "width": _ab_w,
                     "height": _ab_h,
                 }
+                selected_source_artboard_size = f"{_ab_w}x{_ab_h}"
+                if best_ab.get("id") == "full_canvas":
+                    source_match_type = "fallback"
+                elif _ratio_diff < 0.15:
+                    source_match_type = "exact"
+                else:
+                    source_match_type = "inferred"
             actual_render_mode = None
             ab_img = None
             flat_meta = None
@@ -1345,6 +1370,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardType": selected_ab_type,
                 "selectedArtboardBox": selected_ab_box,
                 "artboardMatchScore": artboard_match_score,
+                "selectedSourceArtboardSize": selected_source_artboard_size,
+                "sourceMatchType": source_match_type,
                 "actualPsdRenderMode": actual_render_mode,
                 "renderSource": render_source,
                 "fallbackUsed": fallback_used,
@@ -1370,7 +1397,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "safeZonePass":         None,
                 "requiredLayerMissing": None,
             })
-        return results
+        return results, missing_ratio_types
 
     # 기존 이미지/PSD flatten 처리
     print(f"[PSD_LOAD] start file={os.path.basename(psd_path)}")
@@ -1443,4 +1470,4 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "requiredLayerMissing": None,
         })
 
-    return results
+    return results, []

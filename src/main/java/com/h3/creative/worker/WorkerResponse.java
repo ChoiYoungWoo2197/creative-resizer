@@ -12,6 +12,7 @@ public class WorkerResponse {
     private int count;
     private String error;
     private List<ResultItem> results;
+    private List<String> missingRatioTypes;   // 감지되지 않은 비율 타입 목록
 
     public boolean isSuccess() {
         return error == null || error.isBlank();
@@ -31,9 +32,11 @@ public class WorkerResponse {
         private String validationMessage;
         private String selectedArtboardId;
         private String selectedArtboardName;
-        private String selectedArtboardType;   // square / vertical / horizontal / custom / full-canvas
+        private String selectedArtboardType;         // square / vertical / horizontal / custom / full-canvas
         private java.util.Map<String, Object> selectedArtboardBox;  // {x, y, width, height}
-        private Double artboardMatchScore;     // 0.0 ~ 1.0 (1.0 = 비율 완전 일치)
+        private Double artboardMatchScore;           // 0.0 ~ 1.0 (1.0 = 비율 완전 일치)
+        private String selectedSourceArtboardSize;   // e.g. "1200x1200"
+        private String sourceMatchType;              // exact / inferred / fallback
         private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
 
         // PSD fallback pipeline 메타 (4차-3)

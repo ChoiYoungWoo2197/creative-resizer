@@ -11,4 +11,6 @@ public class PsdArtboard {
     private Integer width;
     private Integer height;
     private Double ratio;
+    private String artboardType;   // square / vertical / horizontal / custom / full-canvas
+    private String source;         // artboard_tag / group_name / layer_bbox / fallback
 }

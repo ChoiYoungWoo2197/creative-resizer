@@ -43,6 +43,7 @@ def generate():
     output_format = data.get("outputFormat", "png")
     source_type = data.get("sourceType", "image")
     psd_mode = data.get("psdMode", "artboard-first")
+    selected_artboard_ids = data.get("selectedArtboardIds") or []
 
     if not psd_path or not os.path.exists(psd_path):
         return jsonify({"error": "psd_path not found"}), 400
@@ -50,9 +51,10 @@ def generate():
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
 
     try:
-        result_items = resizer.generate(
+        result_items, missing_ratio_types = resizer.generate(
             psd_path, specs, resize_mode, output_format, job_output_dir,
-            smart_fit_strength, focal_position, source_type, psd_mode
+            smart_fit_strength, focal_position, source_type, psd_mode,
+            selected_artboard_ids
         )
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)
@@ -61,6 +63,7 @@ def generate():
             "zipPath": zip_path,
             "count": len(result_items),
             "results": result_items,
+            "missingRatioTypes": missing_ratio_types,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

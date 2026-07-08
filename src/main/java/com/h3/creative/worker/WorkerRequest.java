@@ -18,6 +18,7 @@ public class WorkerRequest {
     private String outputFormat;
     private String sourceType;   // image / psd
     private String psdMode;      // artboard-first / flatten
+    private List<String> selectedArtboardIds;  // 사용자가 선택한 아트보드 ID 목록 (null = 전체)
 
     @Data
     @Builder

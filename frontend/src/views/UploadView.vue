@@ -367,6 +367,62 @@
           </div>
         </div>
 
+        <!-- PSD 아트보드 선택 섹션 -->
+        <div v-if="isPsdFile && (psdLayerAnalyzing || detectedArtboards.length > 0)" class="azs-section">
+          <div class="azs-header">
+            <div>
+              <div class="azs-title">AI가 분석할 광고 영역을 선택해 주세요</div>
+              <div class="azs-sub">리사이즈할 배너의 가로, 세로 비율에 맞는 배너를 선택해 주세요.</div>
+            </div>
+            <button v-if="detectedArtboards.length > 0" class="azs-select-all"
+              @click="toggleAllArtboards">
+              {{ selectedArtboardIds.length === detectedArtboards.length ? '전체 해제' : '전체 선택' }}
+            </button>
+          </div>
+
+          <!-- 분석 중 skeleton -->
+          <div v-if="psdLayerAnalyzing" class="azs-cards">
+            <div v-for="i in 3" :key="i" class="azs-card azs-card-skeleton">
+              <div class="azs-thumb-skeleton" />
+              <div class="azs-skeleton-line" style="width:60%;margin-top:8px" />
+              <div class="azs-skeleton-line" style="width:40%;margin-top:4px" />
+            </div>
+          </div>
+
+          <!-- 카드 목록 -->
+          <div v-else class="azs-cards">
+            <div v-for="ab in detectedArtboards" :key="ab.id"
+                 class="azs-card"
+                 :class="[
+                   { 'azs-selected': selectedArtboardIds.includes(ab.id) },
+                   'azs-' + ab.artboardType
+                 ]"
+                 @click="toggleArtboard(ab.id)">
+              <div class="azs-thumb-wrap">
+                <img v-if="ab.thumbnail" :src="ab.thumbnail" class="azs-thumb" :alt="ab.name" />
+                <div v-else class="azs-thumb-placeholder">
+                  {{ ab.width }}×{{ ab.height }}
+                </div>
+              </div>
+              <div class="azs-card-body">
+                <div class="azs-type-badge" :class="'azst-' + ab.artboardType">
+                  {{ artboardTypeLabel(ab.artboardType) }}
+                </div>
+                <div class="azs-card-name">{{ ab.name }}</div>
+                <div class="azs-card-size">{{ ab.width }}×{{ ab.height }}</div>
+              </div>
+              <div class="azs-check" :class="{ 'azs-checked': selectedArtboardIds.includes(ab.id) }">
+                <span v-if="selectedArtboardIds.includes(ab.id)">✓</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 부족한 비율 경고 -->
+          <div v-if="!psdLayerAnalyzing && missingRatioWarning" class="azs-warn">
+            ⚠ {{ missingRatioWarning }}
+          </div>
+        </div>
+
         <!-- Empty -->
         <div v-if="selectedSpecIds.length === 0" class="empty-hint">
           <div class="empty-icon">☰</div>
@@ -462,6 +518,11 @@ const aiAnalysis   = ref(null)
 const aiApplied    = ref(false)
 const psdLayerAnalyzing = ref(false)
 const psdLayerAnalysis  = ref(null)
+const psdCanvas         = ref(null)   // ag-psd 렌더링된 캔버스 (아트보드 썸네일용)
+const psdNativeW        = ref(0)
+const psdNativeH        = ref(0)
+const detectedArtboards = ref([])     // {id, name, width, height, artboardType, thumbnail}
+const selectedArtboardIds = ref([])   // 사용자가 선택한 아트보드 ID 목록
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
@@ -678,6 +739,8 @@ function clearFile() {
   previewUrl.value = null; previewError.value = false; previewSize.value = ''
   aiAnalysis.value = null; aiApplied.value = false
   psdLayerAnalysis.value = null; psdLayerAnalyzing.value = false
+  psdCanvas.value = null; psdNativeW.value = 0; psdNativeH.value = 0
+  detectedArtboards.value = []; selectedArtboardIds.value = []
   psdMode.value = 'artboard-first'
 }
 
@@ -717,8 +780,15 @@ async function loadPreview(file) {
       const buf = await file.arrayBuffer()
       const psd = readPsd(buf, { skipLayerImageData: true })
       previewSize.value = `${psd.width}×${psd.height}px`
-      if (psd.canvas) previewUrl.value = psd.canvas.toDataURL('image/png')
-      else previewError.value = true
+      if (psd.canvas) {
+        previewUrl.value = psd.canvas.toDataURL('image/png')
+        psdCanvas.value = psd.canvas
+        psdNativeW.value = psd.width
+        psdNativeH.value = psd.height
+        tryGenerateArtboardThumbnails()
+      } else {
+        previewError.value = true
+      }
     } else {
       const url = URL.createObjectURL(file)
       previewUrl.value = url
@@ -743,12 +813,73 @@ async function runPsdLayerAnalyze(file) {
     if (data.layerReadable === false || data.layerReflowAvailable === false) {
       if (psdMode.value === 'layer-reflow') psdMode.value = 'artboard-first'
     }
+    tryGenerateArtboardThumbnails()
   } catch (e) {
     psdLayerAnalysis.value = { layerReadable: null, layerReflowAvailable: null }
   } finally {
     psdLayerAnalyzing.value = false
   }
 }
+
+function tryGenerateArtboardThumbnails() {
+  const canvas = psdCanvas.value
+  const artboards = psdLayerAnalysis.value?.artboards
+  if (!canvas || !artboards?.length) return
+
+  const MAX_THUMB = 240
+  const result = artboards
+    .filter(ab => ab.artboardType !== 'full-canvas')
+    .map(ab => {
+      let thumbnail = null
+      try {
+        const scale = Math.min(MAX_THUMB / ab.width, MAX_THUMB / ab.height)
+        const tw = Math.max(1, Math.round(ab.width * scale))
+        const th = Math.max(1, Math.round(ab.height * scale))
+        const offscreen = document.createElement('canvas')
+        offscreen.width = tw
+        offscreen.height = th
+        const ctx = offscreen.getContext('2d')
+        ctx.drawImage(canvas, ab.x, ab.y, ab.width, ab.height, 0, 0, tw, th)
+        thumbnail = offscreen.toDataURL('image/jpeg', 0.82)
+      } catch (_) {}
+      return { ...ab, thumbnail }
+    })
+
+  detectedArtboards.value = result
+  selectedArtboardIds.value = result.map(ab => ab.id)
+}
+
+const ARTBOARD_TYPE_LABELS_KO = {
+  square: '정방형', vertical: '세로형', horizontal: '가로형',
+  custom: '커스텀', 'full-canvas': '전체 캔버스', unknown: '미분류',
+}
+function artboardTypeLabel(t) { return ARTBOARD_TYPE_LABELS_KO[t] ?? (t || '') }
+
+function toggleArtboard(id) {
+  const idx = selectedArtboardIds.value.indexOf(id)
+  if (idx >= 0) selectedArtboardIds.value.splice(idx, 1)
+  else selectedArtboardIds.value.push(id)
+}
+function toggleAllArtboards() {
+  if (selectedArtboardIds.value.length === detectedArtboards.value.length) {
+    selectedArtboardIds.value = []
+  } else {
+    selectedArtboardIds.value = detectedArtboards.value.map(ab => ab.id)
+  }
+}
+
+const missingRatioWarning = computed(() => {
+  if (!detectedArtboards.value.length) return ''
+  const TYPE_LABELS = { square: '정방형', vertical: '세로형', horizontal: '가로형' }
+  const selected = detectedArtboards.value.filter(ab => selectedArtboardIds.value.includes(ab.id))
+  const detectedSet = new Set(selected.map(ab => ab.artboardType).filter(t => TYPE_LABELS[t]))
+  const missing = Object.keys(TYPE_LABELS).filter(t => !detectedSet.has(t))
+  if (!missing.length) return ''
+  const detectedLabels = [...detectedSet].map(t => TYPE_LABELS[t])
+  const missingLabels = missing.map(t => TYPE_LABELS[t])
+  if (!detectedLabels.length) return `감지된 비율이 없습니다. 전체 PSD로 처리됩니다.`
+  return `${detectedLabels.join('/')}만 감지되었습니다. ${missingLabels.join('/')} 결과는 자동 리사이징되며 품질이 낮을 수 있습니다.`
+})
 
 function onInputChange(e) {
   const f = e.target.files?.[0]
@@ -780,6 +911,9 @@ async function submit() {
   fd.append('outputFormat', form.outputFormat)
   if (isPsdFile.value) {
     fd.append('psdMode', psdMode.value || 'artboard-first')
+    if (selectedArtboardIds.value.length > 0) {
+      selectedArtboardIds.value.forEach(id => fd.append('selectedArtboardIds', id))
+    }
   }
   if (aiAnalysis.value?.id) {
     fd.append('aiAnalysisId', aiAnalysis.value.id)
@@ -869,6 +1003,102 @@ onMounted(async () => {
 .file-size { font-size: 11px; color: #8B95A1; margin-top: 1px; }
 .file-change { background: none; border: 1px solid #E5E8EB; border-radius: 6px; font-size: 11px; color: #6B7684; padding: 3px 8px; cursor: pointer; font-family: inherit; }
 .file-change:hover { border-color: #7C3AED; color: #7C3AED; }
+
+/* ── PSD 아트보드 선택 섹션 ── */
+.azs-section {
+  margin: 0 0 24px;
+  padding: 20px 24px;
+  background: #F9FAFB;
+  border-radius: 14px;
+  border: 1px solid #E5E8EB;
+}
+.azs-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.azs-title { font-size: 15px; font-weight: 700; color: #1A1D27; margin-bottom: 3px; }
+.azs-sub   { font-size: 12px; color: #6B7684; }
+.azs-select-all {
+  font-size: 11px; font-weight: 600; color: #7C3AED;
+  background: none; border: 1px solid #DDD6FE; border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; white-space: nowrap; font-family: inherit;
+  flex-shrink: 0; margin-top: 2px;
+}
+.azs-select-all:hover { background: #F5F3FF; }
+.azs-cards {
+  display: flex; flex-wrap: wrap; gap: 12px;
+}
+.azs-card {
+  position: relative; cursor: pointer;
+  border: 2px solid #E5E8EB; border-radius: 12px;
+  background: #fff; overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  flex: 0 0 calc(33.333% - 8px);
+  min-width: 120px;
+  display: flex; flex-direction: column;
+}
+.azs-card:hover { border-color: #C4B5FD; box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
+.azs-selected { border-color: #7C3AED !important; box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important; }
+.azs-thumb-wrap {
+  width: 100%; aspect-ratio: var(--thumb-ratio, 1/1);
+  overflow: hidden; background: #F3F4F6; display: flex; align-items: center; justify-content: center;
+}
+.azs-square    .azs-thumb-wrap { aspect-ratio: 1/1; }
+.azs-vertical  .azs-thumb-wrap { aspect-ratio: 1/2.5; }
+.azs-horizontal .azs-thumb-wrap { aspect-ratio: 4/1; }
+.azs-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.azs-thumb-placeholder {
+  font-size: 11px; color: #9CA3AF; font-weight: 600; padding: 8px;
+}
+.azs-card-body { padding: 8px 10px 10px; }
+.azs-card-name { font-size: 11px; color: #374151; font-weight: 500; margin: 4px 0 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.azs-card-size { font-size: 10px; color: #9CA3AF; }
+.azs-type-badge {
+  display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px;
+  border-radius: 4px; margin-bottom: 2px;
+}
+.azst-square     { background: #ECFDF5; color: #065F46; }
+.azst-vertical   { background: #EFF6FF; color: #1E40AF; }
+.azst-horizontal { background: #FFFBEB; color: #92400E; }
+.azst-custom, .azst-unknown { background: #F3F4F6; color: #6B7684; }
+.azs-check {
+  position: absolute; top: 6px; right: 6px;
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid #D1D5DB; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff;
+  transition: background 0.15s, border-color 0.15s;
+}
+.azs-checked { background: #7C3AED !important; border-color: #7C3AED !important; }
+.azs-warn {
+  margin-top: 12px; padding: 10px 12px;
+  background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px;
+  font-size: 12px; color: #92400E; line-height: 1.5;
+}
+/* skeleton */
+.azs-card-skeleton { pointer-events: none; }
+.azs-thumb-skeleton {
+  width: 100%; aspect-ratio: 1/1; background: linear-gradient(90deg,#F3F4F6 25%,#E5E7EB 50%,#F3F4F6 75%);
+  background-size: 200% 100%; animation: azs-shimmer 1.4s infinite;
+}
+.azs-skeleton-line {
+  height: 10px; border-radius: 5px; margin: 0 10px;
+  background: linear-gradient(90deg,#F3F4F6 25%,#E5E7EB 50%,#F3F4F6 75%);
+  background-size: 200% 100%; animation: azs-shimmer 1.4s infinite;
+}
+@keyframes azs-shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+@media (prefers-color-scheme: dark) {
+  .azs-section { background: #1A1D27; border-color: #2D3142; }
+  .azs-title { color: #F9FAFB; }
+  .azs-sub { color: #9CA3AF; }
+  .azs-card { background: #252836; border-color: #374151; }
+  .azs-card:hover { border-color: #7C3AED; }
+  .azs-thumb-wrap { background: #1F2937; }
+  .azs-card-name { color: #E5E7EB; }
+  .azs-warn { background: #451A03; border-color: #92400E; color: #FCD34D; }
+  .azs-thumb-skeleton,.azs-skeleton-line { background: linear-gradient(90deg,#1F2937 25%,#374151 50%,#1F2937 75%); background-size:200% 100%; }
+}
 
 /* PSD 처리 방식 */
 .psd-mode-section { margin: 10px 0 8px; }

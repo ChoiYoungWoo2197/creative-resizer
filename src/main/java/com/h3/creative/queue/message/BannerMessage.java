@@ -23,4 +23,5 @@ public class BannerMessage {
     private String outputFormat;
     private String sourceType;
     private String psdMode;
+    private List<String> selectedArtboardIds;
 }
