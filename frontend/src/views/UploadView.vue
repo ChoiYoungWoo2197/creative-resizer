@@ -557,7 +557,6 @@ function selectMaterialType(type) {
 
 function selectStrength(value) {
   form.smartFitStrength = value
-  materialType.value = ''
 }
 
 watch(() => form.resizeMode, () => { materialType.value = '' })
