@@ -14,6 +14,27 @@ ARTBOARD_KEYWORDS = [
 
 
 def analyze_psd_file(file_path: str) -> dict:
+    try:
+        return _analyze_psd_file_inner(file_path)
+    except Exception as e:
+        print(f"[PSD] analyze_psd_file unexpected error: {e}")
+        return {
+            "width": 0,
+            "height": 0,
+            "hasArtboards": False,
+            "artboards": [],
+            "layers": [],
+            "layerReadable": False,
+            "layerCount": 0,
+            "layerReadError": str(e),
+            "layerReadErrorCode": "unexpected_error",
+            "layerReflowAvailable": False,
+            "psdParserEngine": "unknown",
+            "psdCompatPatched": False,
+        }
+
+
+def _analyze_psd_file_inner(file_path: str) -> dict:
     psd, open_meta = open_psd_safe_with_patch(file_path)
 
     layer_readable = open_meta["success"]

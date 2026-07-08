@@ -288,13 +288,14 @@ def is_wide_banner_case(src_w: int, src_h: int, dst_w: int, dst_h: int) -> bool:
 
 def _wide_banner_metrics(src_w: int, src_h: int, dst_w: int, dst_h: int, actual_scale: float) -> dict:
     contain_scale = min(dst_w / src_w, dst_h / src_h)
-    contain_w = int(src_w * contain_scale)
-    contain_h = int(src_h * contain_scale)
     total_area = dst_w * dst_h
-    blur_area_ratio = max(0.0, (total_area - contain_w * contain_h) / total_area)
 
     actual_w = int(src_w * actual_scale)
     actual_h = int(src_h * actual_scale)
+    # blurAreaRatio: actualScale 기준으로 전경이 채우지 못한 면적 비율
+    fg_visible_w = min(actual_w, dst_w)
+    fg_visible_h = min(actual_h, dst_h)
+    blur_area_ratio = max(0.0, (total_area - fg_visible_w * fg_visible_h) / total_area)
     crop_w = max(0, actual_w - dst_w)
     crop_h = max(0, actual_h - dst_h)
     crop_ratio = min(1.0, (crop_w / max(actual_w, 1) + crop_h / max(actual_h, 1)) / 2)

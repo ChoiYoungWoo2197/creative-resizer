@@ -1,7 +1,6 @@
 """4차-5: PSD 레이어 파서.
 visible layer 순회 → bbox / opacity / depth / preview PNG 추출.
 """
-from PIL import Image
 import os
 
 
@@ -16,8 +15,21 @@ def _detect_layer_type(layer) -> str:
     return "pixel"
 
 
+def _collect_descendant_ids(layer) -> set:
+    """그룹 레이어의 모든 하위 자손 id() 집합 반환."""
+    ids = set()
+    try:
+        for child in layer:
+            ids.add(id(child))
+            ids.update(_collect_descendant_ids(child))
+    except Exception:
+        pass
+    return ids
+
+
 def parse_psd_layers(psd, job_dir: str) -> list:
     """PSD 오브젝트에서 visible 레이어 목록 추출.
+    그룹 레이어가 preview 렌더에 성공하면 그 자손은 건너뜀 (중복 합성 방지).
     반환: list of layer_item dict (직렬화 가능 + _layer_obj 내부 키 포함)
     """
     layer_dir = os.path.join(job_dir, "layers")
@@ -26,10 +38,15 @@ def parse_psd_layers(psd, job_dir: str) -> list:
     canvas_w = psd.width
     canvas_h = psd.height
     items = []
+    covered_ids: set = set()  # 이미 그룹으로 커버된 자손 layer id()들
 
     for idx, layer in enumerate(psd.descendants()):
         try:
             if not layer.is_visible():
+                continue
+
+            # 부모 그룹이 이미 렌더되어 커버됨 → 자손 건너뜀
+            if id(layer) in covered_ids:
                 continue
 
             lx = int(layer.left)
@@ -83,6 +100,11 @@ def parse_psd_layers(psd, job_dir: str) -> list:
                 "canvasHeight": canvas_h,
                 "_layer_obj":   layer,   # compositor 전용 (직렬화 제외)
             })
+
+            # 그룹이 preview 렌더에 성공했으면 모든 자손을 covered로 등록
+            if layer_type == "group" and preview_path is not None:
+                covered_ids.update(_collect_descendant_ids(layer))
+
         except Exception as e:
             print(f"[LayerParser] skip idx={idx}: {e}")
 

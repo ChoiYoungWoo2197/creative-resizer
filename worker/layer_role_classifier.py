@@ -25,8 +25,8 @@ PRIORITY_MAP = {
     "background": "required",
     "main_image": "required",
     "title":      "required",
-    "cta":        "required",
-    "logo":       "required",
+    "cta":        "important",
+    "logo":       "important",
     "body_text":  "important",
     "badge":      "important",
     "decorative": "optional",
@@ -99,7 +99,7 @@ def classify_layers(layers: list) -> list:
     # 휴리스틱 보완: unknown 중 텍스트 레이어 → title (없는 경우)
     has_title = any(l["role"] == "title" for l in result)
     if not has_title:
-        unknown_text = [l for l in result if l["role"] == "unknown" and l["type"] == "text"]
+        unknown_text = [l for l in result if l["role"] == "unknown" and l["type"] in ("text", "type")]
         if unknown_text:
             biggest_text = max(unknown_text, key=lambda l: l["bbox"]["width"] * l["bbox"]["height"])
             biggest_text["role"] = "title"

@@ -8,8 +8,8 @@ SAFE_ZONES = {
     (1250, 560): {"top": 50, "right": 50, "bottom": 35, "left": 240},
 }
 
-REQUIRED_ROLES = {"title", "main_image", "cta", "logo"}
-IMPORTANT_ROLES = {"body_text", "badge"}
+REQUIRED_ROLES = {"title", "main_image"}
+IMPORTANT_ROLES = {"cta", "logo", "body_text", "badge"}
 
 # 1250×560 레이아웃 후보 (§8 GPT 문서)
 _LAYOUTS_1250x560 = {
@@ -67,7 +67,8 @@ def _safe_zone_pass(placements: list, safe_zone: dict, canvas_w: int, canvas_h: 
     sw = canvas_w - safe_zone["left"] - safe_zone["right"]
     sh = canvas_h - safe_zone["top"] - safe_zone["bottom"]
     for p in placements:
-        if p["role"] not in REQUIRED_ROLES or p["role"] == "background":
+        # main_image(제품 이미지)는 safe zone 바깥으로 확장 허용
+        if p["role"] not in REQUIRED_ROLES or p["role"] in ("background", "main_image"):
             continue
         x, y, w, h = p["x"], p["y"], p["w"], p["h"]
         ox = max(0, min(x + w, sx + sw) - max(x, sx))
