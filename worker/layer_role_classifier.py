@@ -43,7 +43,7 @@ def classify_role_by_name(name: str) -> str:
 
 
 def classify_role_by_position(bbox: dict, canvas_w: int, canvas_h: int) -> str | None:
-    """위치/크기 기반 보완 룰."""
+    """위치/크기/비율 기반 보완 룰."""
     x = bbox.get("x", 0)
     y = bbox.get("y", 0)
     w = bbox.get("width", 0)
@@ -52,17 +52,38 @@ def classify_role_by_position(bbox: dict, canvas_w: int, canvas_h: int) -> str |
         return None
 
     area_ratio = (w * h) / max(canvas_w * canvas_h, 1)
-    cy = (y + h / 2) / max(canvas_h, 1)
+    cx = (x + w / 2) / max(canvas_w, 1)  # 수평 중심 비율
+    cy = (y + h / 2) / max(canvas_h, 1)  # 수직 중심 비율
+    aspect = w / max(h, 1)               # 가로/세로 비율
+    width_ratio  = w / max(canvas_w, 1)  # 캔버스 대비 너비
+    height_ratio = h / max(canvas_h, 1)  # 캔버스 대비 높이
 
-    if area_ratio >= 0.80:
+    # 전체 배경 (면적 70% 이상 or 가로세로 거의 캔버스 전체)
+    if area_ratio >= 0.70:
         return "background"
-    if area_ratio >= 0.15 and w / max(h, 1) < 3.0:
-        return "main_image"
-    if cy < 0.25 and w >= canvas_w * 0.05 and h <= canvas_h * 0.15:
+
+    # 상단 15% 이내 소형 로고
+    if cy < 0.15 and area_ratio < 0.10 and aspect >= 0.5:
         return "logo"
-    if cy >= 0.75 and area_ratio <= 0.15:
+
+    # 상단 35% 이내 가로형 텍스트 → title
+    if cy < 0.35 and aspect >= 1.5 and width_ratio >= 0.30 and height_ratio <= 0.25:
+        return "title"
+
+    # 하단 25% 이내 가로형 소형 → cta (버튼/행동 유도)
+    if cy >= 0.75 and aspect >= 1.2 and area_ratio <= 0.15:
         return "cta"
-    if area_ratio >= 0.40:
+
+    # 하단 35% 이내 얇은 텍스트 → body_text
+    if cy >= 0.65 and aspect >= 2.0 and height_ratio <= 0.15:
+        return "body_text"
+
+    # 중앙 영역 대형 이미지형 (비율 1:3 미만, 면적 15% 이상)
+    if area_ratio >= 0.15 and aspect < 3.0 and 0.20 <= cy <= 0.80:
+        return "main_image"
+
+    # 면적 35% 이상인 경우 main_image 추정
+    if area_ratio >= 0.35:
         return "main_image"
 
     return None

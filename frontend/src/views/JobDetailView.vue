@@ -64,6 +64,29 @@
         <div class="results-header">
           <span class="results-count">{{ job.results?.length || 0 }}개 배너 생성 완료</span>
         </div>
+
+        <!-- PSD 레이어 재배치 진단 패널 -->
+        <div v-if="job.psdAnalysis && job.psdAnalysis.layerReadable === true && job.psdAnalysis.layerReflowAvailable === false"
+             class="reflow-diagnostic-panel">
+          <div class="rdiag-title">⊘ 레이어 재배치 Beta 비활성화</div>
+          <div class="rdiag-row">
+            <span class="rdiag-label">감지된 역할</span>
+            <span class="rdiag-value">
+              <template v-if="job.psdAnalysis.reflowDetectedRoles?.length">
+                <span v-for="r in job.psdAnalysis.reflowDetectedRoles" :key="r" class="rdiag-role-tag">{{ r }}</span>
+              </template>
+              <span v-else class="rdiag-none">없음</span>
+            </span>
+          </div>
+          <div class="rdiag-row" v-if="job.psdAnalysis.reflowMissingRoles?.length">
+            <span class="rdiag-label">누락된 역할</span>
+            <span class="rdiag-value rdiag-missing">
+              <span v-for="m in job.psdAnalysis.reflowMissingRoles" :key="m" class="rdiag-role-tag missing">{{ m }}</span>
+            </span>
+          </div>
+          <div class="rdiag-hint">레이어명에 title·main_image·cta 관련 키워드 추가 또는 레이어 구조 확인이 필요합니다.</div>
+        </div>
+
         <div class="img-grid">
           <div class="img-card" v-for="r in job.results" :key="r.fileName" :class="{ invalid: r.valid === false }">
             <div class="img-thumb" :style="thumbStyle(r)">
@@ -931,6 +954,36 @@ onUnmounted(stopPolling)
   border-radius: 6px;
   padding: 2px 8px;
   display: inline-block;
+}
+
+/* 레이어 재배치 진단 패널 */
+.reflow-diagnostic-panel {
+  margin: 12px 0 8px;
+  padding: 10px 14px;
+  background: #FFF7ED; border: 1px solid #FED7AA;
+  border-radius: 8px; font-size: 12px;
+}
+.rdiag-title {
+  font-weight: 700; color: #9A3412; margin-bottom: 6px;
+}
+.rdiag-row {
+  display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px;
+}
+.rdiag-label {
+  font-weight: 600; color: #7C2D12; white-space: nowrap; min-width: 80px;
+}
+.rdiag-value { display: flex; flex-wrap: wrap; gap: 4px; }
+.rdiag-role-tag {
+  font-size: 11px; font-weight: 500;
+  background: #FEF3C7; color: #92400E;
+  border-radius: 4px; padding: 1px 6px;
+}
+.rdiag-role-tag.missing {
+  background: #FEE2E2; color: #991B1B;
+}
+.rdiag-none { color: #9CA3AF; font-style: italic; }
+.rdiag-hint {
+  margin-top: 6px; color: #78716C; font-size: 11px; line-height: 1.5;
 }
 
 /* 4차-4: Wide-Banner Smart-Fit */

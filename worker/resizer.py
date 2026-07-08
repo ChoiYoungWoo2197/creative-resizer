@@ -355,16 +355,36 @@ _WIDE_BANNER_ALLOWED = {
     "balanced": frozenset(["safe", "balanced", "fill"]),
     "fill":     frozenset(["safe", "balanced", "fill", "focus-crop"]),
 }
-_QUALITY_GATE_MIN    = 50.0   # 이 점수 미만은 best로 채택 불가
-_FOCUS_CROP_MIN      = 70.0   # focus-crop 허용 최소 점수
-_FOCUS_CROP_MAX_CROP = 0.15   # focus-crop 허용 최대 cropRatio
-_FOCUS_CROP_MAX_VCROP = 0.10  # focus-crop 허용 최대 verticalCropRatio
+_QUALITY_GATE_MIN     = 50.0   # 이 점수 미만은 best로 채택 불가
+_FOCUS_CROP_MIN       = 70.0   # focus-crop 허용 최소 점수
+_FOCUS_CROP_MAX_CROP  = 0.15   # focus-crop 허용 최대 cropRatio
+_FOCUS_CROP_MAX_VCROP = 0.10   # focus-crop 허용 최대 verticalCropRatio
+_SAFE_MODE_VCROP_MAX  = 0.02   # safe 모드: 상하 2% 초과 크롭 → 후보 탈락
 
 
-def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int,
+def _build_safe_contain(src: "Image.Image", dst_w: int, dst_h: int) -> "Image.Image":
+    """수직/수평 crop 없이 contain scale 배치. 배경은 gaussian blur (강도 높음).
+    품질 게이트 발동 또는 safe 후보 미생성 시 최후 보장용."""
+    from PIL import ImageFilter, ImageEnhance
+    sw, sh = src.size
+    scale = min(dst_w / sw, dst_h / sh)
+    nw, nh = int(sw * scale), int(sh * scale)
+    fg = src.resize((nw, nh), Image.LANCZOS)
+    bg = resize_cover(src, dst_w, dst_h)
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=45))
+    bg = ImageEnhance.Brightness(bg).enhance(0.88)
+    bg = ImageEnhance.Contrast(bg).enhance(0.95)
+    canvas = bg.convert("RGBA")
+    ox, oy = (dst_w - nw) // 2, (dst_h - nh) // 2
+    canvas.alpha_composite(fg, (max(ox, 0), max(oy, 0)))
+    return canvas
+
+
+def resize_wide_banner_smart_fit(img: "Image.Image", dst_w: int, dst_h: int,
                                   smart_fit_strength: str = "balanced") -> tuple:
     """정사각형/세로형 → 가로형 전용 smart-fit.
     smartFitStrength 기준으로 허용 후보를 제한하고 품질 게이트(50점)를 적용.
+    safe 모드: 수직 crop 2% 초과 시 후보 탈락 (텍스트 완전 보존).
     반환: (best_image, enhance_meta_dict)
     """
     from PIL import ImageFilter, ImageEnhance
@@ -413,6 +433,12 @@ def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int,
             m = _wide_banner_metrics(src_w, src_h, dst_w, dst_h, scale)
             score = _wide_banner_score(m)
 
+            # safe 모드: 수직 crop 완전 금지 (2% 초과 시 탈락)
+            if smart_fit_strength == "safe" and m["verticalCropRatio"] > _SAFE_MODE_VCROP_MAX:
+                print(f"[WideBanner] {ctype} excluded (safe+text protection):"
+                      f" vcrop={m['verticalCropRatio']:.3f} > {_SAFE_MODE_VCROP_MAX}")
+                continue
+
             # focus-crop 강화 제한: 점수 낮거나 상하 잘림 크면 탈락
             if ctype == "focus-crop" and (
                 score < _FOCUS_CROP_MIN
@@ -428,13 +454,15 @@ def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int,
         except Exception as e:
             print(f"[WideBanner] candidate {ctype} failed: {e}")
 
+    # 후보가 없으면 _build_safe_contain으로 무조건 보장
     if not candidates:
-        fallback = resize_smart_fit(img, dst_w, dst_h, "safe", "center")
-        return fallback, {
-            "resizeStrategy": "smart-fit", "candidateType": "safe",
-            "candidateScore": None, "blurAreaRatio": None,
-            "cropRatio": None, "subjectScale": None,
-            "qualityGate": False, "qualityLabel": None,
+        preserve_img = _build_safe_contain(src, dst_w, dst_h)
+        m0 = _wide_banner_metrics(src_w, src_h, dst_w, dst_h, contain_scale)
+        return preserve_img, {
+            "resizeStrategy": "wide-banner-smart-fit", "candidateType": "safe",
+            "candidateScore": _wide_banner_score(m0), "blurAreaRatio": m0["blurAreaRatio"],
+            "cropRatio": m0["cropRatio"], "subjectScale": m0["subjectScale"],
+            "qualityGate": True, "qualityLabel": "품질 낮음",
         }
 
     # 품질 게이트: 50점 이상 후보만 best 대상
@@ -443,10 +471,19 @@ def resize_wide_banner_smart_fit(img: Image.Image, dst_w: int, dst_h: int,
     if good:
         best = max(good, key=lambda c: c["score"])
     else:
-        # 모든 후보가 50점 미만 → safe 후보로 fallback
+        # 모든 후보가 50점 미만 → _build_safe_contain으로 텍스트 완전 보존
         quality_gate_triggered = True
-        safe_list = [c for c in candidates if c["type"] == "safe"]
-        best = safe_list[0] if safe_list else max(candidates, key=lambda c: c["score"])
+        preserve_img = _build_safe_contain(src, dst_w, dst_h)
+        safe_m = _wide_banner_metrics(src_w, src_h, dst_w, dst_h, contain_scale)
+        safe_score = _wide_banner_score(safe_m)
+        print(f"[WideBanner] quality gate: all candidates < {_QUALITY_GATE_MIN}pt"
+              f" → preserve-all (safe contain, score={safe_score:.1f})")
+        return preserve_img, {
+            "resizeStrategy": "wide-banner-smart-fit", "candidateType": "safe",
+            "candidateScore": safe_score, "blurAreaRatio": safe_m["blurAreaRatio"],
+            "cropRatio": safe_m["cropRatio"], "subjectScale": safe_m["subjectScale"],
+            "qualityGate": True, "qualityLabel": "품질 낮음",
+        }
 
     score_val = best["score"]
     if score_val >= 70:

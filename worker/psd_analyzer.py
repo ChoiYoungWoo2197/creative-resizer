@@ -69,6 +69,7 @@ def _analyze_psd_file_inner(file_path: str) -> dict:
     layers = _extract_layers(psd)
     layer_count = len(layers)
     layer_reflow_available = _check_layer_reflow_available(layers)
+    reflow_diag = get_reflow_diagnostic(layers)
 
     return {
         "width": psd.width,
@@ -81,6 +82,8 @@ def _analyze_psd_file_inner(file_path: str) -> dict:
         "layerReadError": None,
         "layerReadErrorCode": None,
         "layerReflowAvailable": layer_reflow_available,
+        "reflowDetectedRoles": reflow_diag["detectedRoles"],
+        "reflowMissingRoles":  reflow_diag["missingRoles"],
         "psdParserEngine": psd_parser_engine,
         "psdCompatPatched": psd_compat_patched,
     }
@@ -209,12 +212,39 @@ def _infer_layer_role(name: str) -> str:
 
 
 def _check_layer_reflow_available(layers: list) -> bool:
-    """레이어 재배치 가능 여부: headline + (visual/product/person 또는 cta) 필요."""
+    """레이어 재배치 가능 여부. 구 role명(headline/visual) + 신 role명(title/main_image) 모두 인정."""
     roles = set(l.get("role") for l in layers)
-    has_headline = "headline" in roles
-    has_visual = any(r in roles for r in ["visual", "product", "person"])
+    has_headline = any(r in roles for r in ["headline", "title"])
+    has_visual = any(r in roles for r in ["visual", "product", "person", "main_image", "main"])
     has_cta = "cta" in roles
     return has_headline and (has_visual or has_cta)
+
+
+def get_reflow_diagnostic(layers: list) -> dict:
+    """레이어 재배치 비활성화 원인 진단. 감지된 role 목록과 누락 role 반환."""
+    roles = set(l.get("role") for l in layers)
+    roles.discard("unknown")
+    detected = sorted(roles)
+
+    required_old = {"headline", "visual"}  # 구 시스템
+    required_new = {"title", "main_image"}  # 신 시스템
+    has_headline = any(r in roles for r in ["headline", "title"])
+    has_visual   = any(r in roles for r in ["visual", "product", "person", "main_image", "main"])
+    has_cta      = "cta" in roles
+
+    missing = []
+    if not has_headline:
+        missing.append("title(메인카피)")
+    if not has_visual:
+        missing.append("main_image(제품/인물)")
+    if not has_cta:
+        missing.append("cta(행동버튼)")
+
+    return {
+        "detectedRoles": detected,
+        "missingRoles":  missing,
+        "available":     has_headline and (has_visual or has_cta),
+    }
 
 
 def select_best_artboard(artboards: list, target_w: int, target_h: int) -> dict | None:

@@ -18,6 +18,8 @@ public class PsdAnalysis {
     private String layerReadError;
     private String layerReadErrorCode;   // PSD_VERSION_8_UNSUPPORTED | PSD_OPEN_FAILED
     private Boolean layerReflowAvailable;
+    private List<String> reflowDetectedRoles;  // 감지된 role 목록
+    private List<String> reflowMissingRoles;   // 누락된 required role 목록
     private String psdParserEngine;      // psd-tools | psd-tools-patched
     private Boolean psdCompatPatched;
 }

@@ -22,6 +22,8 @@ public class PsdAnalyzeResponse {
     private String layerReadError;
     private String layerReadErrorCode;
     private Boolean layerReflowAvailable;
+    private List<String> reflowDetectedRoles;
+    private List<String> reflowMissingRoles;
     private String psdParserEngine;
     private Boolean psdCompatPatched;
 
@@ -37,6 +39,8 @@ public class PsdAnalyzeResponse {
         analysis.setLayerReadError(layerReadError);
         analysis.setLayerReadErrorCode(layerReadErrorCode);
         analysis.setLayerReflowAvailable(layerReflowAvailable);
+        analysis.setReflowDetectedRoles(reflowDetectedRoles);
+        analysis.setReflowMissingRoles(reflowMissingRoles);
         analysis.setPsdParserEngine(layerReadable != null && layerReadable && Boolean.TRUE.equals(psdCompatPatched)
                 ? "psd-tools-patched" : psdParserEngine);
         analysis.setPsdCompatPatched(psdCompatPatched);
