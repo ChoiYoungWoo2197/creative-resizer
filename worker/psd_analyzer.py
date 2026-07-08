@@ -13,7 +13,17 @@ ARTBOARD_KEYWORDS = [
 
 
 def analyze_psd_file(file_path: str) -> dict:
-    psd = PSDImage.open(file_path)
+    try:
+        psd = PSDImage.open(file_path)
+    except Exception as e:
+        print(f"[PSD] psd-tools open failed ({e}), using full_canvas fallback")
+        return {
+            "width": 0,
+            "height": 0,
+            "hasArtboards": False,
+            "artboards": [],
+            "layers": [],
+        }
     artboards = _extract_artboards(psd)
     if not artboards:
         artboards = _infer_artboards_from_groups(psd)
