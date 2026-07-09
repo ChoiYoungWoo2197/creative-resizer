@@ -164,6 +164,9 @@ public class BannerService {
                         .slug(s.getSlug() != null ? s.getSlug() : "")
                         .width(s.getWidth())
                         .height(s.getHeight())
+                        .safeZone(s.getSafeZone())
+                        .textSafeZone(s.getTextSafeZone())
+                        .ctaSafeZone(s.getCtaSafeZone())
                         .build())
                 .toList();
 
@@ -266,6 +269,7 @@ public class BannerService {
                         br.setBackgroundMode(r.getBackgroundMode());
                         br.setCandidateCount(r.getCandidateCount());
                         br.setSelectedCandidateId(r.getSelectedCandidateId());
+                        br.setSafeZoneViolations(r.getSafeZoneViolations());
                         return br;
                     }).toList()
                     : List.of();

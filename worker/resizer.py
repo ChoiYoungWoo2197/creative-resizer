@@ -1087,6 +1087,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         from object_source_resolver import resolve_sources
         from object_reflow_engine import compute_layout
         from object_reflow_compositor import composite_objects
+        from safe_zone import normalize_safe_zone, check_safe_zone_violations
 
         ai_objects = (object_analysis or {}).get("objects", [])
         artboard_box = (object_analysis or {}).get("artboardBox")
@@ -1137,6 +1138,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             obj_reflow_error = None
             obj_reflow_mode = None
             fallback_img = None
+            obj_sz_passed = None
+            obj_sz_violations = []
+            safe_zones = normalize_safe_zone(spec, w, h)
 
             print(f"[{job_id or 'job'}][ObjectReflow] spec={name} size={w}x{h}")
 
@@ -1144,6 +1148,16 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 try:
                     resolved = resolve_sources(ai_objects, psd_layers, artboard_img, artboard_box)
                     laid_out = compute_layout(ai_objects, w, h)
+
+                    # 4단계: safe zone 체크 — hard-fail 역할이 밖이면 candidate 탈락
+                    sz_result = check_safe_zone_violations(laid_out, w, h, safe_zones)
+                    obj_sz_passed = sz_result["passed"]
+                    obj_sz_violations = sz_result["safeZoneViolations"]
+                    if not sz_result["passed"]:
+                        raise ValueError(
+                            f"safe zone hard fail: {', '.join(sz_result['violations'])}"
+                        )
+
                     final_img, obj_meta = composite_objects(resolved, laid_out, w, h)
 
                     # sourceType 구성 요약
@@ -1232,7 +1246,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "candidateType": None, "candidateScore": None,
                 "blurAreaRatio": None, "cropRatio": None, "subjectScale": None,
                 "qualityGate": None, "qualityLabel": None,
-                "safeZonePass": obj_meta.get("objectSafeZonePass"),
+                "safeZonePass": obj_sz_passed,
+                "safeZoneViolations": obj_sz_violations,
                 "requiredLayerMissing": None,
                 "layerReflowAttempted": False,
                 "layerReflowSucceeded": False,
@@ -1397,6 +1412,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "qualityGate":          enhance_meta.get("qualityGate"),
                 "qualityLabel":         enhance_meta.get("qualityLabel"),
                 "safeZonePass":         safe_zone_pass,
+                "safeZoneViolations":   [],
                 "requiredLayerMissing": required_layer_missing,
                 # 1단계: 고품질 경로 메타
                 "renderMode": "psd_layer_reflow",
@@ -1579,6 +1595,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "qualityGate":          enhance_meta.get("qualityGate"),
                 "qualityLabel":         enhance_meta.get("qualityLabel"),
                 "safeZonePass":         None,
+                "safeZoneViolations":   [],
                 "requiredLayerMissing": None,
                 # 1단계: 고품질 경로 메타
                 "renderMode": "psd_artboard_first",
@@ -1659,6 +1676,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "qualityGate":          enhance_meta.get("qualityGate"),
             "qualityLabel":         enhance_meta.get("qualityLabel"),
             "safeZonePass":         None,
+            "safeZoneViolations":   [],
             "requiredLayerMissing": None,
             # 1단계: 고품질 경로 메타
             "renderMode": "flatten",

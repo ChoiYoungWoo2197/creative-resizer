@@ -19,4 +19,9 @@ public class BannerSpec {
     private String aspectRatio;
     private boolean active;
     private int sortOrder;
+
+    // 4단계: safe zone (픽셀 inset, optional — null이면 worker가 비율 기반 기본값 사용)
+    private java.util.Map<String, Integer> safeZone;
+    private java.util.Map<String, Integer> textSafeZone;
+    private java.util.Map<String, Integer> ctaSafeZone;
 }

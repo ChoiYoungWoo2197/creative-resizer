@@ -91,5 +91,8 @@ public class WorkerResponse {
         private String backgroundMode;
         private Integer candidateCount;
         private String selectedCandidateId;
+
+        // 4단계: safe zone 체크 결과
+        private java.util.List<java.util.Map<String, Object>> safeZoneViolations;
     }
 }
