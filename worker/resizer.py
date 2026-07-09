@@ -1084,10 +1084,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         import psd_tools
         import tempfile
         from psd_layer_parser import parse_psd_layers
-        from object_source_resolver import resolve_sources
-        from object_reflow_engine import compute_layout
-        from object_reflow_compositor import composite_objects
-        from safe_zone import normalize_safe_zone, check_safe_zone_violations
+        from creative_object_extractor import build_creative_object_set
+        from background_builder import build_background
+        from layout_compiler import compile_layout
+        from layout_compositor import composite_layout
+        from safe_zone import normalize_safe_zone
 
         ai_objects = (object_analysis or {}).get("objects", [])
         artboard_box = (object_analysis or {}).get("artboardBox")
@@ -1095,8 +1096,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         canvas_h = int((object_analysis or {}).get("canvasHeight") or 0)
 
         if not ai_objects:
-            print(f"[{job_id or 'job'}][ObjectReflow] AI 분석 없음 — artboard-first fallback 예정")
+            print(f"[{job_id or 'job'}][ObjectReflow] AI 분석 없음 — artboard smart-fit fallback 예정")
 
+        creative_object_set = None
         try:
             psd = psd_tools.PSDImage.open(psd_path)
             if canvas_w <= 0:
@@ -1117,10 +1119,20 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
 
             tmp_dir = tempfile.mkdtemp()
             psd_layers = parse_psd_layers(psd, tmp_dir)
+
+            # 6단계: CreativeObjectSet 빌드 (per-PSD 한 번)
+            asset_dir = os.path.join(output_dir, "assets")
+            creative_object_set = build_creative_object_set(
+                psd_path, psd_layers, object_analysis,
+                asset_dir, artboard_img, artboard_box, job_id
+            )
+            n_objs   = len(creative_object_set.get("objects", []))
+            n_assets = sum(1 for o in creative_object_set.get("objects", []) if o.get("imagePath"))
+            print(f"[{job_id or 'job'}][ObjectReflow] CreativeObjectSet: {n_objs} objs, {n_assets} assets")
         except Exception as e:
-            print(f"[ObjectReflow] PSD 로딩 실패, fallback: {e}")
-            psd_layers = []
+            print(f"[ObjectReflow] PSD 로딩/분석 실패, fallback: {e}")
             artboard_img = None
+            creative_object_set = None
 
         for spec in specs:
             media = spec["media"]
@@ -1136,53 +1148,61 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
 
             obj_reflow_succeeded = False
             obj_reflow_error = None
-            obj_reflow_mode = None
             fallback_img = None
             obj_sz_passed = None
             obj_sz_violations = []
+            bg_meta_out = {}
+            layout_meta_out = {}
+            comp_meta_out = {}
             safe_zones = normalize_safe_zone(spec, w, h)
 
             print(f"[{job_id or 'job'}][ObjectReflow] spec={name} size={w}x{h}")
 
-            if artboard_img and ai_objects:
+            # 6단계: background + layout candidates + composite 통합 경로
+            if artboard_img and creative_object_set and creative_object_set.get("objects"):
                 try:
-                    resolved = resolve_sources(ai_objects, psd_layers, artboard_img, artboard_box)
-                    laid_out = compute_layout(ai_objects, w, h)
+                    # 1. blur-free background
+                    bg_img, bg_meta_out = build_background(
+                        creative_object_set, artboard_img, w, h, output_dir, job_id
+                    )
 
-                    # 4단계: safe zone 체크 — hard-fail 역할이 밖이면 candidate 탈락
-                    sz_result = check_safe_zone_violations(laid_out, w, h, safe_zones)
-                    obj_sz_passed = sz_result["passed"]
-                    obj_sz_violations = sz_result["safeZoneViolations"]
-                    if not sz_result["passed"]:
+                    # 2. 5개 이상 layout candidates 생성·점수화
+                    layout_result = compile_layout(creative_object_set, w, h, safe_zones)
+                    layout_meta_out = layout_result.get("metadata", {})
+                    if layout_meta_out.get("fallbackUsed"):
+                        print(f"[{job_id or 'job'}][ObjectReflow] emergency layout spec={name}")
+
+                    # 3. z-order object asset compositing
+                    final_img, comp_meta_out = composite_layout(
+                        bg_img, bg_meta_out, layout_result,
+                        creative_object_set, w, h, output_dir, job_id
+                    )
+
+                    if comp_meta_out.get("missingRequiredAssets"):
                         raise ValueError(
-                            f"safe zone hard fail: {', '.join(sz_result['violations'])}"
+                            f"required asset missing: {comp_meta_out['missingRequiredAssets']}"
                         )
-
-                    final_img, obj_meta = composite_objects(resolved, laid_out, w, h)
-
-                    # sourceType 구성 요약
-                    source_types = {v["sourceType"] for v in resolved.values() if v["sourceType"] != "dropped"}
-                    if "layer_asset" in source_types:
-                        obj_reflow_mode = "layer_asset"
-                    elif "bbox_crop" in source_types:
-                        obj_reflow_mode = "bbox_crop"
-                    else:
-                        obj_reflow_mode = "flat_background"
 
                     if ext in ("jpg", "jpeg"):
                         final_img = final_img.convert("RGB")
                     final_img.save(out_path)
                     obj_reflow_succeeded = True
-                    print(f"[{job_id or 'job'}][ObjectReflow] success spec={name} size={w}x{h} mode={obj_reflow_mode}")
+                    obj_sz_passed = comp_meta_out.get("safeZonePassed")
+                    print(
+                        f"[{job_id or 'job'}][ObjectReflow] success spec={name} size={w}x{h} "
+                        f"candidate={layout_meta_out.get('selectedCandidateId')} "
+                        f"score={layout_meta_out.get('layoutScore')}"
+                    )
                 except Exception as e:
                     obj_reflow_error = str(e)
+                    obj_sz_passed = False
                     print(f"[{job_id or 'job'}][ObjectReflow] fallback spec={name} size={w}x{h} reason={e}")
 
             if not obj_reflow_succeeded:
-                # fallback: artboard_img 있으면 smart-fit, 없으면 flatten
+                # fallback: artboard_img → smart-fit
                 if artboard_img:
                     fallback_img = artboard_img
-                    obj_reflow_error = obj_reflow_error or "객체 분석 결과 없음"
+                    obj_reflow_error = obj_reflow_error or "creative_object_set 없음 또는 asset 추출 실패"
                 else:
                     import psd_analyzer
                     analysis_fb = psd_analyzer.analyze_psd_file(psd_path)
@@ -1199,13 +1219,6 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 if ext in ("jpg", "jpeg"):
                     resized = resized.convert("RGB")
                 resized.save(out_path)
-                obj_meta = {
-                    "usedObjectRoles": [],
-                    "missingObjectRoles": [o.get("role") for o in ai_objects],
-                    "cropFallbackRoles": [],
-                    "lowConfidenceRoles": [],
-                    "objectSafeZonePass": None,
-                }
 
             file_size = os.path.getsize(out_path)
             with Image.open(out_path) as check_img:
@@ -1226,8 +1239,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "validationMessage": validation_message,
                 "selectedArtboardId": None,
                 "selectedArtboardName": None,
-                "actualPsdRenderMode": "object-reflow" if obj_reflow_succeeded else "artboard",
-                "renderSource": "psd_object_reflow" if obj_reflow_succeeded else "psd_tools_composite",
+                "actualPsdRenderMode": "object-layout-reflow" if obj_reflow_succeeded else "artboard",
+                "renderSource": "psd_object_layout_reflow" if obj_reflow_succeeded else "psd_tools_composite",
                 "fallbackUsed": not obj_reflow_succeeded,
                 "fallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
                 "fallbackErrors": [],
@@ -1235,15 +1248,16 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "sourceHeight": artboard_img.height if artboard_img else 0,
                 "objectReflowAttempted": True,
                 "objectReflowSucceeded": obj_reflow_succeeded,
-                "objectReflowMode": obj_reflow_mode,
+                "objectReflowMode": layout_meta_out.get("selectedCandidateId") if obj_reflow_succeeded else None,
                 "objectReflowFallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
-                "usedObjectRoles": obj_meta.get("usedObjectRoles", []),
-                "missingObjectRoles": obj_meta.get("missingObjectRoles", []),
-                "cropFallbackRoles": obj_meta.get("cropFallbackRoles", []),
-                "lowConfidenceRoles": obj_meta.get("lowConfidenceRoles", []),
-                "objectSafeZonePass": obj_meta.get("objectSafeZonePass"),
-                "resizeStrategy": "psd-object-reflow",
-                "candidateType": None, "candidateScore": None,
+                "usedObjectRoles": comp_meta_out.get("renderedRoles", []) if obj_reflow_succeeded else [],
+                "missingObjectRoles": comp_meta_out.get("missingRequiredAssets", []) if obj_reflow_succeeded else [o.get("role") for o in ai_objects],
+                "cropFallbackRoles": [],
+                "lowConfidenceRoles": [],
+                "objectSafeZonePass": obj_sz_passed,
+                "resizeStrategy": "psd-object-layout-reflow" if obj_reflow_succeeded else "smart-fit",
+                "candidateType": None,
+                "candidateScore": layout_meta_out.get("layoutScore") if obj_reflow_succeeded else None,
                 "blurAreaRatio": None, "cropRatio": None, "subjectScale": None,
                 "qualityGate": None, "qualityLabel": None,
                 "safeZonePass": obj_sz_passed,
@@ -1256,14 +1270,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "layerReflowDetectedRoles": [],
                 "layerReflowTemplate": None,
                 "usedLayerRoles": [],
-                # 1단계: 고품질 경로 메타
-                "renderMode": "psd_object_reflow" if obj_reflow_succeeded else "psd_artboard_first",
+                # 1단계 + 6단계: 고품질 경로 메타
+                "renderMode": "object-layout-reflow" if obj_reflow_succeeded else "psd_artboard_first",
                 "objectReflowUsed": obj_reflow_succeeded,
                 "objectReflowFallbackUsed": not obj_reflow_succeeded,
-                "layoutScore": None,
-                "backgroundMode": obj_reflow_mode if obj_reflow_succeeded else None,
-                "candidateCount": 1 if obj_reflow_succeeded else 0,
-                "selectedCandidateId": "default" if obj_reflow_succeeded else None,
+                "layoutScore": layout_meta_out.get("layoutScore") if obj_reflow_succeeded else None,
+                "backgroundMode": bg_meta_out.get("backgroundMode") if obj_reflow_succeeded else None,
+                "candidateCount": layout_meta_out.get("candidateCount", 5) if obj_reflow_succeeded else 0,
+                "selectedCandidateId": layout_meta_out.get("selectedCandidateId") if obj_reflow_succeeded else None,
             })
         return results, []
 
