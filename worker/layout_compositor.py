@@ -205,7 +205,15 @@ def composite_layout(
         )
 
     # ── debug metadata ────────────────────────────────────────────────────────
-    sz_violations = best.get("hardFailReasons", [])
+    # hardFailReasons: layout_compiler가 수집한 모든 후보들의 실패 이유 (전 유형)
+    all_hard_fail_reasons: list = layout_meta.get("hardFailures", [])
+
+    # safeZoneViolations: safe zone 관련 위반만 분리 (hardFailReasons 전체 넣지 않음)
+    sz_violations: list = [
+        r for r in all_hard_fail_reasons
+        if "safe zone" in r.lower()
+    ]
+
     meta = {
         "renderMode":              "object-layout-reflow",
         "objectReflowUsed":        True,
@@ -217,7 +225,8 @@ def composite_layout(
         "selectedCandidateId":     layout_meta.get("selectedCandidateId"),
         "ratioType":               layout_meta.get("ratioType"),
         "safeZonePassed":          len(missing_required_assets) == 0 and len(sz_violations) == 0,
-        "safeZoneViolations":      sz_violations,
+        "safeZoneViolations":      sz_violations,          # safe zone 위반만
+        "hardFailReasons":         all_hard_fail_reasons,  # 전 유형 실패 이유 (별도 필드)
         "droppedObjects":          dropped_objects,
         "missingRequiredAssets":   missing_required_assets,
         "renderedRoles":           rendered_roles,

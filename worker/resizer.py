@@ -1279,6 +1279,10 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "backgroundMode": bg_meta_out.get("backgroundMode") if obj_reflow_succeeded else None,
                 "candidateCount": layout_meta_out.get("candidateCount", 5) if obj_reflow_succeeded else 0,
                 "selectedCandidateId": layout_meta_out.get("selectedCandidateId") if obj_reflow_succeeded else None,
+                # safe zone + hard fail + 드롭 + 경고 (모두 optional)
+                "hardFailReasons": comp_meta_out.get("hardFailReasons", []) if obj_reflow_succeeded else [],
+                "droppedObjects": comp_meta_out.get("droppedObjects", []) if obj_reflow_succeeded else [],
+                "warnings": comp_meta_out.get("warnings", []) if obj_reflow_succeeded else [],
             })
         return results, []
 
