@@ -436,74 +436,105 @@
 
         <!-- AI 객체 분석 섹션 -->
         <div v-if="isPsdFile && psdLayerAnalysis && !psdLayerAnalyzing" class="oa-section">
-          <div class="oa-header">
-            <div class="oa-title">AI 객체 분석 <span class="oa-beta">Beta</span></div>
-            <div class="oa-sub">선택된 아트보드의 배경·타이틀·주요이미지·CTA 등 객체를 AI가 감지합니다.</div>
+          <!-- 툴바 -->
+          <div class="oa-toolbar">
+            <div class="oa-toolbar-left">
+              <span class="oa-title">AI 객체 분석</span>
+              <span class="oa-beta">Beta</span>
+              <select v-if="detectedArtboards.length > 0" v-model="objAnalysisArtboardId" class="oa-artboard-sel">
+                <option v-for="ab in detectedArtboards" :key="ab.id" :value="ab.id">
+                  {{ ab.name }} · {{ ab.width }}×{{ ab.height }}
+                </option>
+              </select>
+            </div>
             <button class="oa-btn" :disabled="objAnalyzing" @click="runObjectAnalysis">
               {{ objAnalyzing ? '분석 중…' : 'AI 객체 분석' }}
             </button>
           </div>
 
+          <!-- 로딩 -->
           <div v-if="objAnalyzing" class="oa-loading">
             <div class="oa-spinner" />
             <span>PSD 레이어와 AI 객체를 매칭하는 중입니다…</span>
           </div>
 
+          <!-- 에러 -->
           <div v-if="objAnalysisError" class="oa-error">{{ objAnalysisError }}</div>
 
-          <div v-if="objAnalysisResult" class="oa-result">
-            <!-- reflowReady 배지 -->
-            <div class="oa-reflow-row">
-              <span class="oa-reflow-badge" :class="objAnalysisResult.reflowReady ? 'oa-rf-ok' : 'oa-rf-ng'">
-                {{ objAnalysisResult.reflowReady ? '✓ 레이어 재배치 준비 완료' : '✗ 레이어 재배치 준비 미완료' }}
+          <!-- 결과 -->
+          <template v-if="objAnalysisResult && !objAnalyzing">
+            <!-- 상태 바 -->
+            <div class="oa-status-bar">
+              <span class="oa-rf-badge" :class="objAnalysisResult.reflowReady ? 'rf-ok' : 'rf-ng'">
+                {{ objAnalysisResult.reflowReady ? '✓ 재배치 준비 완료' : '✗ 재배치 준비 미완료' }}
               </span>
               <span v-if="!objAnalysisResult.reflowReady && objAnalysisResult.missingRequiredRoles?.length" class="oa-missing">
-                누락: {{ objAnalysisResult.missingRequiredRoles.map(objRoleLabel).join(' / ') }}
+                누락: {{ objAnalysisResult.missingRequiredRoles.map(objRoleLabel).join(' · ') }}
               </span>
             </div>
 
-            <!-- 프리뷰 + bbox 오버레이 -->
-            <div v-if="objAnalysisResult.previewBase64" class="oa-preview-wrap">
-              <img
-                :src="'data:image/jpeg;base64,' + objAnalysisResult.previewBase64"
-                class="oa-preview-img"
-                alt="아트보드 프리뷰"
-              />
-              <div
-                v-for="obj in (objAnalysisResult.objects || [])"
-                :key="obj.id"
-                class="oa-bbox"
-                :class="['oa-role-' + obj.role, 'oa-ms-' + obj.matchStatus]"
-                :style="bboxOverlayStyle(obj.bbox, objAnalysisResult.artboardBox?.width, objAnalysisResult.artboardBox?.height)"
-                :title="objRoleLabel(obj.role) + ': ' + obj.label"
-              >
-                <span class="oa-bbox-label">{{ objRoleLabel(obj.role) }}</span>
+            <!-- 본문: 프리뷰 (좌) + 인스펙터 (우) -->
+            <div class="oa-body">
+              <!-- 프리뷰 패널 -->
+              <div class="oa-preview-panel">
+                <div class="oa-preview-wrap" ref="previewWrapRef">
+                  <img
+                    v-if="objAnalysisResult.previewBase64"
+                    :src="'data:image/jpeg;base64,' + objAnalysisResult.previewBase64"
+                    class="oa-preview-img"
+                    alt="아트보드 프리뷰"
+                    @load="onPreviewImgLoad"
+                  />
+                  <div
+                    v-for="obj in visibleObjects"
+                    :key="'bbox-' + obj.id"
+                    class="oa-bbox"
+                    :class="['oa-role-' + obj.role, 'oa-ms-' + obj.matchStatus, { 'oa-bbox-hl': hoveredObjId === obj.id }]"
+                    :style="bboxOverlayStyle(obj.bbox)"
+                    @mouseenter="hoveredObjId = obj.id"
+                    @mouseleave="hoveredObjId = null"
+                  >
+                    <span class="oa-bbox-label">{{ objRoleLabel(obj.role) }}</span>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <!-- 객체 카드 목록 -->
-            <div class="oa-cards">
-              <div v-for="obj in (objAnalysisResult.objects || [])" :key="obj.id" class="oa-card">
-                <div class="oa-card-head">
-                  <span class="oa-role-dot" :class="'oa-dot-' + obj.role" />
-                  <span class="oa-card-role">{{ objRoleLabel(obj.role) }}</span>
-                  <span class="oa-card-label">{{ obj.label }}</span>
-                  <span class="oa-imp-tag" :class="'oa-imp-' + obj.importance">{{ objImportanceLabel(obj.importance) }}</span>
-                </div>
-                <div class="oa-card-body">
-                  <div class="oa-match-row">
-                    <span class="oa-match-tag" :class="'oa-ms-tag-' + obj.matchStatus">{{ objMatchLabel(obj.matchStatus) }}</span>
-                    <span v-if="obj.matchedLayerName" class="oa-layer-name">{{ obj.matchedLayerName }}</span>
-                    <span v-if="obj.matchScore != null" class="oa-match-score">{{ Math.round((obj.matchScore || 0) * 100) }}%</span>
+              <!-- 인스펙터 패널 -->
+              <div class="oa-inspector">
+                <div
+                  v-for="obj in visibleObjects"
+                  :key="'ins-' + obj.id"
+                  class="oa-ins-card"
+                  :class="{ 'oa-ins-hl': hoveredObjId === obj.id }"
+                  @mouseenter="hoveredObjId = obj.id"
+                  @mouseleave="hoveredObjId = null"
+                >
+                  <div class="oa-ins-row">
+                    <span class="oa-role-dot" :class="'oa-dot-' + obj.role" />
+                    <span class="oa-ins-role">{{ objRoleLabel(obj.role) }}</span>
+                    <span class="oa-ins-label">{{ obj.label }}</span>
+                    <span class="oa-imp-chip" :class="'imp-' + obj.importance">{{ objImportanceLabel(obj.importance) }}</span>
                   </div>
-                  <div v-if="obj.reflowBehavior" class="oa-reflow-hint">
-                    리플로우: {{ obj.reflowBehavior.replace('_', ' ') }}
-                    <template v-if="obj.safeZoneRequired"> · 안전영역 필요</template>
+                  <div class="oa-ins-meta">
+                    <span class="oa-ms-chip" :class="'ms-' + obj.matchStatus">{{ objMatchLabel(obj.matchStatus) }}</span>
+                    <span v-if="obj.matchedLayerName" class="oa-ins-layer" :title="obj.matchedLayerName">{{ obj.matchedLayerName }}</span>
+                    <span v-if="obj.matchScore" class="oa-ins-score">{{ Math.round(obj.matchScore * 100) }}%</span>
                   </div>
                 </div>
+
+                <details v-if="hiddenObjects.length" class="oa-ins-more">
+                  <summary class="oa-ins-more-lbl">기타 {{ hiddenObjects.length }}개 ▾</summary>
+                  <div v-for="obj in hiddenObjects" :key="'sec-' + obj.id" class="oa-ins-card oa-ins-secondary">
+                    <div class="oa-ins-row">
+                      <span class="oa-role-dot" :class="'oa-dot-' + obj.role" />
+                      <span class="oa-ins-role">{{ objRoleLabel(obj.role) }}</span>
+                      <span class="oa-ins-label">{{ obj.label }}</span>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
-          </div>
+          </template>
         </div>
 
         <!-- Empty -->
@@ -606,9 +637,13 @@ const psdNativeW        = ref(0)
 const psdNativeH        = ref(0)
 const detectedArtboards = ref([])     // {id, name, width, height, artboardType, thumbnail}
 const selectedArtboardIds = ref([])   // 사용자가 선택한 아트보드 ID 목록
-const objAnalyzing     = ref(false)
-const objAnalysisResult = ref(null)
-const objAnalysisError = ref(null)
+const objAnalyzing        = ref(false)
+const objAnalysisResult   = ref(null)
+const objAnalysisError    = ref(null)
+const objAnalysisArtboardId = ref(null)
+const previewWrapRef      = ref(null)
+const previewImgMeta      = ref(null)
+const hoveredObjId        = ref(null)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const selectedSpecIds = ref([])
@@ -829,6 +864,7 @@ function clearFile() {
   detectedArtboards.value = []; selectedArtboardIds.value = []
   psdMode.value = 'artboard-first'
   objAnalyzing.value = false; objAnalysisResult.value = null; objAnalysisError.value = null
+  objAnalysisArtboardId.value = null; previewImgMeta.value = null; hoveredObjId.value = null
 }
 
 async function runAiAnalyze() {
@@ -849,10 +885,58 @@ async function runAiAnalyze() {
   }
 }
 
+// 드롭다운 기본값: detectedArtboards가 채워지면 첫 아이템으로 세팅
+watch(detectedArtboards, (v) => {
+  if (v.length > 0 && !objAnalysisArtboardId.value) {
+    objAnalysisArtboardId.value = v[0].id
+  }
+})
+// 결과 변경 시 이미지 메타 초기화
+watch(objAnalysisResult, () => { previewImgMeta.value = null })
+
+const IMPORTANCE_ORDER = { required: 0, priority: 1, optional: 2 }
+const HIDDEN_ROLES = new Set(['decoration', 'unknown'])
+const visibleObjects = computed(() => {
+  const objs = objAnalysisResult.value?.objects || []
+  return [...objs]
+    .filter(o => !HIDDEN_ROLES.has(o.role))
+    .sort((a, b) => (IMPORTANCE_ORDER[a.importance] ?? 2) - (IMPORTANCE_ORDER[b.importance] ?? 2))
+})
+const hiddenObjects = computed(() => {
+  const objs = objAnalysisResult.value?.objects || []
+  return objs.filter(o => HIDDEN_ROLES.has(o.role))
+})
+
+function onPreviewImgLoad(e) {
+  const img = e.target
+  previewImgMeta.value = {
+    natW: img.naturalWidth,
+    natH: img.naturalHeight,
+    w: img.offsetWidth,
+    h: img.offsetHeight,
+  }
+}
+
+function bboxOverlayStyle(bbox) {
+  const m = previewImgMeta.value
+  if (!m || !bbox || !m.natW || !m.natH || !m.w || !m.h) return { display: 'none' }
+  const scale = Math.min(m.w / m.natW, m.h / m.natH)
+  const rw = m.natW * scale
+  const rh = m.natH * scale
+  const ox = (m.w - rw) / 2
+  const oy = (m.h - rh) / 2
+  return {
+    left:   (ox + (bbox.x / m.natW) * rw).toFixed(1) + 'px',
+    top:    (oy + (bbox.y / m.natH) * rh).toFixed(1) + 'px',
+    width:  ((bbox.width  / m.natW) * rw).toFixed(1) + 'px',
+    height: ((bbox.height / m.natH) * rh).toFixed(1) + 'px',
+  }
+}
+
 async function runObjectAnalysis() {
   if (!form.psdFile || !psdLayerAnalysis.value) return
-  // 분석 대상 아트보드: 첫 번째 선택 아트보드, 없으면 전체 캔버스
-  const ab = detectedArtboards.value.find(a => selectedArtboardIds.value.includes(a.id))
+  // 드롭다운에서 선택한 아트보드
+  const ab = detectedArtboards.value.find(a => a.id === objAnalysisArtboardId.value)
     || detectedArtboards.value[0]
 
   objAnalyzing.value = true
@@ -882,15 +966,6 @@ async function runObjectAnalysis() {
   }
 }
 
-function bboxOverlayStyle(bbox, abW, abH) {
-  if (!bbox || !abW || !abH) return {}
-  return {
-    left: (bbox.x / abW * 100).toFixed(2) + '%',
-    top: (bbox.y / abH * 100).toFixed(2) + '%',
-    width: (bbox.width / abW * 100).toFixed(2) + '%',
-    height: (bbox.height / abH * 100).toFixed(2) + '%',
-  }
-}
 
 const OBJ_ROLE_LABELS = {
   background: '배경', title: '타이틀', body_text: '본문', main_image: '주요 이미지',
@@ -1192,13 +1267,10 @@ onMounted(async () => {
 .azs-card:hover { border-color: #C4B5FD; box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
 .azs-selected { border-color: #7C3AED !important; box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important; }
 .azs-thumb-wrap {
-  width: 100%; aspect-ratio: var(--thumb-ratio, 1/1);
+  width: 100%; height: 110px; flex-shrink: 0;
   overflow: hidden; background: #F3F4F6; display: flex; align-items: center; justify-content: center;
 }
-.azs-square    .azs-thumb-wrap { aspect-ratio: 1/1; }
-.azs-vertical  .azs-thumb-wrap { aspect-ratio: 1/2.5; }
-.azs-horizontal .azs-thumb-wrap { aspect-ratio: 4/1; }
-.azs-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.azs-thumb { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .azs-thumb-placeholder {
   font-size: 11px; color: #9CA3AF; font-weight: 600; padding: 8px;
 }
@@ -1257,116 +1329,151 @@ onMounted(async () => {
 }
 @keyframes azs-shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
 
-/* AI 객체 분석 섹션 */
+/* ── AI 객체 분석 섹션 ─────────────────────────────────────── */
 .oa-section {
   border: 1.5px solid #E5E7EB; border-radius: 12px;
-  background: #FAFBFF; padding: 14px 16px; margin-bottom: 12px;
+  background: #F8FAFC; padding: 11px 13px; margin-bottom: 12px;
 }
-.oa-header { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.oa-title { font-size: 13px; font-weight: 700; color: #1F2937; flex: 1; }
+/* 툴바 */
+.oa-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.oa-toolbar-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.oa-title { font-size: 12px; font-weight: 700; color: #1F2937; }
 .oa-beta {
-  font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
-  background: #EDE9FE; color: #7C3AED; margin-left: 4px; vertical-align: middle;
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+  background: #EDE9FE; color: #7C3AED; flex-shrink: 0;
 }
-.oa-sub { font-size: 11px; color: #6B7280; margin-top: 2px; width: 100%; }
+.oa-artboard-sel {
+  font-size: 11px; padding: 3px 6px; border-radius: 6px; font-family: inherit;
+  border: 1px solid #DDE0E7; background: #fff; color: #374151;
+  max-width: 180px; cursor: pointer; flex-shrink: 1; min-width: 0;
+}
 .oa-btn {
-  font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px;
+  font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 7px;
   background: linear-gradient(135deg, #7C3AED, #3B82F6); color: #fff; border: none;
-  cursor: pointer; white-space: nowrap; transition: opacity 0.15s;
+  cursor: pointer; white-space: nowrap; transition: opacity 0.15s; flex-shrink: 0;
 }
-.oa-btn:disabled { opacity: 0.55; cursor: not-allowed; }
-.oa-loading { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #6B7280; padding: 10px 0; }
+.oa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 로딩 */
+.oa-loading { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #6B7280; padding: 8px 0; }
 .oa-spinner {
-  width: 16px; height: 16px; border: 2px solid #E5E7EB;
-  border-top-color: #7C3AED; border-radius: 50%; animation: oa-spin 0.7s linear infinite;
+  width: 14px; height: 14px; border: 2px solid #E5E7EB;
+  border-top-color: #7C3AED; border-radius: 50%; animation: oa-spin 0.7s linear infinite; flex-shrink: 0;
 }
 @keyframes oa-spin { to { transform: rotate(360deg); } }
-.oa-error { font-size: 12px; color: #DC2626; background: #FEF2F2; border-radius: 6px; padding: 8px 10px; }
-.oa-reflow-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.oa-reflow-badge {
-  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
+/* 에러 */
+.oa-error { font-size: 11px; color: #DC2626; background: #FEF2F2; border-radius: 6px; padding: 7px 10px; }
+/* 상태 바 */
+.oa-status-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 5px 8px; border-radius: 7px; background: #F1F5F9; margin-bottom: 9px;
 }
-.oa-rf-ok { background: #D1FAE5; color: #065F46; }
-.oa-rf-ng { background: #FEE2E2; color: #991B1B; }
-.oa-missing { font-size: 11px; color: #92400E; background: #FEF3C7; padding: 2px 7px; border-radius: 10px; }
-.oa-preview-wrap { position: relative; display: inline-block; width: 100%; margin-bottom: 12px; border-radius: 8px; overflow: hidden; }
-.oa-preview-img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.oa-rf-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.rf-ok { background: #D1FAE5; color: #065F46; }
+.rf-ng { background: #FEE2E2; color: #991B1B; }
+.oa-missing { font-size: 10px; color: #92400E; }
+/* 본문 레이아웃 */
+.oa-body { display: flex; gap: 10px; align-items: flex-start; }
+/* 프리뷰 패널 */
+.oa-preview-panel { flex: 0 0 55%; min-width: 0; }
+.oa-preview-wrap {
+  position: relative; width: 100%; height: 280px;
+  background: #111; border-radius: 8px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.oa-preview-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* bbox 오버레이 — JS로 px 기반 위치 계산 */
 .oa-bbox {
-  position: absolute; border: 2px solid; border-radius: 3px;
-  box-sizing: border-box; transition: opacity 0.15s; cursor: default;
+  position: absolute; border: 2px solid; border-radius: 2px;
+  box-sizing: border-box; pointer-events: auto; cursor: default;
+  transition: box-shadow 0.12s;
 }
-.oa-bbox:hover { opacity: 0.85; z-index: 10; }
+.oa-bbox-hl { box-shadow: 0 0 0 2px rgba(255,255,255,0.5); z-index: 10; }
 .oa-bbox-label {
-  position: absolute; top: 0; left: 0; font-size: 10px; font-weight: 700;
-  padding: 1px 4px; border-radius: 0 0 3px 0; white-space: nowrap; opacity: 0.9;
+  position: absolute; top: 0; left: 0; font-size: 9px; font-weight: 700;
+  padding: 1px 3px; border-radius: 0 0 2px 0; white-space: nowrap; line-height: 1.4;
 }
 /* role별 색상 */
-.oa-role-background { border-color: rgba(107,114,128,0.6); }
-.oa-role-background .oa-bbox-label { background: rgba(107,114,128,0.7); color: #fff; }
-.oa-role-title { border-color: rgba(59,130,246,0.8); }
-.oa-role-title .oa-bbox-label { background: rgba(59,130,246,0.8); color: #fff; }
-.oa-role-main_image { border-color: rgba(16,185,129,0.8); }
-.oa-role-main_image .oa-bbox-label { background: rgba(16,185,129,0.8); color: #fff; }
-.oa-role-cta { border-color: rgba(239,68,68,0.8); }
-.oa-role-cta .oa-bbox-label { background: rgba(239,68,68,0.8); color: #fff; }
-.oa-role-logo { border-color: rgba(124,58,237,0.8); }
-.oa-role-logo .oa-bbox-label { background: rgba(124,58,237,0.8); color: #fff; }
-.oa-role-body_text { border-color: rgba(245,158,11,0.8); }
-.oa-role-body_text .oa-bbox-label { background: rgba(245,158,11,0.8); color: #fff; }
-.oa-role-badge { border-color: rgba(236,72,153,0.8); }
-.oa-role-badge .oa-bbox-label { background: rgba(236,72,153,0.8); color: #fff; }
-.oa-role-decoration { border-color: rgba(156,163,175,0.5); }
-.oa-role-decoration .oa-bbox-label { background: rgba(156,163,175,0.5); color: #374151; }
-/* 매칭 상태별 투명도 */
+.oa-role-background { border-color: rgba(107,114,128,0.5); }
+.oa-role-background .oa-bbox-label { background: rgba(107,114,128,0.75); color: #fff; }
+.oa-role-title { border-color: rgba(59,130,246,0.85); }
+.oa-role-title .oa-bbox-label { background: rgba(59,130,246,0.85); color: #fff; }
+.oa-role-main_image { border-color: rgba(16,185,129,0.85); }
+.oa-role-main_image .oa-bbox-label { background: rgba(16,185,129,0.85); color: #fff; }
+.oa-role-cta { border-color: rgba(239,68,68,0.85); }
+.oa-role-cta .oa-bbox-label { background: rgba(239,68,68,0.85); color: #fff; }
+.oa-role-logo { border-color: rgba(124,58,237,0.85); }
+.oa-role-logo .oa-bbox-label { background: rgba(124,58,237,0.85); color: #fff; }
+.oa-role-body_text { border-color: rgba(245,158,11,0.85); }
+.oa-role-body_text .oa-bbox-label { background: rgba(245,158,11,0.85); color: #fff; }
+.oa-role-badge { border-color: rgba(234,88,12,0.85); }
+.oa-role-badge .oa-bbox-label { background: rgba(234,88,12,0.85); color: #fff; }
+.oa-role-decoration, .oa-role-unknown { border-color: rgba(156,163,175,0.4); border-style: dashed; }
+.oa-role-decoration .oa-bbox-label, .oa-role-unknown .oa-bbox-label { background: rgba(156,163,175,0.5); color: #374151; }
+/* 매칭 상태 투명도 */
 .oa-ms-ready { opacity: 1; }
-.oa-ms-matched_low_confidence { opacity: 0.7; }
-.oa-ms-missing_layer { opacity: 0.4; border-style: dashed; }
-/* 객체 카드 */
-.oa-cards { display: flex; flex-direction: column; gap: 6px; }
-.oa-card {
-  border: 1px solid #E5E7EB; border-radius: 8px;
-  padding: 8px 10px; background: #fff;
+.oa-ms-matched_low_confidence { opacity: 0.75; }
+.oa-ms-missing_layer { opacity: 0.35; border-style: dashed; }
+/* 인스펙터 패널 */
+.oa-inspector {
+  flex: 1; min-width: 0;
+  max-height: 280px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px;
 }
-.oa-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.oa-role-dot {
-  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+.oa-inspector::-webkit-scrollbar { width: 4px; }
+.oa-inspector::-webkit-scrollbar-track { background: transparent; }
+.oa-inspector::-webkit-scrollbar-thumb { background: #DDE0E7; border-radius: 2px; }
+/* 인스펙터 카드 */
+.oa-ins-card {
+  border: 1px solid #E5E7EB; border-radius: 7px;
+  padding: 5px 8px; background: #fff; cursor: default; transition: border-color 0.1s;
 }
+.oa-ins-hl { border-color: #A78BFA !important; background: #F5F3FF !important; }
+.oa-ins-secondary { opacity: 0.7; }
+.oa-ins-row { display: flex; align-items: center; gap: 5px; }
+.oa-role-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .oa-dot-background { background: #6B7280; }
 .oa-dot-title { background: #3B82F6; }
 .oa-dot-main_image { background: #10B981; }
 .oa-dot-cta { background: #EF4444; }
 .oa-dot-logo { background: #7C3AED; }
 .oa-dot-body_text { background: #F59E0B; }
-.oa-dot-badge { background: #EC4899; }
+.oa-dot-badge { background: #EA580C; }
 .oa-dot-decoration { background: #9CA3AF; }
 .oa-dot-unknown { background: #D1D5DB; }
-.oa-card-role { font-size: 12px; font-weight: 700; color: #374151; }
-.oa-card-label { font-size: 12px; color: #6B7280; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.oa-imp-tag { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
-.oa-imp-required { background: #FEE2E2; color: #991B1B; }
-.oa-imp-priority  { background: #FEF3C7; color: #92400E; }
-.oa-imp-optional  { background: #F3F4F6; color: #6B7280; }
-.oa-match-row { display: flex; align-items: center; gap: 6px; }
-.oa-match-tag { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 8px; }
-.oa-ms-tag-ready { background: #D1FAE5; color: #065F46; }
-.oa-ms-tag-matched_low_confidence { background: #FEF3C7; color: #92400E; }
-.oa-ms-tag-missing_layer { background: #F3F4F6; color: #9CA3AF; }
-.oa-layer-name { font-size: 11px; color: #4B5563; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.oa-match-score { font-size: 11px; font-weight: 600; color: #6B7280; }
-.oa-reflow-hint { font-size: 11px; color: #9CA3AF; margin-top: 3px; }
+.oa-ins-role { font-size: 11px; font-weight: 700; color: #374151; white-space: nowrap; flex-shrink: 0; }
+.oa-ins-label { font-size: 11px; color: #6B7280; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oa-imp-chip { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
+.imp-required { background: #FEE2E2; color: #991B1B; }
+.imp-priority  { background: #FEF3C7; color: #92400E; }
+.imp-optional  { background: #F3F4F6; color: #6B7280; }
+.oa-ins-meta { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+.oa-ms-chip { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
+.ms-ready { background: #D1FAE5; color: #065F46; }
+.ms-matched_low_confidence { background: #FEF3C7; color: #92400E; }
+.ms-missing_layer { background: #F3F4F6; color: #9CA3AF; }
+.oa-ins-layer { font-size: 10px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oa-ins-score { font-size: 10px; font-weight: 700; color: #374151; flex-shrink: 0; }
+/* 기타 접기 */
+.oa-ins-more { margin-top: 2px; }
+.oa-ins-more-lbl { font-size: 10px; color: #9CA3AF; cursor: pointer; padding: 3px 0; list-style: none; }
+.oa-ins-more summary::-webkit-details-marker { display: none; }
 
 @media (prefers-color-scheme: dark) {
   .oa-section { background: #1A1D27; border-color: #2D3142; }
   .oa-title { color: #F9FAFB; }
-  .oa-sub { color: #9CA3AF; }
-  .oa-card { background: #252836; border-color: #374151; }
-  .oa-card-role { color: #E5E7EB; }
-  .oa-card-label { color: #9CA3AF; }
-  .oa-layer-name { color: #9CA3AF; }
-  .oa-reflow-hint { color: #6B7280; }
+  .oa-artboard-sel { background: #252836; border-color: #374151; color: #E5E7EB; }
+  .oa-status-bar { background: #252836; }
+  .oa-preview-wrap { background: #0D0D0D; }
+  .oa-ins-card { background: #252836; border-color: #374151; }
+  .oa-ins-hl { border-color: #7C3AED !important; background: #2D1F4A !important; }
+  .oa-ins-role { color: #E5E7EB; }
+  .oa-ins-label { color: #9CA3AF; }
+  .oa-ins-layer { color: #6B7280; }
+  .oa-ins-score { color: #E5E7EB; }
   .oa-error { background: #3B1212; color: #FCA5A5; }
-  .oa-imp-optional { background: #374151; color: #9CA3AF; }
-  .oa-ms-tag-missing_layer { background: #374151; color: #6B7280; }
+  .imp-optional { background: #374151; color: #9CA3AF; }
+  .ms-missing_layer { background: #374151; color: #6B7280; }
+  .oa-ins-more-lbl { color: #6B7280; }
 }
 
 @media (prefers-color-scheme: dark) {

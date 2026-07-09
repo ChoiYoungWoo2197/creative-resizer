@@ -36,8 +36,10 @@ public class PsdObjectAnalysisService {
     @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
-    @Value("${creative.openai.analysis-model:gpt-4.1-mini}")
-    private String openAiModel;
+    @Value("${creative.openai.object-model:gpt-5.4-mini}")
+    private String openAiObjectModel;
+
+    private static final String FALLBACK_MODEL = "gpt-4.1-mini";
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -132,20 +134,21 @@ public class PsdObjectAnalysisService {
         message.put("role", "user");
         message.put("content", List.of(imageContent, textContent));
 
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", openAiModel);
-        requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 2500);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+        // 기본 모델 시도 → 실패 시 fallback
+        String model = openAiObjectModel;
+        Map<String, Object> body = null;
+        try {
+            body = callOpenAi(model, message, headers);
+        } catch (Exception e) {
+            log.warn("OpenAI 객체 분석 모델 {} 실패, fallback → {}: {}", model, FALLBACK_MODEL, e.getMessage());
+            model = FALLBACK_MODEL;
+            body = callOpenAi(model, message, headers);
+        }
 
-        Map<String, Object> body = response.getBody();
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
@@ -153,12 +156,24 @@ public class PsdObjectAnalysisService {
 
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String content = (String) msgResp.get("content");
-        log.info("OpenAI 객체 맵 응답: {}", content);
+        log.info("OpenAI 객체 맵 응답 (model={}): {}", model, content);
 
         Map<String, Object> result = objectMapper.readValue(content, Map.class);
         Object objects = result.get("objects");
         if (!(objects instanceof List)) return List.of();
         return (List<Map<String, Object>>) objects;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> callOpenAi(String model, Map<String, Object> message, HttpHeaders headers) {
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", List.of(message));
+        requestBody.put("max_tokens", 2500);
+        requestBody.put("response_format", Map.of("type", "json_object"));
+        ResponseEntity<Map> response = restTemplate.postForEntity(
+                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+        return response.getBody();
     }
 
     private List<PsdObjectAnalysis.ObjectResult> parseObjectResults(List<Map<String, Object>> raw) {

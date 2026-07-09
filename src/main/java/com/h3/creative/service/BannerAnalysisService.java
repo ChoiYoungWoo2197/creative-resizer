@@ -33,11 +33,13 @@ public class BannerAnalysisService {
     @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
-    @Value("${creative.openai.analysis-model:gpt-4.1-mini}")
-    private String openAiModel;
+    @Value("${creative.openai.resize-model:gpt-5.4-mini}")
+    private String openAiResizeModel;
 
     @Value("${creative.openai.image-detail:low}")
     private String openAiImageDetail;
+
+    private static final String FALLBACK_MODEL = "gpt-4.1-mini";
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -332,22 +334,23 @@ public class BannerAnalysisService {
         message.put("role", "user");
         message.put("content", List.of(imageContent, textContent));
 
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", openAiModel);
-        requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 2000);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        log.info("OpenAI Vision 분석 요청: file={} size={}bytes", file.getOriginalFilename(), imageBytes.length);
+        log.info("OpenAI Vision 분석 요청: file={} size={}bytes model={}", file.getOriginalFilename(), imageBytes.length, openAiResizeModel);
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+        // 기본 모델 시도 → 실패 시 fallback
+        String usedModel = openAiResizeModel;
+        Map<String, Object> body;
+        try {
+            body = callOpenAiResize(usedModel, message, headers);
+        } catch (Exception e) {
+            log.warn("OpenAI 리사이즈 분석 모델 {} 실패, fallback → {}: {}", usedModel, FALLBACK_MODEL, e.getMessage());
+            usedModel = FALLBACK_MODEL;
+            body = callOpenAiResize(usedModel, message, headers);
+        }
 
-        Map<String, Object> body = response.getBody();
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
@@ -355,7 +358,7 @@ public class BannerAnalysisService {
 
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String content = (String) msgResp.get("content");
-        log.info("OpenAI 응답: {}", content);
+        log.info("OpenAI 응답 (model={}): {}", usedModel, content);
 
         Map<String, Object> result = objectMapper.readValue(content, Map.class);
 
@@ -415,5 +418,17 @@ public class BannerAnalysisService {
 
         analysis.setCreatedAt(LocalDateTime.now());
         return mongoService.save(analysis);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> callOpenAiResize(String model, Map<String, Object> message, HttpHeaders headers) {
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", List.of(message));
+        requestBody.put("max_tokens", 2000);
+        requestBody.put("response_format", Map.of("type", "json_object"));
+        ResponseEntity<Map> response = restTemplate.postForEntity(
+                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+        return response.getBody();
     }
 }
