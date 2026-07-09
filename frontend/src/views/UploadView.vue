@@ -368,7 +368,7 @@
         </div>
 
         <!-- PSD 아트보드 선택 섹션 -->
-        <div v-if="isPsdFile && (psdLayerAnalyzing || detectedArtboards.length > 0)" class="azs-section">
+        <div v-if="isPsdFile && (psdLayerAnalyzing || psdLayerAnalysis)" class="azs-section">
           <div class="azs-header">
             <div>
               <div class="azs-title">AI가 분석할 광고 영역을 선택해 주세요</div>
@@ -390,7 +390,7 @@
           </div>
 
           <!-- 카드 목록 -->
-          <div v-else class="azs-cards">
+          <div v-else-if="detectedArtboards.length > 0" class="azs-cards">
             <div v-for="ab in detectedArtboards" :key="ab.id"
                  class="azs-card"
                  :class="[
@@ -405,8 +405,13 @@
                 </div>
               </div>
               <div class="azs-card-body">
-                <div class="azs-type-badge" :class="'azst-' + ab.artboardType">
-                  {{ artboardTypeLabel(ab.artboardType) }}
+                <div class="azs-card-badges">
+                  <div class="azs-type-badge" :class="'azst-' + ab.artboardType">
+                    {{ artboardTypeLabel(ab.artboardType) }}
+                  </div>
+                  <div v-if="ab.source" class="azs-source-badge" :class="'azss-' + ab.source">
+                    {{ sourceLabel(ab.source) }}
+                  </div>
                 </div>
                 <div class="azs-card-name">{{ ab.name }}</div>
                 <div class="azs-card-size">{{ ab.width }}×{{ ab.height }}</div>
@@ -417,8 +422,14 @@
             </div>
           </div>
 
+          <!-- 아트보드 감지 불가 (분석 완료 후 멀티존 없음) -->
+          <div v-else class="azs-empty">
+            <div class="azs-empty-icon">◻</div>
+            <div class="azs-empty-text">멀티 아트보드를 감지하지 못했습니다.<br>전체 캔버스를 원본으로 사용합니다.</div>
+          </div>
+
           <!-- 부족한 비율 경고 -->
-          <div v-if="!psdLayerAnalyzing && missingRatioWarning" class="azs-warn">
+          <div v-if="!psdLayerAnalyzing && detectedArtboards.length > 0 && missingRatioWarning" class="azs-warn">
             ⚠ {{ missingRatioWarning }}
           </div>
         </div>
@@ -855,6 +866,14 @@ const ARTBOARD_TYPE_LABELS_KO = {
 }
 function artboardTypeLabel(t) { return ARTBOARD_TYPE_LABELS_KO[t] ?? (t || '') }
 
+const SOURCE_LABELS = {
+  artboard_tag: '아트보드',
+  group_name: '그룹명',
+  layer_bbox: '영역 추정',
+  fallback: '전체 캔버스',
+}
+function sourceLabel(s) { return SOURCE_LABELS[s] ?? (s || '') }
+
 function toggleArtboard(id) {
   const idx = selectedArtboardIds.value.indexOf(id)
   if (idx >= 0) selectedArtboardIds.value.splice(idx, 1)
@@ -1051,6 +1070,7 @@ onMounted(async () => {
   font-size: 11px; color: #9CA3AF; font-weight: 600; padding: 8px;
 }
 .azs-card-body { padding: 8px 10px 10px; }
+.azs-card-badges { display: flex; gap: 4px; flex-wrap: wrap; }
 .azs-card-name { font-size: 11px; color: #374151; font-weight: 500; margin: 4px 0 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .azs-card-size { font-size: 10px; color: #9CA3AF; }
@@ -1062,6 +1082,21 @@ onMounted(async () => {
 .azst-vertical   { background: #EFF6FF; color: #1E40AF; }
 .azst-horizontal { background: #FFFBEB; color: #92400E; }
 .azst-custom, .azst-unknown { background: #F3F4F6; color: #6B7684; }
+/* source badge */
+.azs-source-badge {
+  display: inline-block; font-size: 9.5px; font-weight: 600; padding: 1px 5px;
+  border-radius: 4px; background: #F1F5F9; color: #64748B;
+}
+.azss-artboard_tag { background: #EFF6FF; color: #3B82F6; }
+.azss-group_name   { background: #F0FDF4; color: #16A34A; }
+.azss-layer_bbox   { background: #FFF7ED; color: #EA580C; }
+/* empty state */
+.azs-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px 16px; background: #F9FAFB; border-radius: 10px; gap: 6px;
+}
+.azs-empty-icon { font-size: 24px; color: #D1D5DB; }
+.azs-empty-text { font-size: 12px; color: #9CA3AF; text-align: center; line-height: 1.6; }
 .azs-check {
   position: absolute; top: 6px; right: 6px;
   width: 20px; height: 20px; border-radius: 50%;
@@ -1097,6 +1132,8 @@ onMounted(async () => {
   .azs-thumb-wrap { background: #1F2937; }
   .azs-card-name { color: #E5E7EB; }
   .azs-warn { background: #451A03; border-color: #92400E; color: #FCD34D; }
+  .azs-empty { background: #1A1D27; }
+  .azs-empty-text { color: #6B7280; }
   .azs-thumb-skeleton,.azs-skeleton-line { background: linear-gradient(90deg,#1F2937 25%,#374151 50%,#1F2937 75%); background-size:200% 100%; }
 }
 

@@ -241,6 +241,27 @@ def _infer_artboards_from_large_layers(psd) -> list:
             "source": "layer_bbox",
         })
 
+    # ── 좌표/크기 기반 2차 TIP 필터 ──────────────────────────────────
+    # 경쟁사 PSD처럼 우측 하단에 작은 제작 TIP 영역이 이름 없이 들어있는 경우를 처리.
+    # 기준: 가장 큰 후보 대비 면적 25% 미만이면서 캔버스 중심(55%)보다 우측하단에 위치.
+    if len(candidates) >= 2:
+        max_area = max(c["width"] * c["height"] for c in candidates)
+        filtered = []
+        for c in candidates:
+            c_area = c["width"] * c["height"]
+            c_cx = c["x"] + c["width"] / 2
+            c_cy = c["y"] + c["height"] / 2
+            is_small       = c_area < max_area * 0.25
+            is_bottom_right = c_cx > canvas_w * 0.55 and c_cy > canvas_h * 0.55
+            if is_small and is_bottom_right:
+                print(f"[PSD] TIP 좌표 추정 제외: '{c['name']}' "
+                      f"pos=({c['x']},{c['y']}) size={c['width']}x{c['height']}")
+                continue
+            filtered.append(c)
+        # 필터링 후 후보가 1개 이상 남으면 교체, 모두 제거되면 원본 유지
+        if filtered:
+            candidates = filtered
+
     return candidates
 
 

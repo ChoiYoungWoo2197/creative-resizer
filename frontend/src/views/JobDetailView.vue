@@ -118,8 +118,12 @@
               <div v-if="r.selectedArtboardName" class="artboard-badge" :class="artboardTypeClass(r.selectedArtboardType)">
                 ▣ PSD 아트보드: {{ r.selectedArtboardName }}
                 <span v-if="r.selectedArtboardType" class="artboard-type-tag">{{ artboardTypeLabel(r.selectedArtboardType) }}</span>
+                <span v-if="r.selectedSourceArtboardSize" class="artboard-size-tag">{{ r.selectedSourceArtboardSize }}</span>
                 <span v-if="r.artboardMatchScore != null" class="artboard-match-score" :class="artboardMatchClass(r.artboardMatchScore)">
                   매치 {{ Math.round(r.artboardMatchScore * 100) }}%
+                </span>
+                <span v-if="r.sourceMatchType" class="source-match-tag" :class="'smt-' + r.sourceMatchType">
+                  {{ sourceMatchTypeLabel(r.sourceMatchType) }}
                 </span>
               </div>
               <div v-if="r.actualPsdRenderMode === 'layer-reflow'" class="layer-reflow-badge">
@@ -525,6 +529,10 @@ function artboardMatchClass(score) {
   if (score >= 0.60) return 'match-warn'
   return 'match-bad'
 }
+function sourceMatchTypeLabel(t) {
+  const m = { exact: '정확', inferred: '추정', fallback: '전체' }
+  return m[t] ?? (t || '')
+}
 
 async function runApply(candidate) {
   if (!compareResult.value) return
@@ -929,6 +937,16 @@ onUnmounted(stopPolling)
 .artboard-match-score.match-good { color: #065F46; background: #D1FAE5; }
 .artboard-match-score.match-warn { color: #92400E; background: #FEF3C7; }
 .artboard-match-score.match-bad  { color: #991B1B; background: #FEE2E2; }
+.artboard-size-tag {
+  font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
+  background: rgba(0,0,0,0.06); color: inherit; opacity: 0.8;
+}
+.source-match-tag {
+  font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+}
+.smt-exact    { color: #065F46; background: #D1FAE5; }
+.smt-inferred { color: #92400E; background: #FEF3C7; }
+.smt-fallback { color: #6B7280; background: #F3F4F6; }
 @media (prefers-color-scheme: dark) {
   .artboard-badge { color: #93C5FD; background: #1E3A5F; }
   .artboard-badge.abt-square     { color: #6EE7B7; background: #064E3B; }
@@ -937,6 +955,9 @@ onUnmounted(stopPolling)
   .artboard-match-score.match-good { color: #6EE7B7; background: #064E3B; }
   .artboard-match-score.match-warn { color: #FCD34D; background: #451A03; }
   .artboard-match-score.match-bad  { color: #FCA5A5; background: #450A0A; }
+  .smt-exact    { color: #6EE7B7; background: #064E3B; }
+  .smt-inferred { color: #FCD34D; background: #451A03; }
+  .smt-fallback { color: #9CA3AF; background: #1F2937; }
 }
 .psd-fallback-badge {
   margin-top: 3px;
