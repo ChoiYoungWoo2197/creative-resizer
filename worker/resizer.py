@@ -1188,6 +1188,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                     final_img.save(out_path)
                     obj_reflow_succeeded = True
                     obj_sz_passed = comp_meta_out.get("safeZonePassed")
+                    obj_sz_violations = comp_meta_out.get("safeZoneViolations", [])
                     print(
                         f"[{job_id or 'job'}][ObjectReflow] success spec={name} size={w}x{h} "
                         f"candidate={layout_meta_out.get('selectedCandidateId')} "
@@ -1240,7 +1241,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "selectedArtboardId": None,
                 "selectedArtboardName": None,
                 "actualPsdRenderMode": "object-layout-reflow" if obj_reflow_succeeded else "artboard",
-                "renderSource": "psd_object_layout_reflow" if obj_reflow_succeeded else "psd_tools_composite",
+                "renderSource": "psd_object_reflow" if obj_reflow_succeeded else "psd_tools_composite",
                 "fallbackUsed": not obj_reflow_succeeded,
                 "fallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
                 "fallbackErrors": [],
