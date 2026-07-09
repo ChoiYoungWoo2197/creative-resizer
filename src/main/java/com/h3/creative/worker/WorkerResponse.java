@@ -94,6 +94,7 @@ public class WorkerResponse {
 
         // 4단계: safe zone 체크 결과
         private Boolean safeZonePassed;   // canonical (safeZonePass는 alias)
+        private String layoutScoreStatus; // "normal" | "fallback" (emergency_fallback 선택 시)
         private java.util.List<java.util.Map<String, Object>> safeZoneViolations;
     }
 }

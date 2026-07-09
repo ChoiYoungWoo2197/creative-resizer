@@ -1154,6 +1154,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             bg_meta_out = {}
             layout_meta_out = {}
             comp_meta_out = {}
+            _is_emergency = False
+            layout_score_status = None
+            effective_layout_score = None
             safe_zones = normalize_safe_zone(spec, w, h)
 
             print(f"[{job_id or 'job'}][ObjectReflow] spec={name} size={w}x{h}")
@@ -1183,17 +1186,37 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                             f"required asset missing: {comp_meta_out['missingRequiredAssets']}"
                         )
 
+                    debug_ref_img = final_img  # RGBA reference (before RGB conversion)
                     if ext in ("jpg", "jpeg"):
                         final_img = final_img.convert("RGB")
                     final_img.save(out_path)
                     obj_reflow_succeeded = True
                     obj_sz_passed = comp_meta_out.get("safeZonePassed")
                     obj_sz_violations = comp_meta_out.get("safeZoneViolations", [])
+                    _is_emergency = layout_meta_out.get("selectedCandidateId") == "emergency_fallback"
+                    layout_score_status = "fallback" if _is_emergency else "normal"
+                    effective_layout_score = None if _is_emergency else layout_meta_out.get("layoutScore")
                     print(
                         f"[{job_id or 'job'}][ObjectReflow] success spec={name} size={w}x{h} "
                         f"candidate={layout_meta_out.get('selectedCandidateId')} "
-                        f"score={layout_meta_out.get('layoutScore')}"
+                        f"score={effective_layout_score} status={layout_score_status}"
                     )
+                    # 7단계: debug overlay (실패해도 원본 무영향)
+                    try:
+                        from debug_overlay import generate_debug_files as _gen_debug
+                        _gen_debug(
+                            debug_ref_img, out_path,
+                            comp_meta_out, layout_result,
+                            creative_object_set, safe_zones, w, h,
+                            render_source="psd_object_reflow",
+                            actual_render_mode="object-layout-reflow",
+                            layout_score_status=layout_score_status,
+                            job_id=job_id,
+                        )
+                    except Exception as _oe:
+                        comp_meta_out.setdefault("warnings", []).append(
+                            f"debugOverlayFailed: {_oe}"
+                        )
                 except Exception as e:
                     obj_reflow_error = str(e)
                     obj_sz_passed = False
@@ -1243,14 +1266,20 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "actualPsdRenderMode": "object-layout-reflow" if obj_reflow_succeeded else "artboard",
                 "renderSource": "psd_object_reflow" if obj_reflow_succeeded else "psd_tools_composite",
                 "fallbackUsed": not obj_reflow_succeeded,
-                "fallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
+                "fallbackReason": (
+                    "all_candidates_hard_failed" if (obj_reflow_succeeded and _is_emergency)
+                    else (obj_reflow_error if not obj_reflow_succeeded else None)
+                ),
                 "fallbackErrors": [],
                 "sourceWidth": artboard_img.width if artboard_img else 0,
                 "sourceHeight": artboard_img.height if artboard_img else 0,
                 "objectReflowAttempted": True,
                 "objectReflowSucceeded": obj_reflow_succeeded,
                 "objectReflowMode": layout_meta_out.get("selectedCandidateId") if obj_reflow_succeeded else None,
-                "objectReflowFallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
+                "objectReflowFallbackReason": (
+                    "all_candidates_hard_failed" if (obj_reflow_succeeded and _is_emergency)
+                    else (obj_reflow_error if not obj_reflow_succeeded else None)
+                ),
                 "usedObjectRoles": comp_meta_out.get("renderedRoles", []) if obj_reflow_succeeded else [],
                 "missingObjectRoles": comp_meta_out.get("missingRequiredAssets", []) if obj_reflow_succeeded else [o.get("role") for o in ai_objects],
                 "cropFallbackRoles": [],
@@ -1258,7 +1287,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "objectSafeZonePass": obj_sz_passed,
                 "resizeStrategy": "psd-object-layout-reflow" if obj_reflow_succeeded else "smart-fit",
                 "candidateType": None,
-                "candidateScore": layout_meta_out.get("layoutScore") if obj_reflow_succeeded else None,
+                "candidateScore": effective_layout_score if obj_reflow_succeeded else None,
                 "blurAreaRatio": None, "cropRatio": None, "subjectScale": None,
                 "qualityGate": None, "qualityLabel": None,
                 "safeZonePassed": obj_sz_passed,   # canonical
@@ -1275,8 +1304,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 # 1단계 + 6단계: 고품질 경로 메타
                 "renderMode": "object-layout-reflow" if obj_reflow_succeeded else "psd_artboard_first",
                 "objectReflowUsed": obj_reflow_succeeded,
-                "objectReflowFallbackUsed": not obj_reflow_succeeded,
-                "layoutScore": layout_meta_out.get("layoutScore") if obj_reflow_succeeded else None,
+                "objectReflowFallbackUsed": not obj_reflow_succeeded or _is_emergency,
+                "layoutScore": effective_layout_score if obj_reflow_succeeded else None,
+                "layoutScoreStatus": layout_score_status if obj_reflow_succeeded else None,
                 "backgroundMode": bg_meta_out.get("backgroundMode") if obj_reflow_succeeded else None,
                 "candidateCount": layout_meta_out.get("candidateCount", 5) if obj_reflow_succeeded else 0,
                 "selectedCandidateId": layout_meta_out.get("selectedCandidateId") if obj_reflow_succeeded else None,

@@ -205,28 +205,42 @@ def composite_layout(
         )
 
     # ── debug metadata ────────────────────────────────────────────────────────
-    # hardFailReasons: layout_compiler가 수집한 모든 후보들의 실패 이유 (전 유형)
+    # hardFailReasons: 모든 후보의 실패 이유 전체 집합 (debug용)
     all_hard_fail_reasons: list = layout_meta.get("hardFailures", [])
 
-    # safeZoneViolations: safe zone 관련 위반만 분리 (hardFailReasons 전체 넣지 않음)
-    sz_violations: list = [
-        r for r in all_hard_fail_reasons
-        if "safe zone" in r.lower()
-    ]
+    # emergency fallback 여부 판정
+    is_emergency: bool = best.get("candidateId") == "emergency_fallback"
+
+    # safeZoneViolations: 선택된 candidate 기준으로만 추출
+    #   - 일반 valid candidate: best.hardFailReasons에서 safe zone 관련만
+    #     (valid candidate는 hardFail=False이므로 보통 []임)
+    #   - emergency fallback: 전체 후보 실패 이유에서 safe zone 관련 추출
+    if is_emergency:
+        sz_violations: list = [r for r in all_hard_fail_reasons if "safe zone" in r.lower()]
+    else:
+        sz_violations = [r for r in best.get("hardFailReasons", []) if "safe zone" in r.lower()]
+
+    # safeZonePassed: 선택 candidate가 safe zone 통과 + 필수 asset 누락 없음
+    # emergency fallback이면 항상 False (품질 저하 신호)
+    safeZonePassed: bool = (
+        not is_emergency
+        and len(missing_required_assets) == 0
+        and len(sz_violations) == 0
+    )
 
     meta = {
         "renderMode":              "object-layout-reflow",
         "objectReflowUsed":        True,
-        "objectReflowFallbackUsed": False,
+        "objectReflowFallbackUsed": is_emergency,
         "backgroundMode":          bg_meta.get("backgroundMode"),
         "backgroundBlurUsed":      bg_meta.get("blurUsed", False),
         "layoutScore":             layout_meta.get("layoutScore"),
         "candidateCount":          layout_meta.get("candidateCount"),
         "selectedCandidateId":     layout_meta.get("selectedCandidateId"),
         "ratioType":               layout_meta.get("ratioType"),
-        "safeZonePassed":          len(missing_required_assets) == 0 and len(sz_violations) == 0,
-        "safeZoneViolations":      sz_violations,          # safe zone 위반만
-        "hardFailReasons":         all_hard_fail_reasons,  # 전 유형 실패 이유 (별도 필드)
+        "safeZonePassed":          safeZonePassed,
+        "safeZoneViolations":      sz_violations,          # 선택 candidate 기준
+        "hardFailReasons":         all_hard_fail_reasons,  # 전 유형 전 후보 (debug용)
         "droppedObjects":          dropped_objects,
         "missingRequiredAssets":   missing_required_assets,
         "renderedRoles":           rendered_roles,
