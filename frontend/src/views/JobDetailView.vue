@@ -120,11 +120,14 @@
                 <span v-if="r.selectedArtboardType" class="artboard-type-tag">{{ artboardTypeLabel(r.selectedArtboardType) }}</span>
                 <span v-if="r.selectedSourceArtboardSize" class="artboard-size-tag">{{ r.selectedSourceArtboardSize }}</span>
                 <span v-if="r.artboardMatchScore != null" class="artboard-match-score" :class="artboardMatchClass(r.artboardMatchScore)">
-                  매치 {{ Math.round(r.artboardMatchScore * 100) }}%
+                  매치 {{ Math.round(r.artboardMatchScore * 100) }}% · {{ artboardMatchLabel(r.artboardMatchScore) }}
                 </span>
                 <span v-if="r.sourceMatchType" class="source-match-tag" :class="'smt-' + r.sourceMatchType">
                   {{ sourceMatchTypeLabel(r.sourceMatchType) }}
                 </span>
+              </div>
+              <div v-if="artboardMatchWarning(r)" class="artboard-ratio-warn" :class="r.artboardMatchScore < 0.50 ? 'arw-bad' : 'arw-warn'">
+                ⚠ {{ artboardMatchWarning(r) }}
               </div>
               <div v-if="r.actualPsdRenderMode === 'layer-reflow'" class="layer-reflow-badge">
                 ⊞ PSD 레이어 재배치
@@ -525,9 +528,25 @@ function artboardTypeClass(t) {
 }
 function artboardMatchClass(score) {
   if (score == null) return ''
-  if (score >= 0.90) return 'match-good'
-  if (score >= 0.60) return 'match-warn'
+  if (score >= 0.80) return 'match-good'
+  if (score >= 0.50) return 'match-warn'
   return 'match-bad'
+}
+function artboardMatchLabel(score) {
+  if (score == null) return ''
+  if (score >= 0.80) return '정상'
+  if (score >= 0.50) return '주의'
+  return '비율 차이 큼'
+}
+function artboardMatchWarning(r) {
+  const score = r.artboardMatchScore
+  if (score == null || score >= 0.80) return ''
+  const TYPE_KR = { square: '정방형', vertical: '세로형', horizontal: '가로형', custom: '커스텀' }
+  const typeName = TYPE_KR[r.selectedArtboardType] ?? '선택된'
+  if (score < 0.50) {
+    return `${typeName} 아트보드와 타깃 규격의 비율 차이가 크므로 배경 확장이 적용됩니다. 결과 품질을 확인하세요.`
+  }
+  return `${typeName} 아트보드와 타깃 규격의 비율이 다소 차이가 있어 배경 확장이 적용될 수 있습니다.`
 }
 function sourceMatchTypeLabel(t) {
   const m = { exact: '정확', inferred: '추정', fallback: '전체' }
@@ -947,6 +966,12 @@ onUnmounted(stopPolling)
 .smt-exact    { color: #065F46; background: #D1FAE5; }
 .smt-inferred { color: #92400E; background: #FEF3C7; }
 .smt-fallback { color: #6B7280; background: #F3F4F6; }
+.artboard-ratio-warn {
+  margin-top: 3px; font-size: 11px; font-weight: 500;
+  padding: 4px 10px; border-radius: 6px; display: inline-block;
+}
+.arw-warn { color: #92400E; background: #FFFBEB; border: 1px solid #FDE68A; }
+.arw-bad  { color: #991B1B; background: #FFF1F2; border: 1px solid #FECDD3; }
 @media (prefers-color-scheme: dark) {
   .artboard-badge { color: #93C5FD; background: #1E3A5F; }
   .artboard-badge.abt-square     { color: #6EE7B7; background: #064E3B; }
@@ -958,6 +983,8 @@ onUnmounted(stopPolling)
   .smt-exact    { color: #6EE7B7; background: #064E3B; }
   .smt-inferred { color: #FCD34D; background: #451A03; }
   .smt-fallback { color: #9CA3AF; background: #1F2937; }
+  .arw-warn { color: #FCD34D; background: #451A03; border-color: #78350F; }
+  .arw-bad  { color: #FCA5A5; background: #450A0A; border-color: #7F1D1D; }
 }
 .psd-fallback-badge {
   margin-top: 3px;
