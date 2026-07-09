@@ -259,6 +259,13 @@ public class BannerService {
                         br.setCropFallbackRoles(r.getCropFallbackRoles());
                         br.setLowConfidenceRoles(r.getLowConfidenceRoles());
                         br.setObjectSafeZonePass(r.getObjectSafeZonePass());
+                        br.setRenderMode(r.getRenderMode());
+                        br.setObjectReflowUsed(r.getObjectReflowUsed());
+                        br.setObjectReflowFallbackUsed(r.getObjectReflowFallbackUsed());
+                        br.setLayoutScore(r.getLayoutScore());
+                        br.setBackgroundMode(r.getBackgroundMode());
+                        br.setCandidateCount(r.getCandidateCount());
+                        br.setSelectedCandidateId(r.getSelectedCandidateId());
                         return br;
                     }).toList()
                     : List.of();

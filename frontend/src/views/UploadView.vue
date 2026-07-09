@@ -996,6 +996,9 @@ async function runObjectAnalysis() {
     }
     const { data } = await analyzePsdObjects(fd)
     objAnalysisResult.value = data
+    if (objReflowCanActivate.value) {
+      psdMode.value = 'object-reflow'
+    }
   } catch (e) {
     objAnalysisError.value = e.response?.data?.message || 'AI 객체 분석 중 오류가 발생했습니다.'
   } finally {

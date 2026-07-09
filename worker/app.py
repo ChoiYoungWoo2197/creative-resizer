@@ -60,7 +60,8 @@ def generate():
         result_items, missing_ratio_types = resizer.generate(
             psd_path, specs, resize_mode, output_format, job_output_dir,
             smart_fit_strength, focal_position, source_type, psd_mode,
-            selected_artboard_ids, object_reflow_enabled, object_analysis
+            selected_artboard_ids, object_reflow_enabled, object_analysis,
+            job_id=job_id
         )
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)

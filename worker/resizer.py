@@ -1072,14 +1072,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
              psd_mode: str = "artboard-first",
              selected_artboard_ids: list[str] | None = None,
              object_reflow_enabled: bool = False,
-             object_analysis: dict | None = None) -> tuple[list[dict], list[str]]:
+             object_analysis: dict | None = None,
+             job_id: str | None = None) -> tuple[list[dict], list[str]]:
     """returns (results, missingRatioTypes)"""
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
 
-    # 4차-9: 객체 기반 재배치 모드
-    if source_type == "psd" and psd_mode == "object-reflow" and object_reflow_enabled and object_analysis:
+    # 4차-9: 객체 기반 재배치 모드 (OR 조건: objectReflowEnabled OR psdMode=="object-reflow")
+    if source_type == "psd" and (object_reflow_enabled or psd_mode == "object-reflow"):
         import psd_tools
         import tempfile
         from psd_layer_parser import parse_psd_layers
@@ -1087,10 +1088,13 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         from object_reflow_engine import compute_layout
         from object_reflow_compositor import composite_objects
 
-        ai_objects = object_analysis.get("objects", [])
-        artboard_box = object_analysis.get("artboardBox")
-        canvas_w = int(object_analysis.get("canvasWidth") or 0)
-        canvas_h = int(object_analysis.get("canvasHeight") or 0)
+        ai_objects = (object_analysis or {}).get("objects", [])
+        artboard_box = (object_analysis or {}).get("artboardBox")
+        canvas_w = int((object_analysis or {}).get("canvasWidth") or 0)
+        canvas_h = int((object_analysis or {}).get("canvasHeight") or 0)
+
+        if not ai_objects:
+            print(f"[{job_id or 'job'}][ObjectReflow] AI 분석 없음 — artboard-first fallback 예정")
 
         try:
             psd = psd_tools.PSDImage.open(psd_path)
@@ -1134,6 +1138,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             obj_reflow_mode = None
             fallback_img = None
 
+            print(f"[{job_id or 'job'}][ObjectReflow] spec={name} size={w}x{h}")
+
             if artboard_img and ai_objects:
                 try:
                     resolved = resolve_sources(ai_objects, psd_layers, artboard_img, artboard_box)
@@ -1153,9 +1159,10 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                         final_img = final_img.convert("RGB")
                     final_img.save(out_path)
                     obj_reflow_succeeded = True
+                    print(f"[{job_id or 'job'}][ObjectReflow] success spec={name} size={w}x{h} mode={obj_reflow_mode}")
                 except Exception as e:
                     obj_reflow_error = str(e)
-                    print(f"[ObjectReflow] 실패 {w}x{h}: {e}")
+                    print(f"[{job_id or 'job'}][ObjectReflow] fallback spec={name} size={w}x{h} reason={e}")
 
             if not obj_reflow_succeeded:
                 # fallback: artboard_img 있으면 smart-fit, 없으면 flatten
@@ -1234,6 +1241,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "layerReflowDetectedRoles": [],
                 "layerReflowTemplate": None,
                 "usedLayerRoles": [],
+                # 1단계: 고품질 경로 메타
+                "renderMode": "psd_object_reflow" if obj_reflow_succeeded else "psd_artboard_first",
+                "objectReflowUsed": obj_reflow_succeeded,
+                "objectReflowFallbackUsed": not obj_reflow_succeeded,
+                "layoutScore": None,
+                "backgroundMode": obj_reflow_mode if obj_reflow_succeeded else None,
+                "candidateCount": 1 if obj_reflow_succeeded else 0,
+                "selectedCandidateId": "default" if obj_reflow_succeeded else None,
             })
         return results, []
 
@@ -1383,6 +1398,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "qualityLabel":         enhance_meta.get("qualityLabel"),
                 "safeZonePass":         safe_zone_pass,
                 "requiredLayerMissing": required_layer_missing,
+                # 1단계: 고품질 경로 메타
+                "renderMode": "psd_layer_reflow",
+                "objectReflowUsed": False,
+                "objectReflowFallbackUsed": False,
+                "layoutScore": None,
+                "backgroundMode": None,
+                "candidateCount": None,
+                "selectedCandidateId": None,
             })
         return results, []
 
@@ -1557,6 +1580,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "qualityLabel":         enhance_meta.get("qualityLabel"),
                 "safeZonePass":         None,
                 "requiredLayerMissing": None,
+                # 1단계: 고품질 경로 메타
+                "renderMode": "psd_artboard_first",
+                "objectReflowUsed": False,
+                "objectReflowFallbackUsed": False,
+                "layoutScore": None,
+                "backgroundMode": None,
+                "candidateCount": None,
+                "selectedCandidateId": None,
             })
         return results, missing_ratio_types
 
@@ -1629,6 +1660,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "qualityLabel":         enhance_meta.get("qualityLabel"),
             "safeZonePass":         None,
             "requiredLayerMissing": None,
+            # 1단계: 고품질 경로 메타
+            "renderMode": "flatten",
+            "objectReflowUsed": False,
+            "objectReflowFallbackUsed": False,
+            "layoutScore": None,
+            "backgroundMode": None,
+            "candidateCount": None,
+            "selectedCandidateId": None,
         })
 
     return results, []

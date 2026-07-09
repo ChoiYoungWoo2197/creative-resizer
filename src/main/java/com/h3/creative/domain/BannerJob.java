@@ -119,6 +119,15 @@ public class BannerJob {
         private List<String> lowConfidenceRoles;
         private Boolean objectSafeZonePass;
 
+        // 1단계: 고품질 경로 메타
+        private String renderMode;
+        private Boolean objectReflowUsed;
+        private Boolean objectReflowFallbackUsed;
+        private Double layoutScore;
+        private String backgroundMode;
+        private Integer candidateCount;
+        private String selectedCandidateId;
+
         // AI 후보 적용 이력
         private String selectedCompareId;
         private String selectedCandidate;       // safe / balanced / fill
