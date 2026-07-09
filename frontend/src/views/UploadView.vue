@@ -131,6 +131,16 @@
                     </div>
                   </div>
                 </label>
+                <label v-if="objAnalysisResult && objAnalysisResult.reflowReady"
+                  class="psd-mode-option" :class="{ on: psdMode === 'object-reflow' }">
+                  <input type="radio" name="psdMode" value="object-reflow" v-model="psdMode" style="display:none" />
+                  <div class="psd-mode-body" @click="psdMode = 'object-reflow'">
+                    <div class="psd-mode-name">
+                      객체 기반 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span>
+                    </div>
+                    <div class="psd-mode-desc">AI 객체 분석 결과를 기반으로 레이아웃을 재구성합니다.</div>
+                  </div>
+                </label>
               </div>
             </div>
             <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
@@ -1148,6 +1158,10 @@ async function submit() {
     fd.append('aiRecommendedResizeMode', aiAnalysis.value.resizeMode ?? '')
     fd.append('aiRecommendedSmartFitStrength', aiAnalysis.value.smartFitStrength ?? '')
     fd.append('aiRecommendedFocalPosition', aiAnalysis.value.focalPosition ?? '')
+  }
+  if (isPsdFile.value && psdMode.value === 'object-reflow' && objAnalysisResult.value?.id) {
+    fd.append('objectAnalysisId', objAnalysisResult.value.id)
+    fd.append('objectReflowEnabled', 'true')
   }
 
   loading.value = true

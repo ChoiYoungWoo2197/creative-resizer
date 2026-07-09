@@ -36,6 +36,10 @@ public class BannerJob {
     private String zipPath;
     private List<BannerResult> results;
 
+    // 4차-9: Object Reflow
+    private String objectAnalysisId;
+    private Boolean objectReflowEnabled;
+
     // AI 추천 적용 이력
     private String aiAnalysisId;
     private Boolean aiApplied;
@@ -103,6 +107,17 @@ public class BannerJob {
         private List<String> layerReflowDetectedRoles;
         private String layerReflowTemplate;  // horizontal-1250x560-product / horizontal-1250x560-poster
         private List<String> usedLayerRoles; // headline, product, cta, logo ...
+
+        // 4차-9: Object Reflow 결과
+        private Boolean objectReflowAttempted;
+        private Boolean objectReflowSucceeded;
+        private String objectReflowMode;
+        private String objectReflowFallbackReason;
+        private List<String> usedObjectRoles;
+        private List<String> missingObjectRoles;
+        private List<String> cropFallbackRoles;
+        private List<String> lowConfidenceRoles;
+        private Boolean objectSafeZonePass;
 
         // AI 후보 적용 이력
         private String selectedCompareId;

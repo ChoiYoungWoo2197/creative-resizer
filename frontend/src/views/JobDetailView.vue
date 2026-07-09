@@ -141,6 +141,20 @@
               <div v-if="recommendedPsdHint(r)" class="artboard-recommend-hint">
                 💡 {{ recommendedPsdHint(r) }}
               </div>
+              <div v-if="r.renderSource === 'psd_object_reflow'" class="object-reflow-badge">
+                ⊙ AI 객체 기반 재배치
+                <span v-if="r.objectReflowMode" class="object-reflow-mode">{{ objectReflowModeLabel(r.objectReflowMode) }}</span>
+                <span v-if="r.objectSafeZonePass != null" class="safe-zone-badge"
+                      :class="r.objectSafeZonePass ? 'safe-zone-ok' : 'safe-zone-fail'">
+                  {{ r.objectSafeZonePass ? '✓ 세이프존' : '✕ 세이프존' }}
+                </span>
+              </div>
+              <div v-if="r.usedObjectRoles && r.usedObjectRoles.length" class="reflow-roles">
+                <span v-for="role in r.usedObjectRoles" :key="role" class="reflow-role-tag obj-role">{{ role }}</span>
+              </div>
+              <div v-if="r.objectReflowAttempted && !r.objectReflowSucceeded" class="fallback-reason">
+                객체 재배치 실패: {{ r.objectReflowFallbackReason || '대체 렌더링 처리됨' }}
+              </div>
               <div v-if="r.actualPsdRenderMode === 'layer-reflow'" class="layer-reflow-badge">
                 ⊞ PSD 레이어 재배치
                 <span v-if="r.layerReflowTemplate" class="reflow-template">{{ r.layerReflowTemplate }}</span>
@@ -489,6 +503,11 @@ const ROLE_LABELS = {
   badge: '배지', price: '가격',
 }
 function roleLabel(role) { return ROLE_LABELS[role] ?? role }
+
+const OBJECT_REFLOW_MODE_LABELS = {
+  layer_asset: '레이어 추출', bbox_crop: 'AI 영역 크롭', flat_background: '배경 합성',
+}
+function objectReflowModeLabel(mode) { return OBJECT_REFLOW_MODE_LABELS[mode] ?? mode }
 
 const CANDIDATE_TYPE_LABELS = {
   safe:          '안전형',
@@ -1074,6 +1093,21 @@ onUnmounted(stopPolling)
   font-size: 10px; color: #92400E; background: #FEF3C7;
   border-radius: 6px; padding: 2px 8px;
   display: inline-block; line-height: 1.4;
+}
+.object-reflow-badge {
+  margin-top: 4px;
+  font-size: 11px; font-weight: 600;
+  color: #6D28D9; background: #EDE9FE;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.object-reflow-mode {
+  font-size: 10px; font-weight: 500;
+  color: #7C3AED; background: #DDD6FE;
+  border-radius: 4px; padding: 1px 5px;
+}
+.reflow-role-tag.obj-role {
+  color: #5B21B6; background: #EDE9FE;
 }
 .layer-reflow-badge {
   margin-top: 4px;

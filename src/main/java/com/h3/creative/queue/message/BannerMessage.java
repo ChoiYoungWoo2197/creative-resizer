@@ -24,4 +24,8 @@ public class BannerMessage {
     private String sourceType;
     private String psdMode;
     private List<String> selectedArtboardIds;
+
+    // 4차-9: Object Reflow
+    private String objectAnalysisId;
+    private Boolean objectReflowEnabled;
 }

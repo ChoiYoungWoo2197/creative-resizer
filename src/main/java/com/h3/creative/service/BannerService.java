@@ -1,9 +1,12 @@
 package com.h3.creative.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.h3.creative.domain.BannerJob;
 import com.h3.creative.domain.BannerSpec;
+import com.h3.creative.domain.PsdObjectAnalysis;
 import java.util.ArrayList;
 import com.h3.creative.mongo.BannerMongoService;
+import com.h3.creative.mongo.PsdObjectAnalysisMongoService;
 import com.h3.creative.mongo.SpecMongoService;
 import com.h3.creative.queue.message.BannerMessage;
 import com.h3.creative.queue.producer.BannerProducer;
@@ -19,6 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -30,6 +34,8 @@ public class BannerService {
     private final SpecMongoService specMongoService;
     private final BannerProducer bannerProducer;
     private final WorkerClient workerClient;
+    private final PsdObjectAnalysisMongoService psdObjectAnalysisMongoService;
+    private final ObjectMapper objectMapper;
 
     @Value("${creative.storage.upload-dir}")
     private String uploadDir;
@@ -40,7 +46,8 @@ public class BannerService {
                             String aiAnalysisId, Boolean aiApplied,
                             String aiRecommendedResizeMode, String aiRecommendedSmartFitStrength,
                             String aiRecommendedFocalPosition,
-                            String psdMode, List<String> selectedArtboardIds) throws IOException {
+                            String psdMode, List<String> selectedArtboardIds,
+                            String objectAnalysisId, Boolean objectReflowEnabled) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
         if (psdMode == null || psdMode.isBlank()) psdMode = "artboard-first";
@@ -77,6 +84,10 @@ public class BannerService {
         if (selectedArtboardIds != null && !selectedArtboardIds.isEmpty()) {
             job.setSelectedArtboardIds(selectedArtboardIds);
         }
+        if (objectAnalysisId != null && !objectAnalysisId.isBlank()) {
+            job.setObjectAnalysisId(objectAnalysisId);
+        }
+        job.setObjectReflowEnabled(objectReflowEnabled != null && objectReflowEnabled);
 
         // PSD이면 Worker에 분석 요청 → 결과를 job에 저장 (프론트 즉시 표시용)
         if ("psd".equals(sourceType)) {
@@ -105,6 +116,8 @@ public class BannerService {
                 .sourceType(sourceType)
                 .psdMode(job.getPsdMode())
                 .selectedArtboardIds(job.getSelectedArtboardIds())
+                .objectAnalysisId(job.getObjectAnalysisId())
+                .objectReflowEnabled(job.getObjectReflowEnabled())
                 .build();
 
         bannerProducer.publish(message);
@@ -122,6 +135,7 @@ public class BannerService {
         if (!"psd".equals(sourceType)) return null;
         if ("flatten".equals(psdMode)) return "flatten";
         if ("layer-reflow".equals(psdMode)) return "layer-reflow";
+        if ("object-reflow".equals(psdMode)) return "object-reflow";
         return "artboard-first";
     }
 
@@ -153,6 +167,20 @@ public class BannerService {
                         .build())
                 .toList();
 
+        // 4차-9: object-reflow 모드면 PsdObjectAnalysis 로드 → Map 스냅샷으로 전달
+        Map<String, Object> objectAnalysisSnapshot = null;
+        boolean objectReflowEnabled = Boolean.TRUE.equals(message.getObjectReflowEnabled());
+        if (objectReflowEnabled && message.getObjectAnalysisId() != null) {
+            try {
+                PsdObjectAnalysis oa = psdObjectAnalysisMongoService.findById(message.getObjectAnalysisId());
+                if (oa != null) {
+                    objectAnalysisSnapshot = objectMapper.convertValue(oa, Map.class);
+                }
+            } catch (Exception e) {
+                log.warn("PsdObjectAnalysis 로딩 실패 id={}: {}", message.getObjectAnalysisId(), e.getMessage());
+            }
+        }
+
         WorkerRequest request = WorkerRequest.builder()
                 .jobId(jobId)
                 .psdPath(message.getPsdPath())
@@ -164,6 +192,8 @@ public class BannerService {
                 .sourceType(message.getSourceType() != null ? message.getSourceType() : "image")
                 .psdMode(message.getPsdMode() != null ? message.getPsdMode() : "artboard-first")
                 .selectedArtboardIds(message.getSelectedArtboardIds())
+                .objectReflowEnabled(objectReflowEnabled)
+                .objectAnalysis(objectAnalysisSnapshot)
                 .build();
 
         WorkerResponse response = workerClient.generate(request);
@@ -220,6 +250,15 @@ public class BannerService {
                         br.setLayerReflowDetectedRoles(r.getLayerReflowDetectedRoles());
                         br.setLayerReflowTemplate(r.getLayerReflowTemplate());
                         br.setUsedLayerRoles(r.getUsedLayerRoles());
+                        br.setObjectReflowAttempted(r.getObjectReflowAttempted());
+                        br.setObjectReflowSucceeded(r.getObjectReflowSucceeded());
+                        br.setObjectReflowMode(r.getObjectReflowMode());
+                        br.setObjectReflowFallbackReason(r.getObjectReflowFallbackReason());
+                        br.setUsedObjectRoles(r.getUsedObjectRoles());
+                        br.setMissingObjectRoles(r.getMissingObjectRoles());
+                        br.setCropFallbackRoles(r.getCropFallbackRoles());
+                        br.setLowConfidenceRoles(r.getLowConfidenceRoles());
+                        br.setObjectSafeZonePass(r.getObjectSafeZonePass());
                         return br;
                     }).toList()
                     : List.of();

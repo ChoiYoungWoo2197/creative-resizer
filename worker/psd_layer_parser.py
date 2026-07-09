@@ -2,6 +2,7 @@
 visible layer 순회 → bbox / opacity / depth / preview PNG 추출.
 """
 import os
+import re
 
 
 def _detect_layer_type(layer) -> str:
@@ -56,8 +57,9 @@ def parse_psd_layers(psd, job_dir: str) -> list:
             if lw <= 0 or lh <= 0:
                 continue
 
-            layer_id = f"layer_{idx:03d}"
-            name = layer.name or layer_id
+            name = layer.name or f"layer_{idx:03d}"
+            safe_name = re.sub(r'[^\w\-]', '_', name)[:32].strip('_') or f"layer_{idx:03d}"
+            layer_id = f"{safe_name}_{lx}_{ly}"
 
             # depth: parent chain 깊이
             depth = 0

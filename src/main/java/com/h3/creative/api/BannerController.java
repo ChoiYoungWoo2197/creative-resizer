@@ -81,12 +81,14 @@ public class BannerController {
             @RequestParam(required = false) String aiRecommendedSmartFitStrength,
             @RequestParam(required = false) String aiRecommendedFocalPosition,
             @RequestParam(defaultValue = "artboard-first") String psdMode,
-            @RequestParam(required = false) List<String> selectedArtboardIds
+            @RequestParam(required = false) List<String> selectedArtboardIds,
+            @RequestParam(required = false) String objectAnalysisId,
+            @RequestParam(required = false) Boolean objectReflowEnabled
     ) throws IOException {
         BannerJob job = bannerService.submit(psdFile, advertiser, campaignName, specIds, resizeMode,
                 smartFitStrength, focalPosition, outputFormat,
                 aiAnalysisId, aiApplied, aiRecommendedResizeMode, aiRecommendedSmartFitStrength, aiRecommendedFocalPosition,
-                psdMode, selectedArtboardIds);
+                psdMode, selectedArtboardIds, objectAnalysisId, objectReflowEnabled);
         return ResponseEntity.ok(job);
     }
 

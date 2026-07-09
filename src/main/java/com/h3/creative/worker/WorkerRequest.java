@@ -20,6 +20,10 @@ public class WorkerRequest {
     private String psdMode;      // artboard-first / flatten
     private List<String> selectedArtboardIds;  // 사용자가 선택한 아트보드 ID 목록 (null = 전체)
 
+    // 4차-9: Object Reflow
+    private Boolean objectReflowEnabled;
+    private java.util.Map<String, Object> objectAnalysis;  // PsdObjectAnalysis 스냅샷
+
     @Data
     @Builder
     public static class SpecItem {

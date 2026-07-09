@@ -1070,11 +1070,172 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
              output_format: str, output_dir: str, smart_fit_strength: str = "balanced",
              focal_position: str = "center", source_type: str = "image",
              psd_mode: str = "artboard-first",
-             selected_artboard_ids: list[str] | None = None) -> tuple[list[dict], list[str]]:
+             selected_artboard_ids: list[str] | None = None,
+             object_reflow_enabled: bool = False,
+             object_analysis: dict | None = None) -> tuple[list[dict], list[str]]:
     """returns (results, missingRatioTypes)"""
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
+
+    # 4차-9: 객체 기반 재배치 모드
+    if source_type == "psd" and psd_mode == "object-reflow" and object_reflow_enabled and object_analysis:
+        import psd_tools
+        import tempfile
+        from psd_layer_parser import parse_psd_layers
+        from object_source_resolver import resolve_sources
+        from object_reflow_engine import compute_layout
+        from object_reflow_compositor import composite_objects
+
+        ai_objects = object_analysis.get("objects", [])
+        artboard_box = object_analysis.get("artboardBox")
+        canvas_w = int(object_analysis.get("canvasWidth") or 0)
+        canvas_h = int(object_analysis.get("canvasHeight") or 0)
+
+        try:
+            psd = psd_tools.PSDImage.open(psd_path)
+            if canvas_w <= 0:
+                canvas_w = psd.width
+            if canvas_h <= 0:
+                canvas_h = psd.height
+
+            # 아트보드 합성 이미지 추출
+            composite_full = psd.composite()
+            if artboard_box:
+                ax = int(artboard_box.get("x", 0))
+                ay = int(artboard_box.get("y", 0))
+                aw = int(artboard_box.get("width", canvas_w))
+                ah = int(artboard_box.get("height", canvas_h))
+                artboard_img = composite_full.crop((ax, ay, ax + aw, ay + ah)).convert("RGBA")
+            else:
+                artboard_img = composite_full.convert("RGBA")
+
+            tmp_dir = tempfile.mkdtemp()
+            psd_layers = parse_psd_layers(psd, tmp_dir)
+        except Exception as e:
+            print(f"[ObjectReflow] PSD 로딩 실패, fallback: {e}")
+            psd_layers = []
+            artboard_img = None
+
+        for spec in specs:
+            media = spec["media"]
+            w = spec["width"]
+            h = spec["height"]
+            slug = spec.get("slug", "")
+            name = spec.get("name", "")
+
+            ext = "jpg" if output_format in ("jpg", "jpeg") else output_format
+            slug_part = f"_{slug}" if slug else ""
+            filename = f"{media}{slug_part}_{w}x{h}.{ext}"
+            out_path = os.path.join(output_dir, filename)
+
+            obj_reflow_succeeded = False
+            obj_reflow_error = None
+            obj_reflow_mode = None
+            fallback_img = None
+
+            if artboard_img and ai_objects:
+                try:
+                    resolved = resolve_sources(ai_objects, psd_layers, artboard_img, artboard_box)
+                    laid_out = compute_layout(ai_objects, w, h)
+                    final_img, obj_meta = composite_objects(resolved, laid_out, w, h)
+
+                    # sourceType 구성 요약
+                    source_types = {v["sourceType"] for v in resolved.values() if v["sourceType"] != "dropped"}
+                    if "layer_asset" in source_types:
+                        obj_reflow_mode = "layer_asset"
+                    elif "bbox_crop" in source_types:
+                        obj_reflow_mode = "bbox_crop"
+                    else:
+                        obj_reflow_mode = "flat_background"
+
+                    if ext in ("jpg", "jpeg"):
+                        final_img = final_img.convert("RGB")
+                    final_img.save(out_path)
+                    obj_reflow_succeeded = True
+                except Exception as e:
+                    obj_reflow_error = str(e)
+                    print(f"[ObjectReflow] 실패 {w}x{h}: {e}")
+
+            if not obj_reflow_succeeded:
+                # fallback: artboard_img 있으면 smart-fit, 없으면 flatten
+                if artboard_img:
+                    fallback_img = artboard_img
+                    obj_reflow_error = obj_reflow_error or "객체 분석 결과 없음"
+                else:
+                    import psd_analyzer
+                    analysis_fb = psd_analyzer.analyze_psd_file(psd_path)
+                    best_ab = psd_analyzer.select_best_artboard(analysis_fb["artboards"], w, h)
+                    if best_ab and best_ab.get("id") != "full_canvas":
+                        fallback_img, _ = psd_analyzer.safe_render_artboard(psd_path, best_ab)
+                    if fallback_img is None:
+                        fallback_img, _, _ = psd_analyzer.fallback_flatten_psd(psd_path)
+                    if fallback_img is None:
+                        fallback_img = Image.new("RGBA", (w, h), (200, 200, 200, 255))
+
+                resized, _ = _apply_resize(fallback_img, w, h, resize_mode or "smart-fit",
+                                           smart_fit_strength or "balanced", focal_position or "center")
+                if ext in ("jpg", "jpeg"):
+                    resized = resized.convert("RGB")
+                resized.save(out_path)
+                obj_meta = {
+                    "usedObjectRoles": [],
+                    "missingObjectRoles": [o.get("role") for o in ai_objects],
+                    "cropFallbackRoles": [],
+                    "lowConfidenceRoles": [],
+                    "objectSafeZonePass": None,
+                }
+
+            file_size = os.path.getsize(out_path)
+            with Image.open(out_path) as check_img:
+                actual_w, actual_h = check_img.size
+            valid = (actual_w == w and actual_h == h)
+            validation_message = "정상" if valid else f"expected={w}x{h}, actual={actual_w}x{actual_h}"
+
+            results.append({
+                "media": media,
+                "name": name,
+                "slug": slug,
+                "width": w,
+                "height": h,
+                "fileName": filename,
+                "filePath": out_path,
+                "fileSize": file_size,
+                "valid": valid,
+                "validationMessage": validation_message,
+                "selectedArtboardId": None,
+                "selectedArtboardName": None,
+                "actualPsdRenderMode": "object-reflow" if obj_reflow_succeeded else "artboard",
+                "renderSource": "psd_object_reflow" if obj_reflow_succeeded else "psd_tools_composite",
+                "fallbackUsed": not obj_reflow_succeeded,
+                "fallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
+                "fallbackErrors": [],
+                "sourceWidth": artboard_img.width if artboard_img else 0,
+                "sourceHeight": artboard_img.height if artboard_img else 0,
+                "objectReflowAttempted": True,
+                "objectReflowSucceeded": obj_reflow_succeeded,
+                "objectReflowMode": obj_reflow_mode,
+                "objectReflowFallbackReason": obj_reflow_error if not obj_reflow_succeeded else None,
+                "usedObjectRoles": obj_meta.get("usedObjectRoles", []),
+                "missingObjectRoles": obj_meta.get("missingObjectRoles", []),
+                "cropFallbackRoles": obj_meta.get("cropFallbackRoles", []),
+                "lowConfidenceRoles": obj_meta.get("lowConfidenceRoles", []),
+                "objectSafeZonePass": obj_meta.get("objectSafeZonePass"),
+                "resizeStrategy": "psd-object-reflow",
+                "candidateType": None, "candidateScore": None,
+                "blurAreaRatio": None, "cropRatio": None, "subjectScale": None,
+                "qualityGate": None, "qualityLabel": None,
+                "safeZonePass": obj_meta.get("objectSafeZonePass"),
+                "requiredLayerMissing": None,
+                "layerReflowAttempted": False,
+                "layerReflowSucceeded": False,
+                "layerReflowError": None,
+                "layerReflowExtractedLayerCount": 0,
+                "layerReflowDetectedRoles": [],
+                "layerReflowTemplate": None,
+                "usedLayerRoles": [],
+            })
+        return results, []
 
     # PSD 레이어 재배치 모드 (4차-2)
     if source_type == "psd" and psd_mode == "layer-reflow":

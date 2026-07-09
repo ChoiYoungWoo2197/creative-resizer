@@ -48,6 +48,8 @@ def generate():
     source_type = data.get("sourceType", "image")
     psd_mode = data.get("psdMode", "artboard-first")
     selected_artboard_ids = data.get("selectedArtboardIds") or []
+    object_reflow_enabled = bool(data.get("objectReflowEnabled", False))
+    object_analysis = data.get("objectAnalysis") or None
 
     if not psd_path or not os.path.exists(psd_path):
         return jsonify({"error": "psd_path not found"}), 400
@@ -58,7 +60,7 @@ def generate():
         result_items, missing_ratio_types = resizer.generate(
             psd_path, specs, resize_mode, output_format, job_output_dir,
             smart_fit_strength, focal_position, source_type, psd_mode,
-            selected_artboard_ids
+            selected_artboard_ids, object_reflow_enabled, object_analysis
         )
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)

@@ -71,5 +71,16 @@ public class WorkerResponse {
         private java.util.List<String> layerReflowDetectedRoles;
         private String layerReflowTemplate;
         private java.util.List<String> usedLayerRoles;
+
+        // 4차-9: Object Reflow 결과
+        private Boolean objectReflowAttempted;
+        private Boolean objectReflowSucceeded;
+        private String objectReflowMode;
+        private String objectReflowFallbackReason;
+        private java.util.List<String> usedObjectRoles;
+        private java.util.List<String> missingObjectRoles;
+        private java.util.List<String> cropFallbackRoles;
+        private java.util.List<String> lowConfidenceRoles;
+        private Boolean objectSafeZonePass;
     }
 }
