@@ -129,6 +129,7 @@ public class BannerJob {
         private String selectedCandidateId;
 
         // 4단계: safe zone 체크 결과
+        private Boolean safeZonePassed;   // canonical (safeZonePass는 alias)
         private List<java.util.Map<String, Object>> safeZoneViolations;
 
         // AI 후보 적용 이력

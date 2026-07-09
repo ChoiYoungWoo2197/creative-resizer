@@ -269,6 +269,7 @@ public class BannerService {
                         br.setBackgroundMode(r.getBackgroundMode());
                         br.setCandidateCount(r.getCandidateCount());
                         br.setSelectedCandidateId(r.getSelectedCandidateId());
+                        br.setSafeZonePassed(r.getSafeZonePassed());
                         br.setSafeZoneViolations(r.getSafeZoneViolations());
                         return br;
                     }).toList()

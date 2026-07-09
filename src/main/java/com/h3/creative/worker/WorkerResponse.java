@@ -93,6 +93,7 @@ public class WorkerResponse {
         private String selectedCandidateId;
 
         // 4단계: safe zone 체크 결과
+        private Boolean safeZonePassed;   // canonical (safeZonePass는 alias)
         private java.util.List<java.util.Map<String, Object>> safeZoneViolations;
     }
 }

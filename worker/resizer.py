@@ -1261,7 +1261,8 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "candidateScore": layout_meta_out.get("layoutScore") if obj_reflow_succeeded else None,
                 "blurAreaRatio": None, "cropRatio": None, "subjectScale": None,
                 "qualityGate": None, "qualityLabel": None,
-                "safeZonePass": obj_sz_passed,
+                "safeZonePassed": obj_sz_passed,   # canonical
+                "safeZonePass": obj_sz_passed,     # backward-compat alias
                 "safeZoneViolations": obj_sz_violations,
                 "requiredLayerMissing": None,
                 "layerReflowAttempted": False,
