@@ -1,9 +1,13 @@
+import base64
+import io
 import os
+import tempfile
 import zipfile
 from flask import Flask, request, jsonify
 import psd_tools
 import resizer
 import psd_analyzer
+import layer_object_matcher
 
 print(f"[PSD] psd-tools version: {getattr(psd_tools, '__version__', 'unknown')}")
 
@@ -101,6 +105,78 @@ def compare():
             "candidates": candidates,
         })
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/extract-artboard", methods=["POST"])
+def extract_artboard():
+    """아트보드 프리뷰 JPEG(base64) + 레이어 목록 반환."""
+    data = request.json or {}
+    psd_path = data.get("psdPath")
+    ab_box = data.get("artboardBox")  # {x, y, width, height} or null
+
+    if not psd_path or not os.path.exists(psd_path):
+        return jsonify({"error": "psdPath not found"}), 400
+
+    try:
+        from psd_layer_parser import parse_psd_layers
+
+        psd = psd_tools.PSDImage.open(psd_path)
+        canvas_w, canvas_h = psd.width, psd.height
+
+        if not ab_box:
+            ab_box = {"x": 0, "y": 0, "width": canvas_w, "height": canvas_h}
+
+        x = max(0, min(int(ab_box["x"]), canvas_w - 1))
+        y = max(0, min(int(ab_box["y"]), canvas_h - 1))
+        w = max(1, min(int(ab_box["width"]), canvas_w - x))
+        h = max(1, min(int(ab_box["height"]), canvas_h - y))
+
+        composite = psd.composite()
+        ab_img = composite.crop((x, y, x + w, y + h))
+        buf = io.BytesIO()
+        ab_img.convert("RGB").save(buf, format="JPEG", quality=88)
+        buf.seek(0)
+        preview_b64 = base64.b64encode(buf.read()).decode()
+
+        tmp_dir = tempfile.mkdtemp()
+        raw_layers = parse_psd_layers(psd, tmp_dir)
+        safe_layers = [
+            {k: v for k, v in layer.items() if k != "_layer_obj" and k != "previewPath"}
+            for layer in raw_layers
+        ]
+
+        return jsonify({
+            "previewBase64": preview_b64,
+            "artboardBox": {"x": x, "y": y, "width": w, "height": h},
+            "layers": safe_layers,
+            "canvasWidth": canvas_w,
+            "canvasHeight": canvas_h,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/match-layers", methods=["POST"])
+def match_layers():
+    """AI 객체 목록을 PSD 레이어에 매칭."""
+    data = request.json or {}
+    ai_objects = data.get("aiObjects", [])
+    psd_layers = data.get("layers", [])
+    ab_box = data.get("artboardBox")
+    canvas_w = int(data.get("canvasWidth", 1))
+    canvas_h = int(data.get("canvasHeight", 1))
+
+    try:
+        matched = layer_object_matcher.match_objects_to_layers(
+            ai_objects, psd_layers, canvas_w, canvas_h, ab_box
+        )
+        return jsonify({"matchedObjects": matched})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 

@@ -50,3 +50,9 @@ export const analyzePsdLayers = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 60000,
   })
+
+export const analyzePsdObjects = (formData) =>
+  api.post('/banner/psd/object-analysis', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })

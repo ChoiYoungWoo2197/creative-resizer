@@ -75,6 +75,49 @@ public class WorkerClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> extractArtboard(String psdPath, java.util.Map<String, Integer> artboardBox) {
+        String url = workerUrl + "/extract-artboard";
+        log.info("Calling worker extract-artboard: psdPath={}", psdPath);
+        try {
+            java.util.Map<String, Object> req = new java.util.LinkedHashMap<>();
+            req.put("psdPath", psdPath);
+            if (artboardBox != null) req.put("artboardBox", artboardBox);
+            org.springframework.http.ResponseEntity<java.util.Map> resp =
+                    restTemplate.postForEntity(url, req, java.util.Map.class);
+            if (resp.getBody() == null) throw new IllegalStateException("Worker returned empty response");
+            return resp.getBody();
+        } catch (Exception e) {
+            log.error("Worker extract-artboard failed: {}", e.getMessage());
+            return java.util.Map.of("error", e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> matchLayers(
+            java.util.List<java.util.Map<String, Object>> aiObjects,
+            java.util.List<java.util.Map<String, Object>> layers,
+            java.util.Map<String, Integer> artboardBox,
+            int canvasWidth, int canvasHeight) {
+        String url = workerUrl + "/match-layers";
+        log.info("Calling worker match-layers: objects={}", aiObjects.size());
+        try {
+            java.util.Map<String, Object> req = new java.util.LinkedHashMap<>();
+            req.put("aiObjects", aiObjects);
+            req.put("layers", layers);
+            if (artboardBox != null) req.put("artboardBox", artboardBox);
+            req.put("canvasWidth", canvasWidth);
+            req.put("canvasHeight", canvasHeight);
+            org.springframework.http.ResponseEntity<java.util.Map> resp =
+                    restTemplate.postForEntity(url, req, java.util.Map.class);
+            if (resp.getBody() == null) throw new IllegalStateException("Worker returned empty response");
+            return resp.getBody();
+        } catch (Exception e) {
+            log.error("Worker match-layers failed: {}", e.getMessage());
+            return java.util.Map.of("error", e.getMessage());
+        }
+    }
+
     public boolean isHealthy() {
         try {
             restTemplate.getForEntity(workerUrl + "/health", String.class);

@@ -5,9 +5,11 @@ import com.h3.creative.domain.BannerAiAnalysis;
 import com.h3.creative.domain.BannerAiCompare;
 import com.h3.creative.domain.BannerJob;
 import com.h3.creative.domain.CompareRequest;
+import com.h3.creative.domain.PsdObjectAnalysis;
 import com.h3.creative.service.BannerAnalysisService;
 import com.h3.creative.service.BannerCompareService;
 import com.h3.creative.service.BannerService;
+import com.h3.creative.service.PsdObjectAnalysisService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
@@ -36,6 +38,7 @@ public class BannerController {
     private final BannerService bannerService;
     private final BannerAnalysisService bannerAnalysisService;
     private final BannerCompareService bannerCompareService;
+    private final PsdObjectAnalysisService psdObjectAnalysisService;
 
     @PostMapping("/analyze")
     public ResponseEntity<BannerAiAnalysis> analyze(@RequestParam MultipartFile file) throws IOException {
@@ -46,6 +49,20 @@ public class BannerController {
     public ResponseEntity<com.h3.creative.domain.PsdAnalysis> analyzePsd(
             @RequestParam MultipartFile psdFile) throws IOException {
         return ResponseEntity.ok(bannerService.analyzePsdLayers(psdFile));
+    }
+
+    @PostMapping("/psd/object-analysis")
+    public ResponseEntity<PsdObjectAnalysis> psdObjectAnalysis(
+            @RequestParam MultipartFile psdFile,
+            @RequestParam(required = false) String selectedArtboardId,
+            @RequestParam(defaultValue = "0") int artboardX,
+            @RequestParam(defaultValue = "0") int artboardY,
+            @RequestParam int artboardWidth,
+            @RequestParam int artboardHeight
+    ) throws IOException {
+        PsdObjectAnalysis result = psdObjectAnalysisService.analyze(
+                psdFile, selectedArtboardId, artboardX, artboardY, artboardWidth, artboardHeight);
+        return ResponseEntity.ok(result);
     }
 
     @PostMapping("/upload")
