@@ -32,9 +32,10 @@ def generate_psd_layer_reflow(file_path: str, target_w: int, target_h: int,
         "outputPath":           None,
     }
 
-    # MVP: 1250×560만 지원
-    if not (target_w == 1250 and target_h == 560):
-        result["error"] = f"unsupported target size: {target_w}x{target_h}"
+    # 가로형(ratio>=1.3)은 generic horizontal layout으로 지원
+    target_ratio = target_w / max(target_h, 1)
+    if target_ratio < 1.3:
+        result["error"] = f"unsupported target ratio: {target_w}x{target_h} (ratio={target_ratio:.2f} < 1.3)"
         return result
 
     # PSD 열기

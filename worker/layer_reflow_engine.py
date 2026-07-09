@@ -1,9 +1,9 @@
 """4차-5: Layer Reflow Engine.
 분류된 레이어 → 타겟 캔버스 배치 좌표 계산.
-현재 MVP 대상: Naver GFA 모바일DA 1250×560.
+1250×560 전용 + 가로형(ratio>=1.3) generic horizontal 지원.
 """
 
-# Naver GFA 1250×560 safe zone (top/right/bottom/left)
+# 규격별 safe zone (top/right/bottom/left)
 SAFE_ZONES = {
     (1250, 560): {"top": 50, "right": 50, "bottom": 35, "left": 240},
 }
@@ -90,6 +90,50 @@ def _overlap_risk(placements: list) -> bool:
     return False
 
 
+def _build_generic_horizontal_slots(classified: list, target_w: int, target_h: int) -> tuple:
+    """1250×560 이외의 가로형 규격 generic 슬롯 생성.
+    main_image bbox 좌우 위치 기준으로 이미지/텍스트 배치.
+    반환: (slots_dict, layout_name)
+    """
+    main_layers = [l for l in classified if l["role"] == "main_image"]
+    canvas_w = main_layers[0].get("canvasWidth", target_w) or target_w if main_layers else target_w
+    cx = (main_layers[0]["bbox"]["x"] + main_layers[0]["bbox"]["width"] / 2) if main_layers else canvas_w / 2
+    image_left = cx <= canvas_w / 2
+
+    margin = int(target_w * 0.02)
+    left_safe = int(target_w * 0.20)
+    img_w = int(target_w * 0.44)
+    txt_w = int(target_w * 0.38)
+    img_y = int(target_h * 0.10)
+    img_h = int(target_h * 0.80)
+    title_h = int(target_h * 0.18)
+    body_h = int(target_h * 0.16)
+    cta_h = int(target_h * 0.14)
+    logo_h = int(target_h * 0.12)
+    top_pad = int(target_h * 0.10)
+
+    if image_left:
+        img_x = left_safe
+        txt_x = left_safe + img_w + margin * 2
+        layout_name = "generic_horizontal_image_left"
+    else:
+        txt_x = left_safe
+        img_x = left_safe + txt_w + margin * 2
+        layout_name = "generic_horizontal_image_right"
+
+    slots = {
+        "background": {"x": 0,    "y": 0,      "w": target_w,   "h": target_h,   "mode": "cover"},
+        "main_image": {"x": img_x, "y": img_y,  "w": img_w,      "h": img_h,      "mode": "contain"},
+        "logo":       {"x": txt_x, "y": top_pad, "w": int(txt_w * 0.45), "h": logo_h, "mode": "contain"},
+        "title":      {"x": txt_x, "y": int(target_h * 0.28), "w": txt_w, "h": title_h, "mode": "contain"},
+        "body_text":  {"x": txt_x, "y": int(target_h * 0.50), "w": txt_w, "h": body_h, "mode": "contain"},
+        "cta":        {"x": txt_x, "y": int(target_h * 0.70), "w": txt_w, "h": cta_h,  "mode": "contain"},
+        "badge":      {"x": txt_x, "y": int(target_h * 0.82), "w": int(txt_w * 0.45), "h": int(target_h * 0.12), "mode": "contain"},
+        "decorative": {"x": margin, "y": margin, "w": int(target_w * 0.10), "h": int(target_h * 0.15), "mode": "contain"},
+    }
+    return slots, layout_name
+
+
 def compute_layout(classified: list, target_w: int, target_h: int) -> dict:
     """분류된 레이어 목록으로 최적 레이아웃 배치 계산.
 
@@ -101,10 +145,11 @@ def compute_layout(classified: list, target_w: int, target_h: int) -> dict:
         error: str | None,
     }
     """
-    if not (target_w == 1250 and target_h == 560):
+    target_ratio = target_w / max(target_h, 1)
+    if target_ratio < 1.3:
         return {
             "success": False,
-            "error": f"unsupported target: {target_w}x{target_h}",
+            "error": f"unsupported target: {target_w}x{target_h} (ratio={target_ratio:.2f} < 1.3)",
             "requiredLayerMissing": False,
         }
 
@@ -118,8 +163,12 @@ def compute_layout(classified: list, target_w: int, target_h: int) -> dict:
             "quality": {"safeZonePass": False, "requiredLayerMissing": True, "overlapRisk": False},
         }
 
-    layout_name = _select_best_layout(classified)
-    slots = _LAYOUTS_1250x560[layout_name]
+    if target_w == 1250 and target_h == 560:
+        layout_name = _select_best_layout(classified)
+        slots = _LAYOUTS_1250x560[layout_name]
+    else:
+        slots, layout_name = _build_generic_horizontal_slots(classified, target_w, target_h)
+
     safe_zone = get_safe_zone(target_w, target_h)
 
     placements = []

@@ -101,7 +101,10 @@
               <div class="img-meta">
                 <span>{{ r.width }} × {{ r.height }}</span>
                 <span v-if="r.fileSize"> · {{ fmtSize(r.fileSize) }}</span>
-                <template v-if="r.actualPsdRenderMode === 'layer-reflow'">
+                <template v-if="r.renderSource === 'psd_object_reflow'">
+                  <span class="mode-badge-object-reflow"> · AI 객체 재배치</span>
+                </template>
+                <template v-else-if="r.renderSource === 'psd_layer_reflow' || r.actualPsdRenderMode === 'layer-reflow'">
                   <span class="mode-badge-layer"> · PSD 레이어 재배치</span>
                 </template>
                 <template v-else-if="r.layerReflowAttempted && !r.layerReflowSucceeded">
@@ -141,7 +144,7 @@
               <div v-if="recommendedPsdHint(r)" class="artboard-recommend-hint">
                 💡 {{ recommendedPsdHint(r) }}
               </div>
-              <div v-if="r.renderSource === 'psd_object_reflow'" class="object-reflow-badge">
+              <div v-if="r.renderSource === 'psd_object_reflow' || r.objectReflowAttempted" class="object-reflow-badge">
                 ⊙ AI 객체 기반 재배치
                 <span v-if="r.objectReflowMode" class="object-reflow-mode">{{ objectReflowModeLabel(r.objectReflowMode) }}</span>
                 <span v-if="r.objectSafeZonePass != null" class="safe-zone-badge"
@@ -150,7 +153,16 @@
                 </span>
               </div>
               <div v-if="r.usedObjectRoles && r.usedObjectRoles.length" class="reflow-roles">
+                <span class="reflow-sub-label">사용됨:</span>
                 <span v-for="role in r.usedObjectRoles" :key="role" class="reflow-role-tag obj-role">{{ role }}</span>
+              </div>
+              <div v-if="r.cropFallbackRoles && r.cropFallbackRoles.length" class="reflow-roles">
+                <span class="reflow-sub-label">crop:</span>
+                <span v-for="role in r.cropFallbackRoles" :key="'cr-' + role" class="reflow-role-tag obj-role-crop">{{ role }}</span>
+              </div>
+              <div v-if="r.lowConfidenceRoles && r.lowConfidenceRoles.length" class="reflow-roles">
+                <span class="reflow-sub-label">낮은신뢰:</span>
+                <span v-for="role in r.lowConfidenceRoles" :key="'lc-' + role" class="reflow-role-tag obj-role-lc">{{ role }}</span>
               </div>
               <div v-if="r.objectReflowAttempted && !r.objectReflowSucceeded" class="fallback-reason">
                 객체 재배치 실패: {{ r.objectReflowFallbackReason || '대체 렌더링 처리됨' }}
@@ -483,6 +495,7 @@ function psdRenderModeLabel(mode) { return PSD_RENDER_MODE_LABELS[mode] ?? mode 
 const RENDER_SOURCE_LABELS = {
   'psd_tools_composite': 'PSD 원본 렌더링',
   'psd_layer_reflow': 'PSD 레이어 재배치',
+  'psd_object_reflow': 'AI 객체 재배치',
   'imagemagick_magick_first_page': 'ImageMagick 합성 (IM7)',
   'imagemagick_convert_first_page': 'ImageMagick 합성 (IM6)',
   'imagemagick_flatten': 'ImageMagick flatten',
@@ -490,7 +503,7 @@ const RENDER_SOURCE_LABELS = {
 }
 function renderSourceLabel(src) { return RENDER_SOURCE_LABELS[src] ?? src }
 function renderSourceClass(src) {
-  if (src === 'psd_tools_composite' || src === 'psd_layer_reflow') return 'render-source-ok'
+  if (src === 'psd_tools_composite' || src === 'psd_layer_reflow' || src === 'psd_object_reflow') return 'render-source-ok'
   if (src === 'pillow_image') return 'render-source-neutral'
   if (src.startsWith('imagemagick')) return 'render-source-fallback'
   return ''
@@ -1106,8 +1119,17 @@ onUnmounted(stopPolling)
   color: #7C3AED; background: #DDD6FE;
   border-radius: 4px; padding: 1px 5px;
 }
+.reflow-sub-label {
+  font-size: 9.5px; font-weight: 600; color: #9CA3AF; flex-shrink: 0; margin-right: 2px;
+}
 .reflow-role-tag.obj-role {
   color: #5B21B6; background: #EDE9FE;
+}
+.reflow-role-tag.obj-role-crop {
+  color: #92400E; background: #FEF3C7;
+}
+.reflow-role-tag.obj-role-lc {
+  color: #6B7280; background: #F3F4F6;
 }
 .layer-reflow-badge {
   margin-top: 4px;
@@ -1137,6 +1159,9 @@ onUnmounted(stopPolling)
 }
 .mode-badge-layer {
   font-size: 11px; color: #0369A1; font-weight: 600;
+}
+.mode-badge-object-reflow {
+  font-size: 11px; color: #6D28D9; font-weight: 600;
 }
 .mode-badge-fallback {
   font-size: 11px; color: #B45309; font-weight: 500;

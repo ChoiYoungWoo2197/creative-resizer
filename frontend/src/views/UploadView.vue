@@ -131,14 +131,22 @@
                     </div>
                   </div>
                 </label>
-                <label v-if="objAnalysisResult && objAnalysisResult.reflowReady"
-                  class="psd-mode-option" :class="{ on: psdMode === 'object-reflow' }">
+                <label v-if="objReflowCanActivate"
+                  class="psd-mode-option"
+                  :class="{ on: psdMode === 'object-reflow', 'psd-mode-option-warn': !objAnalysisResult?.reflowReady }">
                   <input type="radio" name="psdMode" value="object-reflow" v-model="psdMode" style="display:none" />
                   <div class="psd-mode-body" @click="psdMode = 'object-reflow'">
                     <div class="psd-mode-name">
                       객체 기반 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span>
                     </div>
-                    <div class="psd-mode-desc">AI 객체 분석 결과를 기반으로 레이아웃을 재구성합니다.</div>
+                    <div class="psd-mode-desc">
+                      <template v-if="objAnalysisResult?.reflowReady">
+                        AI 객체 분석 결과를 기반으로 레이아웃을 재구성합니다.
+                      </template>
+                      <template v-else>
+                        ⚠ 일부 객체가 레이어 미매칭 상태입니다. AI 영역 crop으로 재배치합니다(품질이 낮을 수 있음).
+                      </template>
+                    </div>
                   </div>
                 </label>
               </div>
@@ -525,8 +533,21 @@
                     <span class="oa-ins-label">{{ obj.label }}</span>
                     <span class="oa-imp-chip" :class="'imp-' + obj.importance">{{ objImportanceLabel(obj.importance) }}</span>
                   </div>
-                  <div class="oa-ins-meta">
-                    <span class="oa-ms-chip" :class="'ms-' + obj.matchStatus">{{ objMatchLabel(obj.matchStatus) }}</span>
+                  <div class="oa-ins-pipeline">
+                    <span class="oa-stage oa-stage-ok">AI 감지됨</span>
+                    <span class="oa-pipe-arrow">›</span>
+                    <template v-if="obj.matchStatus === 'ready'">
+                      <span class="oa-stage oa-stage-ok">레이어 매칭 ✓</span>
+                    </template>
+                    <template v-else-if="obj.matchStatus === 'matched_low_confidence'">
+                      <span class="oa-stage oa-stage-warn">레이어 낮은신뢰도</span>
+                    </template>
+                    <template v-else>
+                      <span class="oa-stage oa-stage-fail">레이어 매칭 ✗</span>
+                      <span class="oa-pipe-arrow">›</span>
+                      <span v-if="obj.bbox" class="oa-stage oa-stage-info">crop 가능</span>
+                      <span v-else class="oa-stage oa-stage-muted">crop 불가</span>
+                    </template>
                     <span v-if="obj.matchedLayerName" class="oa-ins-layer" :title="obj.matchedLayerName">{{ obj.matchedLayerName }}</span>
                     <span v-if="obj.matchScore" class="oa-ins-score">{{ Math.round(obj.matchScore * 100) }}%</span>
                   </div>
@@ -903,6 +924,12 @@ watch(detectedArtboards, (v) => {
 })
 // 결과 변경 시 이미지 메타 초기화
 watch(objAnalysisResult, () => { previewImgMeta.value = null })
+
+const objReflowCanActivate = computed(() => {
+  if (!objAnalysisResult.value) return false
+  const roles = new Set((objAnalysisResult.value.objects || []).map(o => o.role))
+  return roles.has('title') && roles.has('main_image')
+})
 
 const IMPORTANCE_ORDER = { required: 0, priority: 1, optional: 2 }
 const HIDDEN_ROLES = new Set(['decoration', 'unknown'])
@@ -1460,12 +1487,18 @@ onMounted(async () => {
 .imp-required { background: #FEE2E2; color: #991B1B; }
 .imp-priority  { background: #FEF3C7; color: #92400E; }
 .imp-optional  { background: #F3F4F6; color: #6B7280; }
-.oa-ins-meta { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
-.oa-ms-chip { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
-.ms-ready { background: #D1FAE5; color: #065F46; }
-.ms-matched_low_confidence { background: #FEF3C7; color: #92400E; }
-.ms-missing_layer { background: #F3F4F6; color: #9CA3AF; }
-.oa-ins-layer { font-size: 10px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oa-ins-pipeline { display: flex; align-items: center; gap: 3px; margin-top: 3px; flex-wrap: wrap; }
+.oa-pipe-arrow { font-size: 9px; color: #D1D5DB; flex-shrink: 0; }
+.oa-stage {
+  font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 6px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.oa-stage-ok   { background: #D1FAE5; color: #065F46; }
+.oa-stage-warn { background: #FEF3C7; color: #92400E; }
+.oa-stage-fail { background: #FEE2E2; color: #991B1B; }
+.oa-stage-info { background: #DBEAFE; color: #1E40AF; }
+.oa-stage-muted { background: #F3F4F6; color: #9CA3AF; }
+.oa-ins-layer { font-size: 10px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 4px; }
 .oa-ins-score { font-size: 10px; font-weight: 700; color: #374151; flex-shrink: 0; }
 /* 기타 접기 */
 .oa-ins-more { margin-top: 2px; }
@@ -1486,8 +1519,15 @@ onMounted(async () => {
   .oa-ins-score { color: #E5E7EB; }
   .oa-error { background: #3B1212; color: #FCA5A5; }
   .imp-optional { background: #374151; color: #9CA3AF; }
-  .ms-missing_layer { background: #374151; color: #6B7280; }
+  .oa-stage-ok   { background: #064E3B; color: #6EE7B7; }
+  .oa-stage-warn { background: #451A03; color: #FCD34D; }
+  .oa-stage-fail { background: #450A0A; color: #FCA5A5; }
+  .oa-stage-info { background: #1E3A5F; color: #93C5FD; }
+  .oa-stage-muted { background: #374151; color: #6B7280; }
   .oa-ins-more-lbl { color: #6B7280; }
+  .psd-mode-option-warn { border-color: #92400E !important; background: #451A03; }
+  .psd-mode-option-warn.on { border-color: #D97706 !important; background: #78350F; }
+  .psd-mode-option-warn .psd-mode-desc { color: #FCD34D; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1533,6 +1573,9 @@ onMounted(async () => {
 }
 .psd-mode-option.disabled { opacity: 0.5; cursor: not-allowed; }
 .psd-mode-option.disabled .psd-mode-body { pointer-events: none; }
+.psd-mode-option-warn { border-color: #FDE68A !important; background: #FFFBEB; }
+.psd-mode-option-warn.on { border-color: #D97706 !important; background: #FEF3C7; }
+.psd-mode-option-warn .psd-mode-desc { color: #92400E; }
 
 /* PSD 호환성 진단 */
 .psd-compat-loading { font-size: 10px; color: #8B95A1; font-weight: 400; margin-left: 6px; display: inline-flex; align-items: center; gap: 4px; }
