@@ -1,0 +1,24 @@
+# Java 빌드에 불필요한 디렉토리 제외
+frontend/
+worker/
+
+# Gradle 캐시 및 빌드 산출물
+.gradle/
+build/
+out/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 기타
+*.md
+README*
+logs/
+.env*
+docker-compose*.yml
