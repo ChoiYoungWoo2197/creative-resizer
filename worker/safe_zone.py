@@ -20,9 +20,14 @@ def normalize_safe_zone(spec: dict, target_w: int, target_h: int) -> dict:
     """spec dict에서 safe zone을 읽거나 비율 기반 기본값을 계산한다.
 
     spec 키:
-      safeZone     → {top, right, bottom, left} (픽셀)  — 일반 safe zone
-      textSafeZone → {top, right, bottom, left}          — 텍스트 계열
-      ctaSafeZone  → {top, right, bottom, left}          — CTA 전용
+      safeZone            → {top, right, bottom, left} (픽셀)  — 일반 safe zone
+      textSafeZone        → {top, right, bottom, left}          — 텍스트 계열
+      ctaSafeZone         → {top, right, bottom, left}          — CTA 전용
+      safeZoneParseStatus → "parsed_text" | "diagram_unreadable" | "no_safezone" | null
+
+    safeZoneParseStatus 처리:
+      "parsed_text"       → safeZone 값을 hard constraint로 적용
+      그 외 / null        → fallback (비율 기반 기본값 사용)
 
     값이 없거나 불완전하면 aspect ratio 기반 기본값 사용:
       가로형(ratio≥1.7):  general=top/bot 8% lr 6%,  text=all 8%,  cta=top/lr 8% bot 10%
@@ -36,11 +41,19 @@ def normalize_safe_zone(spec: dict, target_w: int, target_h: int) -> dict:
     >>> sz["general"]["top"] == int(628 * 8 / 100)
     True
     >>> sz_custom = normalize_safe_zone(
-    ...     {"safeZone": {"top": 50, "right": 50, "bottom": 50, "left": 50}}, 1200, 628)
+    ...     {"safeZone": {"top": 50, "right": 50, "bottom": 50, "left": 50},
+    ...      "safeZoneParseStatus": "parsed_text"}, 1200, 628)
     >>> sz_custom["general"]["top"]
     50
+    >>> sz_fallback = normalize_safe_zone(
+    ...     {"safeZone": {"top": 50, "right": 50, "bottom": 50, "left": 50},
+    ...      "safeZoneParseStatus": "diagram_unreadable"}, 1200, 628)
+    >>> sz_fallback["general"]["top"] == int(628 * 8 / 100)
+    True
     """
     ratio = target_w / max(target_h, 1)
+    parse_status = (spec or {}).get("safeZoneParseStatus")
+    use_spec_safe_zone = (parse_status == "parsed_text")
 
     # 비율 기반 기본값
     if ratio >= 1.7:         # 가로형 wide
@@ -56,11 +69,21 @@ def normalize_safe_zone(spec: dict, target_w: int, target_h: int) -> dict:
         default_txt = _pct(target_w, target_h, top=9,  right=9,  bottom=9,  left=9)
         default_cta = _pct(target_w, target_h, top=9,  right=9,  bottom=11, left=9)
 
-    return {
-        "general": _read_safe_zone(spec, "safeZone",     default_gen),
-        "text":    _read_safe_zone(spec, "textSafeZone", default_txt),
-        "cta":     _read_safe_zone(spec, "ctaSafeZone",  default_cta),
-    }
+    if use_spec_safe_zone:
+        # hard constraint: spec 값 우선, 없으면 fallback
+        return {
+            "general": _read_safe_zone(spec, "safeZone",     default_gen),
+            "text":    _read_safe_zone(spec, "textSafeZone", default_txt),
+            "cta":     _read_safe_zone(spec, "ctaSafeZone",  default_cta),
+        }
+    else:
+        # fallback: spec safeZone 무시, 비율 기반 기본값만 사용
+        # (textSafeZone / ctaSafeZone은 별도 제공된 경우 허용)
+        return {
+            "general": default_gen,
+            "text":    _read_safe_zone(spec, "textSafeZone", default_txt),
+            "cta":     _read_safe_zone(spec, "ctaSafeZone",  default_cta),
+        }
 
 
 def get_object_safe_zone(role: str, safe_zones: dict) -> dict:

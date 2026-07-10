@@ -1212,6 +1212,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                             actual_render_mode="object-layout-reflow",
                             layout_score_status=layout_score_status,
                             job_id=job_id,
+                            spec_info=spec,
                         )
                     except Exception as _oe:
                         comp_meta_out.setdefault("warnings", []).append(

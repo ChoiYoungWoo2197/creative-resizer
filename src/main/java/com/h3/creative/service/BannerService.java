@@ -158,16 +158,40 @@ public class BannerService {
         }
 
         List<WorkerRequest.SpecItem> specItems = specs.stream()
-                .map(s -> WorkerRequest.SpecItem.builder()
-                        .media(s.getMedia())
-                        .name(s.getPlacementName())
-                        .slug(s.getSlug() != null ? s.getSlug() : "")
-                        .width(s.getWidth())
-                        .height(s.getHeight())
-                        .safeZone(s.getSafeZone())
-                        .textSafeZone(s.getTextSafeZone())
-                        .ctaSafeZone(s.getCtaSafeZone())
-                        .build())
+                .map(s -> {
+                    // 8단계: parsed_text이고 safeZone Map이 없으면 개별 픽셀 필드로 구성
+                    java.util.Map<String, Integer> safeZone = s.getSafeZone();
+                    if (safeZone == null && "parsed_text".equals(s.getSafeZoneParseStatus())
+                            && s.getSafeTop() != null && s.getSafeRight() != null
+                            && s.getSafeBottom() != null && s.getSafeLeft() != null) {
+                        safeZone = Map.of(
+                                "top",    s.getSafeTop(),
+                                "right",  s.getSafeRight(),
+                                "bottom", s.getSafeBottom(),
+                                "left",   s.getSafeLeft()
+                        );
+                    }
+                    // 8단계: fileRules
+                    java.util.Map<String, Object> fileRules = null;
+                    if (s.getFileFormats() != null || s.getMaxFileSizeKb() != null) {
+                        fileRules = new java.util.HashMap<>();
+                        fileRules.put("fileFormats", s.getFileFormats());
+                        fileRules.put("maxFileSizeKb", s.getMaxFileSizeKb());
+                        fileRules.put("minFileSizeKb", s.getMinFileSizeKb());
+                    }
+                    return WorkerRequest.SpecItem.builder()
+                            .media(s.getMedia())
+                            .name(s.getPlacementName())
+                            .slug(s.getSlug() != null ? s.getSlug() : "")
+                            .width(s.getWidth())
+                            .height(s.getHeight())
+                            .safeZone(safeZone)
+                            .textSafeZone(s.getTextSafeZone())
+                            .ctaSafeZone(s.getCtaSafeZone())
+                            .safeZoneParseStatus(s.getSafeZoneParseStatus())
+                            .fileRules(fileRules)
+                            .build();
+                })
                 .toList();
 
         // 4차-9: object-reflow 모드면 PsdObjectAnalysis 로드 → Map 스냅샷으로 전달

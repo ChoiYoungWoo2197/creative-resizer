@@ -44,4 +44,29 @@ public class SpecMongoService {
         Query query = Query.query(Criteria.where("id").is(id));
         mongoTemplate.remove(query, BannerSpec.class);
     }
+
+    // 8단계: 신규 조회 메서드
+    public BannerSpec findByMediaAndSlug(String media, String slug) {
+        Query query = Query.query(Criteria.where("media").is(media).and("slug").is(slug));
+        return mongoTemplate.findOne(query, BannerSpec.class);
+    }
+
+    public List<BannerSpec> findBySlug(String slug) {
+        Query query = Query.query(Criteria.where("slug").is(slug));
+        return mongoTemplate.find(query, BannerSpec.class);
+    }
+
+    public List<BannerSpec> findByPlacementType(String placementType) {
+        Query query = Query.query(Criteria.where("placementType").is(placementType));
+        return mongoTemplate.find(query, BannerSpec.class);
+    }
+
+    public void upsertBySlug(BannerSpec spec) {
+        Query query = Query.query(Criteria.where("slug").is(spec.getSlug()));
+        BannerSpec existing = mongoTemplate.findOne(query, BannerSpec.class);
+        if (existing != null) {
+            spec.setId(existing.getId());
+        }
+        mongoTemplate.save(spec);
+    }
 }

@@ -37,5 +37,12 @@ public class WorkerRequest {
         private java.util.Map<String, Integer> safeZone;
         private java.util.Map<String, Integer> textSafeZone;
         private java.util.Map<String, Integer> ctaSafeZone;
+
+        // 8단계: safe zone 적용 방식 힌트
+        // "parsed_text" → hard constraint, "diagram_unreadable" / null → fallback
+        private String safeZoneParseStatus;
+
+        // 8단계: 파일 규칙 (optional)
+        private java.util.Map<String, Object> fileRules;
     }
 }

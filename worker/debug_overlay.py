@@ -179,7 +179,8 @@ def _build_layout_json(comp_meta: dict,
                        target_w: int, target_h: int,
                        render_source: str,
                        actual_render_mode: str,
-                       layout_score_status: str) -> dict:
+                       layout_score_status: str,
+                       spec_info: dict = None) -> dict:
     """layout JSON dict 조립."""
     best           = layout_result.get("best") or {}
     top_candidates = layout_result.get("topCandidates", [])
@@ -264,8 +265,20 @@ def _build_layout_json(comp_meta: dict,
             "hardFailReasons": c.get("hardFailReasons", []),
         })
 
+    # 8단계: bannerSpec 메타 (slug, parseStatus, sourceUrl)
+    banner_spec_meta = None
+    if spec_info:
+        banner_spec_meta = {
+            "slug":               spec_info.get("slug"),
+            "placementName":      spec_info.get("name") or spec_info.get("placementName"),
+            "media":              spec_info.get("media"),
+            "safeZoneParseStatus": spec_info.get("safeZoneParseStatus"),
+            "sourceUrl":          spec_info.get("sourceUrl"),
+        }
+
     return {
         "target":              {"width": target_w, "height": target_h},
+        "bannerSpec":          banner_spec_meta,
         "renderSource":        render_source,
         "actualPsdRenderMode": actual_render_mode,
         "renderMode":          comp_meta.get("renderMode"),
@@ -312,6 +325,7 @@ def generate_debug_files(
     actual_render_mode: str = "object-layout-reflow",
     layout_score_status: str = "normal",
     job_id: str = None,
+    spec_info: dict = None,
 ) -> list:
     """Debug overlay PNG + layout JSON 생성.
 
@@ -341,6 +355,7 @@ def generate_debug_files(
             comp_meta, layout_result, creative_object_set,
             safe_zones, target_w, target_h,
             render_source, actual_render_mode, layout_score_status,
+            spec_info=spec_info,
         )
         with open(layout_json_path, "w", encoding="utf-8") as f:
             json.dump(layout_json, f, ensure_ascii=False, indent=2)
