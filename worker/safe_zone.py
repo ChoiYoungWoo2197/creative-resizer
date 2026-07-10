@@ -6,6 +6,21 @@ hard-fail 역할: cta, headline, body_text, price, discount, logo
   → 이 역할의 layoutZone이 safe zone 밖이면 candidate 탈락 (passed=False)
 
 main_image: safe zone 밖이어도 penalty만, hard fail 아님.
+
+# safeZoneParseStatus 정책 (8단계)
+#
+# hard constraint (spec safeZone을 그대로 사용):
+#   "parsed_text"    — 텍스트로 수치 파싱 성공
+#   "parsed_diagram" — 다이어그램 파싱 성공
+#   ↑ 위 두 상태이고 safeTop/Right/Bottom/Left 모두 존재할 때만 hard constraint.
+#   값이 하나라도 null이면 WARNING 출력 후 fallback.
+#
+# fallback (비율 기반 기본값 사용, spec safeZone 무시):
+#   "diagram_unreadable"              — 다이어그램 판독 불가
+#   "no_safezone"                     — safe zone 없음
+#   "parse_failed"                    — 파싱 실패
+#   "safezone_size_only_position_unknown" — 크기만 있고 위치 미상
+#   null / 기타                        — 명세 없음
 """
 
 # hard fail을 유발하는 역할 집합
@@ -23,11 +38,16 @@ def normalize_safe_zone(spec: dict, target_w: int, target_h: int) -> dict:
       safeZone            → {top, right, bottom, left} (픽셀)  — 일반 safe zone
       textSafeZone        → {top, right, bottom, left}          — 텍스트 계열
       ctaSafeZone         → {top, right, bottom, left}          — CTA 전용
-      safeZoneParseStatus → "parsed_text" | "diagram_unreadable" | "no_safezone" | null
+      safeZoneParseStatus → "parsed_text" | "parsed_diagram" |
+                            "diagram_unreadable" | "no_safezone" |
+                            "parse_failed" | "safezone_size_only_position_unknown" | null
 
     safeZoneParseStatus 처리:
-      "parsed_text"       → safeZone 값을 hard constraint로 적용
-      그 외 / null        → fallback (비율 기반 기본값 사용)
+      "parsed_text" / "parsed_diagram" + 4개 픽셀 값 모두 있음
+                          → safeZone 값을 hard constraint로 적용
+      "parsed_text" / "parsed_diagram" + 값 불완전
+                          → WARNING 출력 후 fallback
+      그 외 / null        → fallback (비율 기반 기본값 사용, spec safeZone 무시)
 
     값이 없거나 불완전하면 aspect ratio 기반 기본값 사용:
       가로형(ratio≥1.7):  general=top/bot 8% lr 6%,  text=all 8%,  cta=top/lr 8% bot 10%
@@ -45,15 +65,39 @@ def normalize_safe_zone(spec: dict, target_w: int, target_h: int) -> dict:
     ...      "safeZoneParseStatus": "parsed_text"}, 1200, 628)
     >>> sz_custom["general"]["top"]
     50
+    >>> sz_parsed_diagram = normalize_safe_zone(
+    ...     {"safeZone": {"top": 30, "right": 30, "bottom": 30, "left": 30},
+    ...      "safeZoneParseStatus": "parsed_diagram"}, 1200, 628)
+    >>> sz_parsed_diagram["general"]["top"]
+    30
     >>> sz_fallback = normalize_safe_zone(
     ...     {"safeZone": {"top": 50, "right": 50, "bottom": 50, "left": 50},
     ...      "safeZoneParseStatus": "diagram_unreadable"}, 1200, 628)
     >>> sz_fallback["general"]["top"] == int(628 * 8 / 100)
     True
+    >>> sz_incomplete = normalize_safe_zone(  # doctest: +ELLIPSIS,+NORMALIZE_WHITESPACE
+    ...     {"safeZone": {"top": 50, "bottom": 35},
+    ...      "safeZoneParseStatus": "parsed_text"}, 1200, 628)
+    [SafeZone] WARNING: ...
+    >>> sz_incomplete["general"]["top"] == int(628 * 8 / 100)
+    True
     """
     ratio = target_w / max(target_h, 1)
     parse_status = (spec or {}).get("safeZoneParseStatus")
-    use_spec_safe_zone = (parse_status == "parsed_text")
+    # parsed_text / parsed_diagram → hard constraint 후보
+    _HARD_CONSTRAINT_STATUSES = ("parsed_text", "parsed_diagram")
+    use_spec_safe_zone = parse_status in _HARD_CONSTRAINT_STATUSES
+
+    # parsed_text/parsed_diagram인데 safeZone 값이 불완전하면 fallback + warning
+    if use_spec_safe_zone:
+        sz_dict = (spec or {}).get("safeZone") or {}
+        _required = ("top", "right", "bottom", "left")
+        if not all(k in sz_dict for k in _required):
+            print(
+                f"[SafeZone] WARNING: safeZoneParseStatus={parse_status} but safeZone is "
+                f"incomplete {list(sz_dict.keys())} - using fallback"
+            )
+            use_spec_safe_zone = False
 
     # 비율 기반 기본값
     if ratio >= 1.7:         # 가로형 wide

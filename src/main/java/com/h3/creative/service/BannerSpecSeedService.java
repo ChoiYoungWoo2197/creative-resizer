@@ -23,9 +23,11 @@ public class BannerSpecSeedService {
 
     /**
      * banner-specs/{media}.json 을 읽어 MongoDB에 upsert (slug 기준).
-     * safeZoneParseStatus == "parsed_text" 이면 safeZone Map을 자동 구성한다.
+     * safeZoneParseStatus == "parsed_text" 또는 "parsed_diagram" 이면 safeZone Map을 자동 구성한다.
+     *
+     * 반환 Map 키: media, loaded, inserted, updated, total
      */
-    public int seed(String media) {
+    public Map<String, Object> seed(String media) {
         String path = "banner-specs/" + media + ".json";
         ClassPathResource resource = new ClassPathResource(path);
         if (!resource.exists()) {
@@ -39,14 +41,21 @@ public class BannerSpecSeedService {
             throw new RuntimeException("Failed to parse " + path, e);
         }
 
-        int count = 0;
+        int inserted = 0, updated = 0;
         for (Map<String, Object> raw : rawList) {
             BannerSpec spec = mapToSpec(raw);
-            specMongoService.upsertBySlug(spec);
-            count++;
+            boolean isNew = specMongoService.upsertBySlug(spec);
+            if (isNew) inserted++; else updated++;
         }
-        log.info("Seeded {} specs for media={}", count, media);
-        return count;
+        int total = inserted + updated;
+        log.info("Seeded media={} total={} inserted={} updated={}", media, total, inserted, updated);
+        return Map.of(
+                "media",    media,
+                "loaded",   total,
+                "inserted", inserted,
+                "updated",  updated,
+                "total",    total
+        );
     }
 
     private BannerSpec mapToSpec(Map<String, Object> raw) {

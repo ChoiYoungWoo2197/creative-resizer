@@ -59,14 +59,15 @@ public class BannerSpecController {
 
     /**
      * POST /api/banner-specs/seed?media=naver
-     * banner-specs/{media}.json → MongoDB upsert (slug 기준).
-     * reset=true 이면 해당 media의 기존 데이터 삭제 후 재삽입.
+     * banner-specs/{media}.json → MongoDB upsert (slug 기준, idempotent).
+     * 반복 호출해도 중복 insert 없음 — slug 기준 upsert이므로 항상 안전.
+     * 응답: {media, loaded, inserted, updated, total}
      */
     @PostMapping("/seed")
     public ResponseEntity<Map<String, Object>> seed(
             @RequestParam String media
     ) {
-        int count = bannerSpecSeedService.seed(media);
-        return ResponseEntity.ok(Map.of("media", media, "upserted", count));
+        Map<String, Object> result = bannerSpecSeedService.seed(media);
+        return ResponseEntity.ok(result);
     }
 }

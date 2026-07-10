@@ -61,12 +61,18 @@ public class SpecMongoService {
         return mongoTemplate.find(query, BannerSpec.class);
     }
 
-    public void upsertBySlug(BannerSpec spec) {
+    /**
+     * slug 기준 upsert. true=신규 insert, false=기존 update.
+     * 동일 slug가 이미 존재하면 id를 이어받아 save (replace, not append).
+     */
+    public boolean upsertBySlug(BannerSpec spec) {
         Query query = Query.query(Criteria.where("slug").is(spec.getSlug()));
         BannerSpec existing = mongoTemplate.findOne(query, BannerSpec.class);
-        if (existing != null) {
+        boolean isNew = (existing == null);
+        if (!isNew) {
             spec.setId(existing.getId());
         }
         mongoTemplate.save(spec);
+        return isNew;
     }
 }
