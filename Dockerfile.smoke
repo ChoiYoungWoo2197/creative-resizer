@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────
+# Stage 1: JDK17 Build + Test Verification
+#   java -version → 17 확인
+#   ./gradlew clean compileJava → 컴파일 검증
+#   ./gradlew test              → 단위 테스트 전체 통과 검증
+# ─────────────────────────────────────────────────────────────
+FROM eclipse-temurin:17-jdk-jammy AS builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends unzip curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Gradle wrapper 및 의존성 설정 파일 먼저 복사 (레이어 캐시)
+COPY gradle/        gradle/
+COPY gradlew        gradlew
+COPY gradlew.bat    gradlew.bat
+COPY build.gradle   build.gradle
+COPY settings.gradle settings.gradle
+RUN chmod +x gradlew
+
+# 의존성 다운로드 (소스 변경 시에도 이 레이어는 캐시 활용)
+RUN ./gradlew dependencies --no-daemon --quiet 2>/dev/null || true
+
+# 소스 복사
+COPY src/ src/
+
+# JDK17 검증 + 컴파일 + 테스트 실행
+RUN echo "======================================" && \
+    echo "[STAGE1] JDK version:" && \
+    java -version 2>&1 && \
+    echo "======================================" && \
+    echo "[STAGE1] compileJava..." && \
+    ./gradlew clean compileJava --no-daemon && \
+    echo "[STAGE1] compileJava: SUCCESS" && \
+    echo "======================================" && \
+    echo "[STAGE1] test..." && \
+    ./gradlew test --no-daemon && \
+    echo "[STAGE1] test: SUCCESS" && \
+    echo "======================================"
+
+# 실행 JAR 빌드 (테스트는 이미 위에서 통과)
+RUN ./gradlew build -x test --no-daemon
+
+# ─────────────────────────────────────────────────────────────
+# Stage 2: Runtime (JDK17 JRE)
+# ─────────────────────────────────────────────────────────────
+FROM eclipse-temurin:17-jre-jammy
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/build/libs/*.jar app.jar
+
+RUN mkdir -p /tmp/smoke/uploads /tmp/smoke/outputs /tmp/smoke/zips
+
+EXPOSE 8081
+
+ENTRYPOINT ["java", "-jar", "app.jar", "--spring.profiles.active=smoke"]

@@ -1,0 +1,4 @@
+FROM python:3.12-alpine
+WORKDIR /app
+COPY http_smoke_test.py .
+CMD ["python", "http_smoke_test.py"]

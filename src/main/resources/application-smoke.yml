@@ -1,0 +1,41 @@
+spring:
+  config:
+    activate:
+      on-profile: smoke
+
+  data:
+    mongodb:
+      uri: ${SMOKE_MONGODB_URI:mongodb://mongo:27017/creative_resizer_smoke}
+
+  rabbitmq:
+    host: ${SMOKE_RABBITMQ_HOST:rabbitmq}
+    port: ${SMOKE_RABBITMQ_PORT:5672}
+    username: guest
+    password: guest
+    virtual-host: /
+    listener:
+      simple:
+        auto-startup: false   # BannerSpec smoke — banner 생성 불필요
+
+creative:
+  storage:
+    upload-dir: /tmp/smoke/uploads
+    output-dir: /tmp/smoke/outputs
+    zip-dir: /tmp/smoke/zips
+  worker:
+    url: http://smoke-noop-worker:5000   # smoke 중 실제 호출 없음
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.h3.creative: INFO
+    org.springframework.data.mongodb: WARN
+    org.springframework.amqp: WARN

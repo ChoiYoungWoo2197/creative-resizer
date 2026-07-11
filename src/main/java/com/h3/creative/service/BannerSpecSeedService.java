@@ -41,20 +41,32 @@ public class BannerSpecSeedService {
             throw new RuntimeException("Failed to parse " + path, e);
         }
 
-        int inserted = 0, updated = 0;
+        int inserted = 0, updated = 0, unchanged = 0, failed = 0;
         for (Map<String, Object> raw : rawList) {
-            BannerSpec spec = mapToSpec(raw);
-            boolean isNew = specMongoService.upsertBySlug(spec);
-            if (isNew) inserted++; else updated++;
+            try {
+                BannerSpec spec = mapToSpec(raw);
+                SpecMongoService.UpsertStatus status = specMongoService.upsertBySlugStatus(spec);
+                switch (status) {
+                    case INSERTED  -> inserted++;
+                    case UPDATED   -> updated++;
+                    case UNCHANGED -> unchanged++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to upsert spec slug={}: {}", raw.get("slug"), e.getMessage());
+                failed++;
+            }
         }
-        int total = inserted + updated;
-        log.info("Seeded media={} total={} inserted={} updated={}", media, total, inserted, updated);
+        int total = inserted + updated + unchanged;
+        log.info("Seeded media={} total={} inserted={} updated={} unchanged={} failed={}",
+                media, total, inserted, updated, unchanged, failed);
         return Map.of(
-                "media",    media,
-                "loaded",   total,
-                "inserted", inserted,
-                "updated",  updated,
-                "total",    total
+                "media",     media,
+                "loaded",    rawList.size(),
+                "inserted",  inserted,
+                "updated",   updated,
+                "unchanged", unchanged,
+                "failed",    failed,
+                "total",     total
         );
     }
 

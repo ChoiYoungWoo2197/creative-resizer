@@ -11,6 +11,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
 
+import static com.h3.creative.mongo.SpecMongoService.UpsertStatus.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -38,27 +39,31 @@ class BannerSpecSeedServiceTest {
 
     @Test
     void seed_naver_loads68Specs_allNew() {
-        when(specMongoService.upsertBySlug(any())).thenReturn(true);
+        when(specMongoService.upsertBySlugStatus(any())).thenReturn(INSERTED);
 
         Map<String, Object> result = service.seed("naver");
 
         assertEquals("naver", result.get("media"));
-        assertEquals(68, result.get("loaded"),  "loaded should be 68");
-        assertEquals(68, result.get("inserted"), "all new → inserted=68");
-        assertEquals(0,  result.get("updated"),  "all new → updated=0");
-        assertEquals(68, result.get("total"),    "total=68");
-        verify(specMongoService, times(68)).upsertBySlug(any());
+        assertEquals(68, result.get("loaded"),    "loaded=68");
+        assertEquals(68, result.get("inserted"),  "all new → inserted=68");
+        assertEquals(0,  result.get("updated"),   "all new → updated=0");
+        assertEquals(0,  result.get("unchanged"), "all new → unchanged=0");
+        assertEquals(0,  result.get("failed"),    "no failures");
+        assertEquals(68, result.get("total"),     "total=68");
+        verify(specMongoService, times(68)).upsertBySlugStatus(any());
     }
 
     @Test
-    void seed_naver_idempotent_allUpdated() {
-        // 2회차 seed: 모두 이미 존재 → updated
-        when(specMongoService.upsertBySlug(any())).thenReturn(false);
+    void seed_naver_idempotent_allUnchanged() {
+        // 2회차 seed: 모두 내용 동일 → unchanged
+        when(specMongoService.upsertBySlugStatus(any())).thenReturn(UNCHANGED);
 
         Map<String, Object> result = service.seed("naver");
 
-        assertEquals(0,  result.get("inserted"), "2nd seed → inserted=0");
-        assertEquals(68, result.get("updated"),  "2nd seed → updated=68");
+        assertEquals(0,  result.get("inserted"),  "2nd seed → inserted=0");
+        assertEquals(0,  result.get("updated"),   "2nd seed → updated=0");
+        assertEquals(68, result.get("unchanged"), "2nd seed → unchanged=68");
+        assertEquals(0,  result.get("failed"),    "no failures");
         assertEquals(68, result.get("total"));
     }
 
@@ -66,8 +71,7 @@ class BannerSpecSeedServiceTest {
 
     @Test
     void seed_parsedTextSpecs_haveSafeZone() {
-        // parsed_text 3건은 safeZone Map이 자동으로 채워져야 한다
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             if ("parsed_text".equals(spec.getSafeZoneParseStatus())) {
                 assertNotNull(spec.getSafeZone(),
@@ -77,21 +81,20 @@ class BannerSpecSeedServiceTest {
                 assertEquals(35,  spec.getSafeZone().get("bottom"), "bottom=35");
                 assertEquals(240, spec.getSafeZone().get("left"),   "left=240");
             }
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
     }
 
     @Test
     void seed_diagramUnreadableSpecs_haveNoSafeZone() {
-        // diagram_unreadable 65건은 safeZone이 null이어야 한다
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             if ("diagram_unreadable".equals(spec.getSafeZoneParseStatus())) {
                 assertNull(spec.getSafeZone(),
                         "diagram_unreadable spec must NOT have safeZone: slug=" + spec.getSlug());
             }
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
     }
@@ -101,10 +104,10 @@ class BannerSpecSeedServiceTest {
     @Test
     void seed_naver_parsedText_count3() {
         int[] parsedCount = {0};
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             if ("parsed_text".equals(spec.getSafeZoneParseStatus())) parsedCount[0]++;
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
         assertEquals(3, parsedCount[0], "parsed_text should be 3");
@@ -113,10 +116,10 @@ class BannerSpecSeedServiceTest {
     @Test
     void seed_naver_diagramUnreadable_count65() {
         int[] count = {0};
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             if ("diagram_unreadable".equals(spec.getSafeZoneParseStatus())) count[0]++;
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
         assertEquals(65, count[0], "diagram_unreadable should be 65");
@@ -125,10 +128,10 @@ class BannerSpecSeedServiceTest {
     @Test
     void seed_naver_needsReview_count1() {
         int[] count = {0};
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             if (Boolean.TRUE.equals(spec.getNeedsReview())) count[0]++;
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
         assertEquals(1, count[0], "needsReview=true should be 1");
@@ -138,14 +141,13 @@ class BannerSpecSeedServiceTest {
 
     @Test
     void seed_naver_gfaSpec_hasCorrectDimensions() {
-        // slug=naver-gfa-mobile-da-image-banner-1250x560 → width=1250, height=560
         BannerSpec[] found = {null};
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             if ("naver-gfa-mobile-da-image-banner-1250x560".equals(spec.getSlug())) {
                 found[0] = spec;
             }
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
 
@@ -160,11 +162,11 @@ class BannerSpecSeedServiceTest {
     @Test
     void seed_naver_allSlugsUnique() {
         java.util.Set<String> slugs = new java.util.HashSet<>();
-        when(specMongoService.upsertBySlug(any())).thenAnswer(inv -> {
+        when(specMongoService.upsertBySlugStatus(any())).thenAnswer(inv -> {
             BannerSpec spec = inv.getArgument(0);
             assertTrue(slugs.add(spec.getSlug()),
                     "duplicate slug detected: " + spec.getSlug());
-            return true;
+            return INSERTED;
         });
         service.seed("naver");
         assertEquals(68, slugs.size());
