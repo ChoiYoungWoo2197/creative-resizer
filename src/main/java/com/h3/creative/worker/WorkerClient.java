@@ -1,5 +1,8 @@
 package com.h3.creative.worker;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,20 +20,34 @@ public class WorkerClient {
     @Value("${creative.worker.url}")
     private String workerUrl;
 
+    // WorkerResponse 전용 ObjectMapper — raw body를 직접 파싱해 진단 로그 확보
+    private static final ObjectMapper WORKER_MAPPER;
+    static {
+        WORKER_MAPPER = new ObjectMapper();
+        WORKER_MAPPER.registerModule(new JavaTimeModule());
+        WORKER_MAPPER.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    }
+
     public WorkerResponse generate(WorkerRequest request) {
         String url = workerUrl + "/generate";
         log.info("Calling worker: {} jobId={}", url, request.getJobId());
 
+        String rawBody = null;
         try {
-            ResponseEntity<WorkerResponse> response =
-                    restTemplate.postForEntity(url, request, WorkerResponse.class);
-
-            WorkerResponse body = response.getBody();
-            if (body == null) {
+            // String.class로 raw body를 먼저 확보 → 역직렬화 실패 시 진단 로그 출력 가능
+            ResponseEntity<String> rawResponse = restTemplate.postForEntity(url, request, String.class);
+            rawBody = rawResponse.getBody();
+            if (rawBody == null) {
                 throw new IllegalStateException("Worker returned empty response");
             }
-            return body;
+            return WORKER_MAPPER.readValue(rawBody, WorkerResponse.class);
         } catch (Exception e) {
+            if (rawBody != null) {
+                // 역직렬화 실패: raw body(최대 1000자) 로그 출력 → 계약 불일치 파악
+                log.error("Worker response parse failed jobId={} rawBody(1000)={}",
+                        request.getJobId(),
+                        rawBody.substring(0, Math.min(1000, rawBody.length())));
+            }
             log.error("Worker call failed jobId={} error={}", request.getJobId(), e.getMessage());
             WorkerResponse error = new WorkerResponse();
             error.setJobId(request.getJobId());

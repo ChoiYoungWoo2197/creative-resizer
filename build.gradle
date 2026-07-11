@@ -8,9 +8,9 @@ group = 'com.h3'
 version = '0.0.1-SNAPSHOT'
 
 java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
-    }
+    // toolchain 대신 sourceCompatibility 사용 — 로컬(JDK21)·Docker(JDK17) 모두 동작
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 configurations {
