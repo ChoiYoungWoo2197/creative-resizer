@@ -1,298 +1,237 @@
 # BannerSpec Stage 8 Checkpoint
 
-- 작성 시각: 2026-07-10 (2차 세션 업데이트)
+- 작성 시각: 2026-07-11 (3차 세션 — 서버사이드 Smoke 환경 구성)
 - 현재 브랜치: master
-- 현재 HEAD: 98f49c5
-- 작업 디렉터리: C:\company\source\creative-resizer
-- 최종 상태: PARTIAL
-- 중단 사유: 실행 환경(MongoDB, JDK17) 미구성 — 코드 구현 완료, 서버 기동 시 최종 검증 가능
+- 현재 HEAD: 1da5e5761333da7c86f63f8039016921ad4770ce
+- origin/master: 1da5e5761333da7c86f63f8039016921ad4770ce  ← 동기화 완료
+- 작업 상태: **PARTIAL**
+- 체크포인트 사유: Claude credit limit
+- 현재 작업: Server-side isolated Docker Smoke Test (Stage 8)
 
 ---
 
-## 작업 목표
+## 1. 현재 목표
 
-### 이번 단계 목표 (8단계)
-- [x] Naver 68개 지면 BannerSpec JSON seed 데이터 준비
-- [x] BannerSpec 도메인 확장 (22개 optional 필드)
-- [x] BannerSpec API 신규 구현 (`/api/banner-specs`)
-- [x] Worker safe zone parseStatus 정책 구현 및 검증
-- [x] debug overlay에 bannerSpec 메타 포함
-- [ ] MongoDB 실제 seed 실행 및 멱등성 검증
-- [ ] Spring Boot 실제 HTTP API smoke test
-- [ ] JDK 17 공식 빌드 검증
-- [ ] safe zone needsReview/confidence 정책 정비 (diagram_unreadable 65건 vs needsReview 1건 불일치)
+BannerSpec Stage 8의 아래 항목을 운영서버 Docker 환경에서 실행 (로컬 환경 손상으로 서버 대체).
 
-### 이번 단계 범위 제외 (deferred)
-- Kakao spec 실제 수집
-- Meta spec 실제 수집
-- Google spec 실제 수집
+| 검증 항목 |
+|---|
+| Docker 내부 Java 17 compileJava |
+| Docker 내부 Java 17 전체 test |
+| Smoke 전용 MongoDB seed (Naver 68건) |
+| seed 2회 멱등성 확인 (unchanged=68) |
+| 실제 Spring Boot HTTP API Smoke Test (12단계) |
+| Python Worker WorkerResponse 역직렬화 계약 검증 |
+| 운영 컨테이너 무영향 확인 |
+| Smoke 종료 후 전용 컨테이너·볼륨만 정리 |
 
 ---
 
-## 커밋 상태
+## 2. 완료된 작업
 
-### Committed (master 브랜치에 포함됨)
+### 2-A. WorkerResponse 역직렬화 계약 수정 — commit `b9c911b`
 
-| Hash | Message | 주요 파일 |
+**근본 원인**: `layout_compositor.py` L218-221이 `safeZoneViolations`를 `hardFailReasons`에서
+필터링한 `List[str]`로 반환. Java `List<Map<String,Object>>`와 타입 불일치.
+빈 `[]`는 Jackson이 통과시키지만 실제 위반 문자열 포함 시 `MismatchedInputException` 발생.
+
+| 항목 | 상태 | 근거 |
 |---|---|---|
-| `98f49c5` | 8단계 BannerSpec seed/upsert 단위 테스트 추가 (13 PASS) | BannerSpecSeedServiceTest.java (10개), SpecMongoServiceUpsertTest.java (3개), build.gradle (junit-platform-launcher 추가) |
-| `9c83fa9` | 8단계 BannerSpec DB화 보완: safe zone 정책 강화 + seed 응답 개선 | build.gradle, BannerSpecController.java, SpecMongoService.java, BannerSpecSeedService.java, safe_zone.py |
-| `0030e11` | 8단계: Naver BannerSpec 독립 seed 스크립트 추가 | scripts/seed_naver_specs.py |
-| `84463a9` | 8단계: BannerSpec DB 확장 레이어 추가 (Naver 68개 지면) | BannerSpecController.java, BannerSpec.java, SpecMongoService.java, BannerService.java, BannerSpecSeedService.java, WorkerRequest.java, naver.json, debug_overlay.py, resizer.py, safe_zone.py |
+| `WorkerResponse.ResultItem.safeZoneViolations` `List<Map>` → `List<String>` | DONE | commit b9c911b |
+| `BannerJob.BannerResult.safeZoneViolations` `List<Map>` → `List<String>` | DONE | commit b9c911b |
+| `WorkerClient.generate()` raw body 수신 + 수동 파싱 + 진단 로그 | DONE | commit b9c911b |
+| `WorkerResponseDeserializationTest` 16건 추가 | DONE | commit b9c911b |
+| 전체 단위 테스트 33/33 PASS | DONE | 로컬 JDK21 실행 확인 |
+| `fallbackErrors` `List<Map<String,Object>>` 유지 | DONE | Python은 dict 반환 — 변경 불필요 |
 
-### Uncommitted
+### 2-B. 운영서버용 격리 Smoke 환경 구성 — commit `defa527`
 
-없음 — `git status --short` 출력 없음. 작업 트리 clean.
+| 파일 | 상태 | 내용 |
+|---|---|---|
+| `build.gradle` | DONE | `toolchain { languageVersion=17 }` 복원 (Docker JDK17 필수) |
+| `Dockerfile.worker.smoke` | DONE | python:3.11-slim + 300×250 JPEG fixture 자동 생성 |
+| `docker-compose.smoke.yml` | DONE | project=`creative-resizer-stage8-smoke`, volume=`stage8-mongo-data`, DB=`creative_resizer_stage8_smoke`, Worker 추가, 리소스 제한, `127.0.0.1:18082` |
+| `src/main/resources/application-smoke.yml` | DONE | `SMOKE_WORKER_URL`, DB=`creative_resizer_stage8_smoke` |
+| `src/main/java/com/h3/creative/api/SmokeController.java` | DONE | `@Profile("smoke")` — `/api/smoke/worker-health`, `/api/smoke/worker-generate-test` |
+| `scripts/worker_contract_smoke_test.py` | DONE | Worker 직접 HTTP 계약 검증 (safeZoneViolations `List<String>`) |
+| `scripts/http_smoke_test.py` | DONE | Step 11-12 추가 (Worker health + E2E 역직렬화 via Spring Boot) |
+| `scripts/run_all_smoke.sh` | DONE | BannerSpec API + Worker Contract 순차 실행 |
+| `scripts/Dockerfile.smoke-runner` | DONE | 두 스크립트 + run_all_smoke.sh 포함 |
+| `.gitignore` | DONE | `artifacts/` 제외 |
+
+### 2-C. Smoke 아티팩트 초기화 순서 수정 — commit `1da5e57`
+
+서버에서 첫 실행 시 `tee: artifacts/.../smoke.log: No such file or directory` 오류 발생.
+원인: 로그 함수(`tee -a smoke.log`)가 `mkdir -p` 실행 전에 호출되는 초기화 역순.
+
+| 항목 | 상태 |
+|---|---|
+| `BASH_SOURCE[0]` 기반 `SCRIPT_DIR`/`PROJECT_ROOT` 계산 | DONE |
+| `mkdir -p ARTIFACT_DIR` + `touch SMOKE_LOG` 로그 함수 정의 전 실행 | DONE |
+| 생성 실패 시 `exit 1` + 명확한 오류 메시지 | DONE |
+| `bash -n` 문법 검사 통과 | DONE |
+| `mkdir + touch` 시뮬레이션 정상 확인 | DONE |
 
 ---
 
-## 변경 파일 목록
+## 3. 미완료 항목
 
-| 파일 | 상태 | 변경 목적 | 커밋 여부 | 후속 확인 필요 |
-|---|---|---|---|---|
-| `src/main/resources/banner-specs/naver.json` | 신규 | Naver 68개 지면 seed 데이터 | YES (84463a9) | MongoDB 실제 upsert 확인 |
-| `src/main/java/com/h3/creative/domain/BannerSpec.java` | 수정 | 22개 optional 필드 추가 (category, placementType, safeZoneParseStatus 등) | YES (84463a9) | 없음 |
-| `src/main/java/com/h3/creative/worker/WorkerRequest.java` | 수정 | SpecItem에 safeZoneParseStatus, fileRules 필드 추가 | YES (84463a9) | 없음 |
-| `src/main/java/com/h3/creative/mongo/SpecMongoService.java` | 수정 | findByMediaAndSlug/findBySlug/findByPlacementType 추가, upsertBySlug boolean 반환 | YES (9c83fa9) | MongoDB 실제 동작 확인 |
-| `src/main/java/com/h3/creative/api/BannerSpecController.java` | 신규 | /api/banner-specs 신규 엔드포인트 (기존 /api/spec 무영향) | YES (9c83fa9) | HTTP API 실제 smoke test |
-| `src/main/java/com/h3/creative/service/BannerSpecSeedService.java` | 신규 | classpath JSON → MongoDB upsert, inserted/updated/total 상세 카운트 반환 | YES (9c83fa9) | MongoDB 실제 seed 실행 확인 |
-| `src/main/java/com/h3/creative/service/BannerService.java` | 수정 | SpecItem 빌드 시 safeZoneParseStatus + fileRules 전달 | YES (84463a9) | 없음 |
-| `worker/safe_zone.py` | 수정 | 7종 parseStatus 정책 구현, parsed_diagram 추가, incomplete WARNING, doctest 추가 | YES (9c83fa9) | doctest PASS 확인됨 |
-| `worker/debug_overlay.py` | 수정 | layout JSON에 bannerSpec 메타 추가, generate_debug_files spec_info 파라미터 | YES (84463a9) | E2E PASS 확인됨 |
-| `worker/resizer.py` | 수정 | object-reflow 분기에서 _gen_debug 호출 시 spec_info=spec 추가 (1줄) | YES (84463a9) | 없음 |
-| `scripts/seed_naver_specs.py` | 신규 | 서버 없이 독립 실행 가능한 MongoDB seed 스크립트 | YES (0030e11) | MONGODB_URI 환경변수 필요 |
-| `build.gradle` | 수정 | UTF-8 BOM 제거 (JDK17 설정 유지, BOM이 Groovy 파서 오류 유발했음) | YES (9c83fa9) | JDK17 환경에서 compileJava 재검증 필요 |
+### 3-A. 운영서버 실제 Smoke Test — NOT_STARTED
 
-**존재하지 않는 파일 (기록 안 함):**
-- `service/BannerSpecService.java` — 이 이름의 파일 없음. 실제 파일명은 `BannerSpecSeedService.java`
+수정된 스크립트(`1da5e57`)로 서버에서 전체 26단계 Smoke Test를 아직 실행하지 않았다.
+
+이전 실행(`20260711_175610`) 오류: `tee: artifacts/stage8-smoke/20260711_175610/smoke.log: No such file or directory`
+→ commit `1da5e57`에서 수정 완료. **서버에서 `git pull` 후 재실행 필요.**
+
+### 3-B. 서버 실행 필요 검증 항목
+
+| 검증 항목 | 상태 |
+|---|---|
+| Java 17 compileJava (Docker 내부) | NOT_STARTED |
+| Java 17 전체 test (Docker 내부) | NOT_STARTED |
+| MongoDB healthy (stage8-smoke) | NOT_STARTED |
+| Worker healthy (Dockerfile.worker.smoke 빌드) | NOT_STARTED |
+| Spring Boot healthy (smoke profile, SmokeController 포함) | NOT_STARTED |
+| seed 1차 — Naver 68건 INSERT | NOT_STARTED |
+| 목록 API — count=68 확인 | NOT_STARTED |
+| 상세 API — safeZone 필드 확인 | NOT_STARTED |
+| 404 응답 확인 | NOT_STARTED |
+| 405 응답 확인 | NOT_STARTED |
+| Worker health via Spring Boot `/api/smoke/worker-health` | NOT_STARTED |
+| WorkerResponse E2E 역직렬화 via `/api/smoke/worker-generate-test` | NOT_STARTED |
+| Worker 직접 HTTP 계약 검증 (`worker_contract_smoke_test.py`) | NOT_STARTED |
+| seed 2차 멱등성 — unchanged=68 | NOT_STARTED |
+| 운영 컨테이너 무영향 확인 | NOT_STARTED |
+| Smoke 리소스 정리 (컨테이너·볼륨) | NOT_STARTED |
 
 ---
 
-## 현재 검증 결과
+## 4. 발견된 오류 및 조치 이력
 
-| 검증 항목 | 상태 | 실제 결과 | 근거 |
+| 오류 | 원인 | 조치 | 커밋 |
 |---|---|---|---|
-| JSON 68건 로딩 | PASS | 68건 | python -c json.load 직접 실행 |
-| category 15종 | PASS | 15종 | python 집합 계산 |
-| duplicate id | PASS | 0건 | python 중복 검사 |
-| duplicate slug | PASS | 0건 | python 중복 검사 |
-| duplicate sourceUrl | PASS | 0건 | python 중복 검사 |
-| parsed_text 건수 | PASS | 3건 | python 필터 |
-| diagram_unreadable 건수 | PASS | 65건 | python 필터 |
-| needsReview 건수 | PASS | 1건 (shopping-search-ad-500x500) | python 필터 |
-| safe zone: parsed_text + complete | PASS | spec hard constraint 적용 (top=50) | normalize_safe_zone 직접 실행 |
-| safe zone: parsed_text + incomplete | PASS | WARNING 출력 후 fallback | normalize_safe_zone 직접 실행 |
-| safe zone: parsed_diagram + complete | PASS | spec hard constraint 적용 (top=30) | normalize_safe_zone 직접 실행 |
-| safe zone: diagram_unreadable fallback | PASS | 비율 기반 fallback (top=44) | normalize_safe_zone 직접 실행 |
-| safe zone: no_safezone fallback | PASS | fallback | normalize_safe_zone 직접 실행 |
-| safe zone: parse_failed fallback | PASS | fallback | normalize_safe_zone 직접 실행 |
-| safe zone: safezone_size_only fallback | PASS | fallback | normalize_safe_zone 직접 실행 |
-| doctest (safe_zone.py) | PASS | 0 failures | python -m doctest safe_zone.py |
-| debug PNG 생성 (Case A 1250x560) | PASS | 7,893 bytes | generate_debug_files 직접 실행 |
-| debug PNG 생성 (Case B 1200x1200) | PASS | 13,429 bytes | generate_debug_files 직접 실행 |
-| layout JSON 생성 | PASS | 21개 필드, 필수 13개 포함 | json.load 검증 |
-| safeZoneBox (Case A) | PASS | x=240, y=50, w=770, h=475 | layout JSON 값 비교 |
-| ZIP debug 파일 제외 | PASS | CREATIVE_DEBUG_OVERLAY=true 조건에서만 생성 | is_debug_enabled() 확인 |
-| BannerController 변경 없음 | PASS | 8단계 관련 코드 0건 | grep 결과 |
-| WorkerResponse 호환성 | PASS | 8단계 관련 코드 0건 | grep 결과 |
-| SpecController 변경 없음 | PASS | 8단계 관련 코드 0건 | grep 결과 |
-| /api/spec 영향 없음 | PASS | 완전히 별도 경로 | BannerSpecController @RequestMapping 확인 |
-| smart-fit 경로 유지 | PASS | objectReflow 조건 source_type=="psd" 유지 | resizer.py 1083번 줄 확인 |
-| cover/contain/blur-bg 유지 | PASS | resizer.py 1줄만 추가, 기존 분기 무영향 | git diff 확인 |
-| sourceType=image → object-reflow 미진입 | PASS | source_type=="psd" 조건으로 보호됨 | resizer.py 코드 확인 |
-| Java 18 compileJava | PASS | BUILD SUCCESS | gradlew.bat compileJava (JDK18 임시 설정) |
-| Java 21 compileJava | PASS | BUILD SUCCESS | gradlew.bat compileJava (JDK21 임시 설정, ~/.jdks/ms-21.0.11) |
-| Java 17 compileJava | **미실행** | JDK17 미설치 | 코드 문제 아님, 환경 문제. JDK18/21 모두 SUCCESS |
-| BannerSpecSeedServiceTest (10개) | PASS | 10/10 PASS | Mockito 단위 테스트 (MongoDB 없음) |
-| SpecMongoServiceUpsertTest (3개) | PASS | 3/3 PASS | Mockito 단위 테스트 (MongoDB 없음) |
-| MongoDB seed 실행 | **미실행** | Atlas URI 없음, 서버 미기동 | 실행 환경 없음 |
-| MongoDB upsert 멱등성 | **미실행** | 미실행 | - |
-| 실제 HTTP API | **미실행** | Spring Boot 미기동 | 실행 환경 없음 |
-| seed 응답 포맷 | **미실행** | 코드상 {media, loaded, inserted, updated, total} | 실제 HTTP 응답 미확인 |
+| `tee: artifacts/.../smoke.log: No such file or directory` | 초기화 역순: 로그 함수 → `mkdir -p` | `mkdir-p` + `touch SMOKE_LOG` 선행 실행 | `1da5e57` |
+| `WorkerResponse MismatchedInputException` | `safeZoneViolations` 타입 불일치 (`List<Map>` vs Python `List[str]`) | `List<String>` 으로 수정 | `b9c911b` |
+| 로컬 JDK17 없음 (`toolchain` 빌드 실패) | `sourceCompatibility` 로 임시 변경했다가 복원 | `Dockerfile.smoke`는 JDK17 Docker → toolchain 복원 | `defa527` |
 
 ---
 
-## 현재 발견된 문제
+## 5. 변경 파일 전체 목록 (이번 세션)
 
-### 문제 1: 실제 HTTP API 미검증
-- **원인**: Spring Boot, MongoDB, RabbitMQ 미기동. `.env` 파일 없음 (`.env.example`만 존재)
-- **영향**: API 응답은 코드 레벨 검증뿐, 실제 E2E 보장 불가
-- **다음 조치**: `.env` 구성 → `docker-compose up` 또는 `gradlew bootRun` → curl smoke test
-
-### 문제 2: MongoDB seed 미실행
-- **원인**: MongoDB Atlas URI 미설정 (로컬 27017 미기동), Docker 미설치
-- **영향**: 68건 실제 저장, upsert, 멱등성 미확인
-- **다음 조치**: 로컬 MongoDB 또는 Atlas URI 구성 후 seed 실행. 또는 Docker 설치 후 `docker-compose up mongo` 실행
-
-### 문제 3: JDK 17 미검증
-- **원인**: 로컬 JDK 18 설치, JDK 17 미설치. build.gradle은 `languageVersion = JavaLanguageVersion.of(17)` 유지 중
-- **영향**: 프로젝트 공식 런타임 기준 빌드 보장 불가. JDK18 컴파일은 성공 확인됨
-- **다음 조치**: JDK 17 설치 후 `./gradlew clean compileJava`. 또는 Docker `gradle:7-jdk17` 이미지 사용
-
-### 문제 4: needsReview 정책 불일치
-- **현황**: diagram_unreadable 65건인데 needsReview=true는 1건뿐
-- **영향**: fallback이 "가이드 미확인 지면"임이 데이터상 불분명함. 향후 분석 시 혼선 가능
-- **다음 조치**: diagram_unreadable 전체를 needsReview=true로 설정하거나, 별도 `safeZoneConfidence` 필드로 구분하는 정책 결정 필요. 이번 단계에서는 변경 보류
-
-### 문제 5: 외부 매체 미수집
-- Kakao/Meta/Google spec: 이번 단계 deferred
-- Naver 완료 후 별도 작업으로 진행
-
-### 문제 6: build.gradle BOM 이력
-- **현황**: 이전 세션에서 PowerShell `Set-Content -Encoding utf8`이 UTF-8 BOM을 추가해 Groovy 파서 오류 발생
-- **조치 완료**: `[System.Text.UTF8Encoding]::new($false)` + `WriteAllBytes`로 BOM 제거 후 커밋됨 (9c83fa9)
-- **다음 세션 주의**: build.gradle 수정 시 반드시 BOM 없는 방식으로 저장
+| 파일 | 커밋 | 변경 내용 | 문법 검증 |
+|---|---|---|---|
+| `build.gradle` | b9c911b→defa527 | toolchain JDK17 복원 | — |
+| `src/main/java/.../worker/WorkerResponse.java` | b9c911b | `safeZoneViolations` `List<Map>` → `List<String>` | 단위 테스트 PASS |
+| `src/main/java/.../domain/BannerJob.java` | b9c911b | 동일 | 단위 테스트 PASS |
+| `src/main/java/.../worker/WorkerClient.java` | b9c911b | raw body 수신·수동 파싱·진단 로그 | — |
+| `src/test/.../WorkerResponseDeserializationTest.java` | b9c911b | 16개 단위 테스트 (33/33 PASS) | PASS |
+| `Dockerfile.worker.smoke` | defa527 | Python Worker + fixture JPEG | — |
+| `docker-compose.smoke.yml` | defa527 | Stage8 전용 Compose 구성 | — |
+| `src/main/resources/application-smoke.yml` | defa527 | Smoke profile 설정 | — |
+| `src/main/java/.../api/SmokeController.java` | defa527 | smoke profile 전용 엔드포인트 | — |
+| `scripts/worker_contract_smoke_test.py` | defa527 | Worker 직접 HTTP 계약 검증 | `py_compile` PASS |
+| `scripts/http_smoke_test.py` | defa527 | Step 11-12 추가 | `py_compile` PASS |
+| `scripts/run_all_smoke.sh` | defa527 | 순차 실행 wrapper | `bash -n` PASS |
+| `scripts/Dockerfile.smoke-runner` | defa527 | 두 스크립트 포함 | — |
+| `scripts/run-stage8-smoke-server.sh` | defa527, 1da5e57 | 26단계 서버 오케스트레이터, 초기화 순서 수정 | `bash -n` PASS |
+| `.gitignore` | defa527 | `artifacts/` 제외 | — |
 
 ---
 
-## 다음 세션 작업 순서
+## 6. 최소 검증 결과 (이번 세션)
+
+| 검증 항목 | 결과 |
+|---|---|
+| `bash -n scripts/run-stage8-smoke-server.sh` | **PASS** |
+| `bash -n scripts/run_all_smoke.sh` | **PASS** |
+| `python -m py_compile scripts/http_smoke_test.py` | **PASS** |
+| `python -m py_compile scripts/worker_contract_smoke_test.py` | **PASS** |
+| 민감정보 패턴 스캔 (mongodb+srv, password, api_key 등) | **NO SENSITIVE DATA** |
+| `WorkerResponseDeserializationTest` 33/33 | PASS (b9c911b 커밋 시 로컬 JDK21 확인) |
+| `mkdir + touch` 시뮬레이션 (artifacts 디렉토리 생성) | **PASS** |
+
+---
+
+## 7. Smoke 환경 구조
+
+```
+docker-compose.smoke.yml (project: creative-resizer-stage8-smoke)
+├── mongo      : mongo:7, DB=creative_resizer_stage8_smoke, volume=stage8-mongo-data
+├── rabbitmq   : rabbitmq:3-alpine, auto-startup=false (listener 비활성)
+├── worker     : Dockerfile.worker.smoke (Python 3.11 + fixture /app/fixtures/test_banner.jpg)
+├── api        : Dockerfile.smoke (JDK17 compileJava + test → smoke profile 기동)
+│               SMOKE_WORKER_URL=http://worker:5000, 127.0.0.1:18082:8081
+└── smoke      : scripts/Dockerfile.smoke-runner (http_smoke_test.py + worker_contract_smoke_test.py)
+```
+
+**Smoke API 단계**:
+- Step 1-10 : BannerSpec HTTP API (seed/list/detail/404/405/멱등성)
+- Step 11   : Worker health via Spring Boot `/api/smoke/worker-health`
+- Step 12   : WorkerResponse E2E via Spring Boot `/api/smoke/worker-generate-test`
+- Part 2    : Worker 직접 HTTP 계약 (`worker_contract_smoke_test.py`)
+
+---
+
+## 8. 다음 세션 시작 순서
 
 1. 이 파일(`CHECKPOINT_BANNERSPEC_STAGE8.md`) 읽기
-2. `git status`와 `git log -3 --oneline`으로 HEAD가 `9c83fa9`인지 확인
-3. `.env` 파일 존재 여부 확인 (없으면 Atlas URI로 생성)
-4. MongoDB 연결 가능 여부 확인
-5. `./gradlew bootRun` 또는 `docker-compose up` 으로 서버 기동
-6. seed 1차 실행 → inserted=68 확인
-7. seed 2차 실행 → updated=68, inserted=0 (멱등성) 확인
-8. HTTP API smoke test (목록/상세/404) 실행
-9. `GET /api/banner-specs?media=naver` count=68 확인
-10. `GET /api/banner-specs/naver/naver-gfa-mobile-da-image-banner-1250x560` safeZone 값 확인
-11. JDK 17 환경에서 `./gradlew clean compileJava` 실행
-12. needsReview 정책 결정 (사용자 확인 필요)
-13. 최종 PASS/PARTIAL/FAIL 보고서 작성
+2. `git log -3 --oneline` 으로 HEAD가 `1da5e57` 인지 확인
+3. 운영서버에서:
+   ```bash
+   cd /opt/creative-resizer
+   git pull origin master
+   bash scripts/run-stage8-smoke-server.sh
+   ```
+4. `artifacts/stage8-smoke/<timestamp>/smoke.log` 확인
+5. 실패 단계가 있으면 오류 원인 분석 후 최소 수정
+6. 전체 Smoke Test PASS 확인
+7. 최종 완료 커밋: `test: stage 8 smoke all pass`
+
+**진행 방침**: 다음 세션에서도 사용자에게 진행 여부를 묻지 않고,
+체크포인트와 현재 Git 상태를 대조하여 합리적으로 진행한다.
 
 ---
 
-## 다음 세션용 실행 명령
+## 9. 커밋 이력
 
-```bash
-# Git 상태 확인
-git status
-git log -3 --oneline
-
-# 환경 확인
-java -version
-python --version
-```
-
-```powershell
-# Gradle 버전 확인
-.\gradlew.bat --version
-```
-
-```bash
-# .env 파일 확인 (없으면 Atlas URI로 생성 필요)
-ls .env
-
-# MongoDB 로컬 기동 (Docker가 있는 경우)
-docker-compose up -d mongo
-
-# Spring Boot 실행 (MongoDB + RabbitMQ 기동 후)
-# Windows PowerShell
-.\gradlew.bat bootRun
-
-# Seed 1차 실행
-curl -X POST "http://localhost:8081/api/banner-specs/seed?media=naver"
-# 기대: {"media":"naver","loaded":68,"inserted":68,"updated":0,"total":68}
-
-# Seed 2차 실행 (멱등성 확인)
-curl -X POST "http://localhost:8081/api/banner-specs/seed?media=naver"
-# 기대: {"media":"naver","loaded":68,"inserted":0,"updated":68,"total":68}
-
-# 목록 조회 (68건 확인)
-curl "http://localhost:8081/api/banner-specs?media=naver"
-
-# 상세 조회 (parsed_text 지면 safeZone 확인)
-curl "http://localhost:8081/api/banner-specs/naver/naver-gfa-mobile-da-image-banner-1250x560"
-# 기대: safeZone.top=50, safeZone.right=240, safeZone.bottom=35, safeZone.left=240
-
-# 404 검증
-curl -i "http://localhost:8081/api/banner-specs/naver/not-exists"
-# 기대: HTTP 404
-
-# Python seed 스크립트 (서버 없이 직접 MongoDB 접근)
-# MONGODB_URI=mongodb+srv://... python scripts/seed_naver_specs.py
-# python scripts/seed_naver_specs.py --verify
-```
-
-```bash
-# Worker doctest 재확인
-cd worker && python -m doctest safe_zone.py && echo "PASS"
-
-# debug overlay E2E 재실행 (CREATIVE_DEBUG_OVERLAY=true 필요)
-```
-
-```bash
-# JDK 17 컴파일 검증 (JDK17 설치 후)
-java -version  # 17.x 확인
-.\gradlew.bat clean compileJava
-```
+| 커밋 | 메시지 | 주요 변경 |
+|---|---|---|
+| `1da5e57` | fix: create smoke artifact directory before logging | 초기화 순서 수정 |
+| `defa527` | test: add isolated server-side stage 8 smoke environment | Smoke 환경 전체 구성 |
+| `b9c911b` | fix: align worker JSON response with WorkerResponse contract | WorkerResponse 계약 수정 |
+| `1639b73` | test: add reproducible BannerSpec stage 8 smoke environment | 이전 Smoke 환경 (대체됨) |
+| `98f49c5` | 8단계 BannerSpec seed/upsert 단위 테스트 추가 (13 PASS) | BannerSpecSeedServiceTest 등 |
 
 ---
 
-## 환경 정보
+## 10. TODO 체크리스트
 
-| 항목 | 값 |
-|---|---|
-| OS | Windows 11 Home 10.0.26200 |
-| Shell | PowerShell 5.1 (primary), Bash (Git Bash) |
-| Java | 18.0.2.1 (JDK17 미설치) |
-| Gradle | 9.4.1 |
-| Python | 3.12.0 |
-| Docker | 미설치 |
-| Docker Compose | 미설치 |
-| Spring Boot 포트 | 8081 |
-| RabbitMQ 포트 | 5672 |
-| MongoDB URI | not configured (.env 없음, .env.example만 존재) |
-| MongoDB Atlas | Studio 3T로 접속 가능 (URI 별도 확인 필요) |
-| RabbitMQ 연결 | not configured |
-| OpenAI API Key | not configured (세션 내 갱신 이력 있음) |
+- [x] `WorkerResponse.safeZoneViolations` `List<String>` 수정
+- [x] `WorkerClient` raw body 진단 로그 추가
+- [x] `WorkerResponseDeserializationTest` 16건 (33/33 PASS)
+- [x] Smoke 환경 파일 전체 구성 (Dockerfile.worker.smoke, docker-compose.smoke.yml 등)
+- [x] `SmokeController.java` (`@Profile("smoke")`) 구현
+- [x] `run-stage8-smoke-server.sh` 26단계 작성
+- [x] artifact 초기화 순서 수정 (commit 1da5e57)
+- [x] `bash -n` 통과
+- [x] `py_compile` 통과
+- [ ] 서버에서 `git pull` 후 `smoke.log` 정상 생성 확인
+- [ ] Java 17 compileJava (Docker 내부)
+- [ ] Java 17 전체 test (Docker 내부)
+- [ ] MongoDB healthy
+- [ ] Worker healthy
+- [ ] Spring Boot healthy
+- [ ] seed 1차 (INSERT=68)
+- [ ] 목록 API (count=68)
+- [ ] 상세 API
+- [ ] 404 / 405
+- [ ] WorkerResponse E2E (Spring Boot → Worker)
+- [ ] Worker 직접 HTTP 계약 검증
+- [ ] seed 2차 멱등성 (unchanged=68)
+- [ ] 운영 컨테이너 무영향 확인
+- [ ] Smoke 리소스 정리 확인
+- [ ] 최종 완료 커밋
+
+---
 
 > 민감정보(URI, password, token, key)는 이 파일에 기록하지 않음.
-
----
-
-## TODO
-
-### 완료된 항목
-- [x] Naver 68개 지면 JSON seed 데이터 준비 (naver.json)
-- [x] BannerSpec 도메인 22개 optional 필드 확장
-- [x] SpecMongoService 신규 메서드 추가 (findByMediaAndSlug, upsertBySlug 등)
-- [x] BannerSpecController 신규 구현 (/api/banner-specs)
-- [x] BannerSpecSeedService 신규 구현 (classpath JSON → MongoDB upsert)
-- [x] WorkerRequest.SpecItem safeZoneParseStatus/fileRules 추가
-- [x] BannerService SpecItem 빌드 시 8단계 필드 전달
-- [x] safe_zone.py 7종 parseStatus 정책 구현 (parsed_diagram 포함)
-- [x] safe_zone.py parsed_text incomplete → WARNING + fallback
-- [x] safe_zone.py doctest 전체 PASS
-- [x] debug_overlay.py bannerSpec 메타 layout JSON 포함
-- [x] resizer.py spec_info 전달 (object-reflow 분기)
-- [x] scripts/seed_naver_specs.py 독립 seed 스크립트
-- [x] build.gradle BOM 제거 (JDK17 설정 유지)
-- [x] Worker debug overlay E2E (4 cases: parsed_text / diagram_unreadable / incomplete / parsed_diagram)
-- [x] JSON 68건 무결성 검증 (dup id 0, dup slug 0, dup sourceUrl 0)
-- [x] Java 18 compileJava BUILD SUCCESS
-- [x] Java 21 compileJava BUILD SUCCESS (JDK21 ms-21.0.11 사용)
-- [x] BannerSpecSeedServiceTest 10개 단위 테스트 PASS (Mockito, MongoDB 없음)
-- [x] SpecMongoServiceUpsertTest 3개 단위 테스트 PASS (Mockito, MongoDB 없음)
-- [x] 기존 기능 보호 검증 (BannerController/WorkerResponse/SpecController 무변경)
-
-### 미완료 항목
-- [ ] Java 17 compileJava 실행 (JDK17 환경 필요 — JDK18/21은 BUILD SUCCESS 확인됨)
-- [ ] Java 17 test 실행
-- [ ] MongoDB 실행 환경 구성
-- [ ] seed 1차 실행 (inserted=68 확인)
-- [ ] seed 2차 실행 (updated=68, inserted=0 멱등성 확인)
-- [ ] 68건 DB 저장 확인
-- [ ] duplicate slug 0 DB 확인
-- [ ] HTTP 목록 API 실제 실행 (count=68)
-- [ ] HTTP 상세 API 실제 실행 (safeZone 값 확인)
-- [ ] HTTP 404 검증 (not-exists slug)
-- [ ] seed 응답 포맷 실제 확인
-- [ ] diagram_unreadable 65건 needsReview 정책 결정 (needsReview=true vs 별도 필드)
-- [ ] Worker debug E2E 실제 서버 환경에서 재검증
-- [ ] 기존 Banner 생성 흐름 회귀 검증 (실제 PSD 업로드)
-- [ ] 최종 8단계 PASS 판정 보고서 작성
-- [ ] Kakao spec 수집 (deferred)
-- [ ] Meta spec 수집 (deferred)
-- [ ] Google spec 수집 (deferred)
