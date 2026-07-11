@@ -267,6 +267,42 @@ def step_idempotency():
             f"duplicates={len(slugs)-len(unique)}", "0")
 
 
+def step_worker_health_via_api():
+    print("\n── Step 11: Worker health via Spring Boot Smoke API ────────")
+    status, body = get("/api/smoke/worker-health")
+    if status != 200 or not isinstance(body, dict):
+        _fail("Worker health: HTTP 200", f"HTTP {status}", "200")
+        return
+    worker_healthy = body.get("workerHealthy")
+    _record("workerHealthy=true", worker_healthy is True,
+            str(worker_healthy), "true")
+
+
+def step_worker_generate_e2e():
+    print("\n── Step 12: WorkerResponse E2E deserialization via API ─────")
+    status, body = post("/api/smoke/worker-generate-test")
+    if status != 200 or not isinstance(body, dict):
+        _fail("Worker E2E: HTTP 200", f"HTTP {status} body={str(body)[:200]}", "200")
+        return
+
+    _record("Worker E2E: deserializationSuccess=true",
+            body.get("deserializationSuccess") is True,
+            str(body.get("deserializationSuccess")), "true")
+    _record("Worker E2E: error=null",
+            body.get("error") is None,
+            str(body.get("error")), "null")
+    _record("Worker E2E: count >= 1",
+            isinstance(body.get("count"), int) and body.get("count", 0) >= 1,
+            str(body.get("count")), ">= 1")
+
+    sz_type = body.get("safeZoneViolationsType")
+    _record("Worker E2E: safeZoneViolations type OK",
+            sz_type in ("List<String>", "null"),
+            str(sz_type), "List<String> or null")
+
+    print(f"  Worker E2E response: {body}", flush=True)
+
+
 # ── abort helper ─────────────────────────────────────────────────────────────
 
 def _abort(reason: str):
@@ -320,6 +356,8 @@ def main():
     step_diagram_unreadable(specs)
     step_seed_second()
     step_idempotency()
+    step_worker_health_via_api()
+    step_worker_generate_e2e()
 
     _print_summary()
 

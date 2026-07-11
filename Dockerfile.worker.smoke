@@ -1,0 +1,47 @@
+# Python Worker — Stage 8 Smoke 전용 이미지
+# 운영 worker/Dockerfile과 동일한 베이스·패키지 사용 + fixture 이미지 생성
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libffi-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    liblcms2-2 \
+    imagemagick \
+    libmagickwand-dev \
+    ghostscript \
+    libpng-dev \
+    libtiff-dev \
+    libwebp-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ImageMagick PSD 읽기 허용
+RUN sed -i \
+    's|<policy domain="coder" rights="none" pattern="PS" />|<policy domain="coder" rights="read|write" pattern="PS" />|; \
+     s|<policy domain="coder" rights="none" pattern="PSD" />|<policy domain="coder" rights="read|write" pattern="PSD" />|' \
+    /etc/ImageMagick-6/policy.xml 2>/dev/null || true
+
+COPY worker/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY worker/ .
+
+# Smoke E2E 검증용 fixture 이미지 생성 (300×250 JPEG)
+RUN mkdir -p /app/fixtures && python -c "\
+from PIL import Image, ImageDraw; \
+img = Image.new('RGB', (300, 250), color=(200, 220, 240)); \
+draw = ImageDraw.Draw(img); \
+draw.rectangle([20, 20, 280, 230], outline=(80, 120, 200), width=4); \
+draw.rectangle([40, 100, 260, 150], fill=(80, 120, 200)); \
+img.save('/app/fixtures/test_banner.jpg', 'JPEG', quality=85)"
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=5s --timeout=5s --retries=12 --start-period=20s \
+    CMD curl -sf http://localhost:5000/health || exit 1
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--timeout", "120", "app:app"]

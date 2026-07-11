@@ -1,18 +1,20 @@
+name: creative-resizer-stage8-smoke
+
 networks:
   smoke-net:
     driver: bridge
 
 volumes:
-  smoke-mongo-data:
+  stage8-mongo-data:
 
 services:
 
-  # ── MongoDB (전용 smoke DB) ──────────────────────────────────
+  # ── MongoDB (smoke 전용 DB, 운영과 완전 분리) ──────────────────
   mongo:
     image: mongo:7
     networks: [smoke-net]
     volumes:
-      - smoke-mongo-data:/data/db
+      - stage8-mongo-data:/data/db
     environment:
       - TZ=Asia/Seoul
     healthcheck:
@@ -21,8 +23,12 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
-  # ── RabbitMQ (Spring AMQP 기동에 필요) ──────────────────────
+  # ── RabbitMQ (Spring AMQP 기동 요건, listener는 auto-startup=false) ──
   rabbitmq:
     image: rabbitmq:3-alpine
     networks: [smoke-net]
@@ -35,8 +41,31 @@ services:
       timeout: 5s
       retries: 18
       start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
-  # ── Spring Boot API (JDK17 빌드 + 테스트 → 실행) ─────────────
+  # ── Python Worker (WorkerResponse E2E 계약 검증) ─────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker.smoke
+    networks: [smoke-net]
+    environment:
+      - TZ=Asia/Seoul
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  # ── Spring Boot API (JDK17 compileJava + test → smoke 프로필 기동) ──
   api:
     build:
       context: .
@@ -44,24 +73,31 @@ services:
     networks: [smoke-net]
     environment:
       - SPRING_PROFILES_ACTIVE=smoke
-      - SMOKE_MONGODB_URI=mongodb://mongo:27017/creative_resizer_smoke
+      - SMOKE_MONGODB_URI=mongodb://mongo:27017/creative_resizer_stage8_smoke
       - SMOKE_RABBITMQ_HOST=rabbitmq
+      - SMOKE_WORKER_URL=http://worker:5000
       - TZ=Asia/Seoul
     depends_on:
       mongo:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      worker:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 15
-      start_period: 60s
+      start_period: 90s
     ports:
-      - "18082:8081"   # 디버깅용 외부 노출
+      - "127.0.0.1:18082:8081"   # localhost 전용, 0.0.0.0 노출 금지
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
 
-  # ── Smoke HTTP Test Runner ───────────────────────────────────
+  # ── Smoke HTTP Test Runner ────────────────────────────────────────
   smoke:
     build:
       context: scripts
@@ -69,8 +105,12 @@ services:
     networks: [smoke-net]
     environment:
       - API_URL=http://api:8081
+      - WORKER_URL=http://worker:5000
       - SMOKE_TIMEOUT=30
     depends_on:
       api:
         condition: service_healthy
-    command: ["python", "http_smoke_test.py"]
+    deploy:
+      resources:
+        limits:
+          memory: 256M

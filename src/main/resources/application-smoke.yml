@@ -5,7 +5,7 @@ spring:
 
   data:
     mongodb:
-      uri: ${SMOKE_MONGODB_URI:mongodb://mongo:27017/creative_resizer_smoke}
+      uri: ${SMOKE_MONGODB_URI:mongodb://mongo:27017/creative_resizer_stage8_smoke}
 
   rabbitmq:
     host: ${SMOKE_RABBITMQ_HOST:rabbitmq}
@@ -15,7 +15,7 @@ spring:
     virtual-host: /
     listener:
       simple:
-        auto-startup: false   # BannerSpec smoke — banner 생성 불필요
+        auto-startup: false   # smoke: BannerSpec API 검증만, 배너 생성 비활성
 
 creative:
   storage:
@@ -23,7 +23,7 @@ creative:
     output-dir: /tmp/smoke/outputs
     zip-dir: /tmp/smoke/zips
   worker:
-    url: http://smoke-noop-worker:5000   # smoke 중 실제 호출 없음
+    url: ${SMOKE_WORKER_URL:http://worker:5000}
 
 management:
   endpoints:

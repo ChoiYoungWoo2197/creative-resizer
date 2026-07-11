@@ -1,4 +1,7 @@
 FROM python:3.12-alpine
 WORKDIR /app
 COPY http_smoke_test.py .
-CMD ["python", "http_smoke_test.py"]
+COPY worker_contract_smoke_test.py .
+COPY run_all_smoke.sh .
+RUN chmod +x run_all_smoke.sh
+CMD ["/bin/sh", "run_all_smoke.sh"]

@@ -33,6 +33,9 @@ Thumbs.db
 # 환경변수 (서버 민감 정보)
 .env
 
+# Smoke test artifacts (서버에서 생성, 커밋 금지)
+artifacts/
+
 # Node
 frontend/node_modules/
 frontend/dist/

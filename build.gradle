@@ -8,9 +8,11 @@ group = 'com.h3'
 version = '0.0.1-SNAPSHOT'
 
 java {
-    // toolchain 대신 sourceCompatibility 사용 — 로컬(JDK21)·Docker(JDK17) 모두 동작
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    // Smoke 빌드는 Docker(eclipse-temurin:17-jdk-jammy) 내부에서 실행
+    // 로컬 JDK17이 없는 경우 Gradle toolchain이 자동 탐지를 시도함
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
 }
 
 configurations {
