@@ -49,8 +49,8 @@ services:
   # ── Python Worker (WorkerResponse E2E 계약 검증) ─────────────────
   worker:
     build:
-      context: .
-      dockerfile: Dockerfile.worker.smoke
+      context: ./worker
+      dockerfile: ../Dockerfile.worker.smoke
     networks: [smoke-net]
     environment:
       - TZ=Asia/Seoul

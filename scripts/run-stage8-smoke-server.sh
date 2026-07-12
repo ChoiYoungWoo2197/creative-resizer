@@ -13,7 +13,7 @@
 #   - 운영 포트 덮어쓰기 금지 (18082만 사용)
 #   - docker system prune / 전체 볼륨 정리 금지
 # ==========================================================================
-set -euo pipefail
+set -Eeuo pipefail
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 0-A: 스크립트 위치 기반 프로젝트 루트 확정 및 이동
@@ -56,31 +56,44 @@ info()    { echo -e "${BLUE}[INFO]${NC}  $*" | tee -a "${SMOKE_LOG}"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*" | tee -a "${SMOKE_LOG}"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "${SMOKE_LOG}"; }
 err()     { echo -e "${RED}[ERR]${NC}   $*" | tee -a "${SMOKE_LOG}"; }
-section() { echo -e "\n${BLUE}══ Step $* ══${NC}" | tee -a "${SMOKE_LOG}"; }
+section() { CURRENT_STEP="$*"; echo -e "\n${BLUE}══ Step $* ══${NC}" | tee -a "${SMOKE_LOG}"; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 0-D: trap 등록 (SMOKE_LOG 생성 이후)
 # ══════════════════════════════════════════════════════════════════════════════
 SMOKE_RUNNER_EXIT=0
+FINAL_RESULT="UNKNOWN"
+CURRENT_STEP="(init)"
 
 cleanup() {
-    local code=${SMOKE_RUNNER_EXIT}
+    # trap 진입 직후의 실제 종료코드를 보존 (set -e 로 인한 실패 포함)
+    local exit_code=$?
+    set +e
+
     echo "" | tee -a "${SMOKE_LOG}"
-    section "26: Cleanup (trap)"
+    echo -e "\n${BLUE}══ Step 26: Cleanup (trap) ══${NC}" | tee -a "${SMOKE_LOG}"
     info "Removing smoke containers and volumes..."
     ${COMPOSE_CMD} down --volumes --remove-orphans 2>>"${SMOKE_LOG}" || true
     success "Smoke containers removed (project=${PROJECT_NAME})"
 
+    # smoke runner 실패는 exit_code=0으로 흘러도 비정상 처리
+    if [ "${exit_code}" -eq 0 ] && [ "${SMOKE_RUNNER_EXIT}" -ne 0 ]; then
+        exit_code="${SMOKE_RUNNER_EXIT}"
+    fi
+
     echo "" | tee -a "${SMOKE_LOG}"
     echo "════════════════════════════════════════════════════════" | tee -a "${SMOKE_LOG}"
-    if [ "${code}" -eq 0 ]; then
+    if [ "${exit_code}" -eq 0 ] && [ "${FINAL_RESULT}" = "PASS" ]; then
         success "Stage 8 Smoke: ALL PASS"
     else
-        err "Stage 8 Smoke: FAIL (exit ${code})"
+        # exit_code가 0이면 최소 1로 설정해 프로세스 종료코드 보장
+        [ "${exit_code}" -eq 0 ] && exit_code=1
+        err "Stage 8 Smoke: FAIL (exit ${exit_code})"
+        err "  Last step : ${CURRENT_STEP}"
     fi
     echo "  Artifacts: ${ARTIFACT_DIR}/" | tee -a "${SMOKE_LOG}"
     echo "════════════════════════════════════════════════════════" | tee -a "${SMOKE_LOG}"
-    exit "${code}"
+    exit "${exit_code}"
 }
 trap cleanup EXIT
 
@@ -145,7 +158,10 @@ fi
 # ── Step 7: Docker 이미지 빌드 (--no-cache) ──────────────────────────────────
 section "7: Build Docker images (no-cache)"
 info "Building: API (JDK17 compile + test), Worker (Python), smoke runner..."
-${COMPOSE_CMD} build --no-cache 2>&1 | tee -a "${SMOKE_LOG}"
+if ! ${COMPOSE_CMD} build --no-cache 2>&1 | tee -a "${SMOKE_LOG}"; then
+    err "Docker image build failed — check Dockerfile or .dockerignore"
+    exit 1
+fi
 success "All images built"
 
 # ── Step 8: MongoDB + RabbitMQ 기동 ──────────────────────────────────────────
@@ -261,5 +277,12 @@ else
          "${ARTIFACT_DIR}/prod_after_clean.txt" | tee -a "${SMOKE_LOG}" || true
 fi
 
-# Step 26: cleanup trap が EXIT 時に自動実行
-# SMOKE_RUNNER_EXIT に最終終了コードが保存される → cleanup() が exit $code を呼ぶ
+# ── Step 25c: 최종 결과 설정 ─────────────────────────────────────────────────
+# 모든 단계(seed/API/Worker 포함)가 통과한 경우에만 PASS 설정
+# smoke runner 실패 시 SMOKE_RUNNER_EXIT != 0 이므로 FINAL_RESULT는 UNKNOWN 유지
+if [ "${SMOKE_RUNNER_EXIT}" -eq 0 ]; then
+    FINAL_RESULT="PASS"
+fi
+
+# Step 26: cleanup trap이 EXIT 시에 자동실행
+# exit_code=$? + FINAL_RESULT 조합으로 최종 판정 → ALL PASS / FAIL 결정

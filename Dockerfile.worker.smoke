@@ -25,10 +25,10 @@ RUN sed -i \
      s|<policy domain="coder" rights="none" pattern="PSD" />|<policy domain="coder" rights="read|write" pattern="PSD" />|' \
     /etc/ImageMagick-6/policy.xml 2>/dev/null || true
 
-COPY worker/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY worker/ .
+COPY . .
 
 # Smoke E2E 검증용 fixture 이미지 생성 (300×250 JPEG)
 RUN mkdir -p /app/fixtures && python -c "\
