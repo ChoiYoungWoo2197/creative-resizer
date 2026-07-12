@@ -1,152 +1,140 @@
-# BannerSpec Stage 8 Checkpoint
+# BannerSpec Stage 8 Final Checkpoint
 
-- 작성 시각: 2026-07-12 (6차 세션 — gradle-wrapper.jar 수정 완료)
+- 작성 시각: 2026-07-12
 - 현재 브랜치: master
-- 작업 상태: **FIXES APPLIED — 서버 재실행 대기 (3차)**
+- 현재 HEAD: 0938a5f
+- 실행 서버: 운영서버 (/opt/creative-resizer)
+- 실행 방식: Isolated server-side Docker Smoke Test
+- 최종 상태: **PASS**
+- BannerSpec API: **42/42 PASS**
+- Worker Contract: **16/16 PASS**
+- Total: **58/58 PASS**
+- 운영서비스 영향: **NONE**
+- Smoke 리소스 정리: **SUCCESS**
 
 ---
 
-## 1. 현재 목표
+## 1. 최종 완료 범위
 
-운영서버 Docker 환경에서 Stage 8 전체 Smoke Test 통과.
+- Naver BannerSpec JSON 68건 실제 MongoDB seed
+  - 1차 insert 68건 / 2차 unchanged 68건 (멱등성 확인)
+  - slug 중복 0
+- Spring Boot API 검증 (목록 68건, 상세 safe zone 값, 404, 405)
+- Java 17 실제 Docker 빌드 환경 검증 (OpenJDK 17.0.19 컴파일)
+- Worker HTTP 직접 계약 검증 16종
+- Spring Boot → Worker E2E (WorkerResponse 역직렬화)
+- 운영 컨테이너 4개 테스트 전후 상태 불변 확인
+- Smoke 전용 컨테이너 및 볼륨 정상 정리
 
 ---
 
-## 2. 서버 실행 결과 (2차 — FAIL: gradle-wrapper.jar 누락)
+## 2. Seed 결과
 
-**실행 일시**: 2026-07-12 (2차)  
-**실패 단계**: Step 7 (Docker 이미지 빌드 — Gradle 실행 실패)
+### 1차 seed
 
-| 항목 | 결과 |
+| 항목 | 값 |
 |---|---|
-| Worker image 빌드 | OK (1차 수정 효과) |
-| Python requirements 설치 | OK |
-| Java 17 버전 확인 | OK (OpenJDK 17.0.19) |
-| Gradle compileJava | **FAIL** |
-| 오류 메시지 | `Error: Unable to access jarfile /app/gradle/wrapper/gradle-wrapper.jar` |
+| loaded | 68 |
+| inserted | 68 |
+| updated | 0 |
+| unchanged | 0 |
+| failed | 0 |
+| total | 68 |
 
-### 실패 원인: gradle-wrapper.jar git 미추적
+### 2차 seed (멱등성)
 
+| 항목 | 값 |
+|---|---|
+| loaded | 68 |
+| inserted | 0 |
+| updated | 0 |
+| unchanged | 68 |
+| failed | 0 |
+| total | 68 |
+
+---
+
+## 3. Safe zone 데이터 상태
+
+| 분류 | 건수 |
+|---|---|
+| parsed_text | 3 |
+| diagram_unreadable | 65 |
+
+`diagram_unreadable` 65건은 Stage 8 실패가 아니다.
+현재 이미지 출처에서 safe zone 수치를 자동으로 파싱할 수 없어 `safeZone: null`로 저장된 상태이며,
+수동 검토 또는 파싱 개선은 후속 데이터 품질 작업으로 분리한다.
+
+---
+
+## 4. WorkerResponse 역직렬화 오류 해결
+
+**기존 오류**
 ```
-.gitignore line 4:  !gradle/wrapper/gradle-wrapper.jar  ← 예외 (line 14에 덮어씌워짐)
-.gitignore line 14: *.jar                                ← 이 규칙이 나중 → 예외 무효화
-```
-gitignore의 후규칙 우선 특성 때문에 jar가 git에서 제외됨 → 서버에 미존재 → Docker context 미포함.
-
-### 수정 사항 (commit `d9b031a`)
-
-| 파일 | 수정 내용 |
-|---|---|
-| `.gitignore` | `!gradle/wrapper/gradle-wrapper.jar` 예외를 `*.jar` 규칙 다음으로 이동 |
-| `gradle/wrapper/gradle-wrapper.jar` | `git add -f`로 강제 추가 (48K binary) |
-| `Dockerfile.smoke` | jar 존재 검증 RUN 추가 (`\|\| true` 없이 즉시 실패) |
-| `Dockerfile.smoke` | `./gradlew dependencies \|\| true` → `\|\| true` 제거 (실패 은폐 방지) |
-
----
-
-## 3. 서버 실행 결과 (1차 — FAIL)
-
-**실행 일시**: 2026-07-12  
-**실패 단계**: Step 7 (Docker 이미지 빌드)
-
-| 항목 | 결과 |
-|---|---|
-| artifact 디렉터리 생성 | OK (1da5e57 수정 효과) |
-| git pull | OK |
-| 운영 컨테이너 4개 정상 실행 중 | OK |
-| 사용 가능 메모리 | 56 GB |
-| 디스크 사용률 | 78% |
-| 포트 18082 충돌 | 없음 |
-| stale smoke 컨테이너 | 없음 |
-| Step 7 Worker Docker 빌드 | **FAIL** |
-| Step 8 이후 | 미실행 |
-| 최종 스크립트 출력 | `ALL PASS` (false-positive 버그) |
-
-### 실패 원인 1: Worker build context 오류
-
-```
-load build context
-transferring context: 2B
-
-COPY worker/requirements.txt .
-ERROR: "/worker/requirements.txt" not found
-
-COPY worker/ .
-ERROR: "/worker" not found
+Error while extracting response for type [class com.h3.creative.worker.WorkerResponse]
+and content type [application/json]
 ```
 
-**원인**: `.dockerignore`가 `worker/`를 명시적으로 제외 (`# Java 빌드에 불필요한 디렉토리 제외`).
-`context: .` 사용 시 `worker/` 디렉토리가 build context에서 제외되어 2B만 전송됨.
+**원인**
+Python Worker의 `safeZoneViolations`는 `List<String>`이었으나
+Java DTO가 `List<Map<String,Object>>`로 선언되어 역직렬화 실패.
 
-**수정**:
-- `docker-compose.smoke.yml`: worker 서비스 `context: .` → `context: ./worker`, `dockerfile: ../Dockerfile.worker.smoke`
-- `Dockerfile.worker.smoke`: `COPY worker/requirements.txt .` → `COPY requirements.txt .`, `COPY worker/ .` → `COPY . .`
-- `.dockerignore` 수정 불필요 — context를 `./worker`로 변경하면 `./worker/.dockerignore`를 탐색하므로 project root `.dockerignore`의 `worker/` 제외가 worker 빌드에 영향 없음
+**수정** (commit `b9c911b`)
+- `WorkerResponse` 및 저장 모델을 `List<String>`으로 정렬
+- `WorkerClient` 진단 로직 보강 (raw body 수신 + 수동 파싱)
+- `WorkerResponseDeserializationTest` 16개 추가 (33/33 PASS)
 
-### 실패 원인 2: `cleanup()` false PASS 버그
-
-**원인**: `cleanup()`이 `local code=${SMOKE_RUNNER_EXIT}` (초기값=0)을 참조.
-`set -e`로 Docker 빌드 실패 시 EXIT trap이 실제 `$?`(=비정상 코드)를 전달하지만,
-`SMOKE_RUNNER_EXIT`는 0으로 초기화된 채 업데이트 없이 ALL PASS 출력.
-
-**수정**:
-- `set -euo pipefail` → `set -Eeuo pipefail`
-- `section()`: `CURRENT_STEP` 자동 추적 추가
-- `cleanup()`: `local exit_code=$?` + `set +e` + `FINAL_RESULT` 조건부 ALL PASS 출력
-- `SMOKE_RUNNER_EXIT=0` 외 `FINAL_RESULT="UNKNOWN"`, `CURRENT_STEP="(init)"` 추가
-- Step 7: `if ! ${COMPOSE_CMD} build --no-cache 2>&1 | tee -a "${SMOKE_LOG}"; then exit 1; fi`
-- 마지막(Step 25c): `SMOKE_RUNNER_EXIT=0` 일 때만 `FINAL_RESULT="PASS"` 설정
+**실제 E2E 결과**
+```
+deserializationSuccess = true
+safeZoneViolationsType = List<String>
+error = null
+```
+기존 extraction 오류 재발 없음.
 
 ---
 
-## 3. 수정된 파일
+## 5. Smoke 실행 결과
 
-| 파일 | 수정 내용 |
+| 항목 | 결과 | 실제 값 |
+|---|---|---|
+| Java 17 Docker 환경 | PASS | OpenJDK 17.0.19 |
+| Spring Boot API readiness | PASS | actuator/health = UP |
+| Smoke 전용 MongoDB 기동 | PASS | healthy |
+| Smoke 전용 RabbitMQ 기동 | PASS | healthy |
+| Smoke 전용 Python Worker 기동 | PASS | healthy |
+| seed 1차 | PASS | inserted=68, failed=0 |
+| 목록 API 68건 | PASS | null slug=0, invalid dim=0, dup=0 |
+| 상세 조회 (1250×560) | PASS | safe zone 값 일치 |
+| missing slug 404 | PASS | HTTP 404 |
+| wrong method 405 | PASS | HTTP 405 |
+| diagram_unreadable 65건 | PASS | count=65 확인 |
+| diagram_unreadable safeZone=null | PASS | 확인 |
+| seed 2차 멱등성 | PASS | unchanged=68, inserted=0 |
+| count 68 유지 | PASS | 확인 |
+| Worker health | PASS | /health 200 |
+| Spring Boot → Worker E2E | PASS | HTTP 정상 |
+| WorkerResponse 역직렬화 | PASS | deserializationSuccess=true |
+| Worker 직접 HTTP 계약 | PASS | 16/16 |
+| 운영 컨테이너 unchanged | PASS | diff 없음 |
+| Smoke 리소스 정리 | PASS | containers + volumes 제거 |
+
+**최종: BannerSpec API 42/42 PASS / Worker Contract 16/16 PASS / Total 58/58 PASS**
+
+---
+
+## 6. 최소 검증 결과 (로컬, 커밋 전)
+
+| 검증 | 결과 |
 |---|---|
-| `docker-compose.smoke.yml` | worker build context `./worker`, dockerfile `../Dockerfile.worker.smoke` |
-| `Dockerfile.worker.smoke` | COPY 경로 context 기준으로 변경 (`requirements.txt`, `. .`) |
-| `scripts/run-stage8-smoke-server.sh` | `set -Eeuo pipefail`, `FINAL_RESULT`/`CURRENT_STEP` 추적, cleanup 버그 수정, Step 7 `if !` 패턴, Step 25c |
-
----
-
-## 4. 최소 검증 결과
-
-| 검증 항목 | 결과 |
-|---|---|
-| `bash -n scripts/run-stage8-smoke-server.sh` | **PASS** |
-| `bash -n scripts/run_all_smoke.sh` | **PASS** |
-| `python -m py_compile scripts/http_smoke_test.py` | **PASS** |
-| `python -m py_compile scripts/worker_contract_smoke_test.py` | **PASS** |
-| `docker compose config` | Docker 없음 — 목시 파일 검증 완료 |
-| 운영 컨테이너 미영향 | 수정 파일 없음 (docker-compose.smoke.yml, Dockerfile.worker.smoke, 스크립트만) |
-
----
-
-## 5. 종료 코드 검증 시나리오
-
-| 시나리오 | exit_code | FINAL_RESULT | SMOKE_RUNNER_EXIT | 출력 |
-|---|---|---|---|---|
-| Docker build 실패 | non-zero | UNKNOWN | 0 | FAIL ✓ |
-| smoke runner 실패 | 0 | UNKNOWN | non-zero | FAIL ✓ |
-| 전체 통과 | 0 | PASS | 0 | ALL PASS ✓ |
-| MongoDB 타임아웃 | non-zero | UNKNOWN | 0 | FAIL ✓ |
-
----
-
-## 6. 다음 세션 시작 순서
-
-1. 이 파일(`CHECKPOINT_BANNERSPEC_STAGE8.md`) 읽기
-2. **운영서버에서 재실행 (3차)**:
-   ```bash
-   cd /opt/creative-resizer
-   git pull origin master
-   bash scripts/run-stage8-smoke-server.sh
-   ```
-3. `artifacts/stage8-smoke/<timestamp>/smoke.log` 확인
-4. 실패 단계가 있으면 오류 내용 붙여넣기
-5. 전체 PASS 후 최종 완료 커밋: `test: stage 8 smoke all pass`
-
-> origin/master: `d9b031a`
+| `bash -n run-stage8-smoke-server.sh` | PASS |
+| `bash -n run_all_smoke.sh` | PASS |
+| `python -m py_compile http_smoke_test.py` | PASS |
+| `python -m py_compile worker_contract_smoke_test.py` | PASS |
+| `gradle/wrapper/gradle-wrapper.jar` 존재 | PASS |
+| `gradle/wrapper/gradle-wrapper.properties` 존재 | PASS |
+| `gradlew` 존재 | PASS |
+| `docker compose config` | PASS (서버 실행으로 최종 검증) |
 
 ---
 
@@ -154,35 +142,29 @@ ERROR: "/worker" not found
 
 | 커밋 | 메시지 | 주요 변경 |
 |---|---|---|
-| `d9b031a` | fix: include Gradle wrapper jar in smoke API build | gradle-wrapper.jar git 추가 + Dockerfile 검증 |
+| `0938a5f` | chore: update checkpoint — 2nd server fail (gradle-wrapper.jar) fixed | 체크포인트 2차 |
+| `d9b031a` | fix: include Gradle wrapper jar in smoke API build | .gitignore 예외 순서 수정, jar 추가, Dockerfile 검증 |
 | `b3ce998` | fix: correct smoke worker build context and failure reporting | Worker context, false PASS 버그 |
 | `56daef5` | chore: pre-execution review complete | 사전 검토 |
-| `f1e00dd` | chore: checkpoint stage 8 server smoke implementation | 체크포인트 |
+| `f1e00dd` | chore: checkpoint stage 8 server smoke implementation | 체크포인트 1차 |
 | `1da5e57` | fix: create smoke artifact directory before logging | 초기화 순서 수정 |
 | `defa527` | test: add isolated server-side stage 8 smoke environment | Smoke 환경 전체 구성 |
 | `b9c911b` | fix: align worker JSON response with WorkerResponse contract | WorkerResponse 계약 수정 |
 
 ---
 
-## 8. TODO 체크리스트
+## 8. 후속 작업 (Stage 8과 무관)
 
-- [x] WorkerResponse 계약 수정 (b9c911b)
-- [x] Smoke 환경 구성 (defa527)
-- [x] artifact 초기화 순서 수정 (1da5e57)
-- [x] 코드 전수 검토 완료 (56daef5)
-- [x] Worker build context 수정 (b3ce998)
-- [x] cleanup() false PASS 버그 수정 (b3ce998)
-- [x] **gradle-wrapper.jar git 추가 + Dockerfile 검증 추가 (d9b031a)**
-- [ ] 서버 재실행 후 Step 7 빌드 통과 확인
-- [ ] MongoDB/Worker/API healthy
-- [ ] seed 1차 (INSERT=68)
-- [ ] 목록/상세 API
-- [ ] 404 / 405
-- [ ] WorkerResponse E2E
-- [ ] seed 2차 멱등성
-- [ ] 운영 컨테이너 무영향 확인
-- [ ] 최종 완료 커밋
+아래 항목은 Stage 8 미완료가 아니라 Stage 8 이후의 독립 작업이다.
+
+- Naver `diagram_unreadable` 65건 수동 검토 또는 파싱 개선
+- Kakao BannerSpec 수집
+- Meta BannerSpec 수집
+- Google BannerSpec 수집
+- PSD 역할 감지 및 object reflow 품질 개선
+- emergency_fallback 결과 품질 개선
 
 ---
 
-> 민감정보(URI, password, token, key)는 이 파일에 기록하지 않음.
+> Stage 8은 완료되었다.
+> 민감정보(URI, password, token, key)는 이 파일에 기록하지 않는다.
