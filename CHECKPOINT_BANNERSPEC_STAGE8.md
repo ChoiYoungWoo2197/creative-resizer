@@ -1,11 +1,10 @@
 # BannerSpec Stage 8 Checkpoint
 
-- 작성 시각: 2026-07-11 (3차 세션 — 서버사이드 Smoke 환경 구성)
+- 작성 시각: 2026-07-12 (4차 세션 — 사전 검토 완료, 서버 실행 대기)
 - 현재 브랜치: master
-- 현재 HEAD: 1da5e5761333da7c86f63f8039016921ad4770ce
-- origin/master: 1da5e5761333da7c86f63f8039016921ad4770ce  ← 동기화 완료
-- 작업 상태: **PARTIAL**
-- 체크포인트 사유: Claude credit limit
+- 현재 HEAD: f1e00dd (chore: checkpoint stage 8 server smoke implementation)
+- origin/master: f1e00dd ← 동기화 완료
+- 작업 상태: **PRE-EXECUTION REVIEW COMPLETE**
 - 현재 작업: Server-side isolated Docker Smoke Test (Stage 8)
 
 ---
@@ -72,16 +71,44 @@ BannerSpec Stage 8의 아래 항목을 운영서버 Docker 환경에서 실행 (
 | `bash -n` 문법 검사 통과 | DONE |
 | `mkdir + touch` 시뮬레이션 정상 확인 | DONE |
 
+### 2-D. 사전 코드 검토 완료 — 4차 세션
+
+4차 세션에서 모든 Smoke 환경 파일을 전수 검토하여 서버 실행 전 잠재적 문제를 확인.
+
+| 검토 항목 | 결과 |
+|---|---|
+| `Dockerfile.smoke` JDK17 2-stage 빌드 | OK — eclipse-temurin:17-jdk-jammy, toolchain 호환 |
+| `Dockerfile.worker.smoke` Python 3.11 + gunicorn + fixture | OK — `--no-install-recommends` 영향 없음 (JPEG 처리만) |
+| `docker-compose.smoke.yml` 네트워크·볼륨·헬스체크 | OK |
+| `application-smoke.yml` RabbitMQ/MongoDB/Worker URL | OK |
+| `SmokeController.java` 두 엔드포인트 | OK — `@Profile("smoke")`, isHealthy()/isSuccess() 존재 확인 |
+| `WorkerClient.isHealthy()` | OK — 존재, GET /health |
+| `WorkerResponse.isSuccess()` | OK — `error == null \|\| error.isBlank()` |
+| `WorkerRequest` `@Builder` | OK |
+| Spring Security | 없음 — `build.gradle`에 security 의존성 없음, 인증 차단 없음 |
+| `resizer.py` sourceType="image" 경로 | OK — PIL 직접 처리 → `renderSource: "pillow_image"` |
+| `safeZoneViolations: []` 역직렬화 | OK — `List<String>`에 빈 리스트 정상 매핑 |
+| `RestTemplate` timeout vs gunicorn timeout | OK — 120s / 120s 일치 |
+| `os.makedirs(output_dir, exist_ok=True)` | OK — 런타임에 디렉토리 생성 |
+| `gradlew` + `gradlew.bat` git 추적 여부 | OK — `git ls-files` 확인 |
+
+**추가 수정 필요 항목: 없음.** 모든 파일이 올바르게 구성되어 있음.
+
 ---
 
 ## 3. 미완료 항목
 
-### 3-A. 운영서버 실제 Smoke Test — NOT_STARTED
+### 3-A. 운영서버 실제 Smoke Test — PENDING
 
-수정된 스크립트(`1da5e57`)로 서버에서 전체 26단계 Smoke Test를 아직 실행하지 않았다.
+코드 검토 완료. 서버에서 `git pull` 후 실행 필요.
 
-이전 실행(`20260711_175610`) 오류: `tee: artifacts/stage8-smoke/20260711_175610/smoke.log: No such file or directory`
-→ commit `1da5e57`에서 수정 완료. **서버에서 `git pull` 후 재실행 필요.**
+```bash
+cd /opt/creative-resizer
+git pull origin master
+bash scripts/run-stage8-smoke-server.sh
+```
+
+결과 확인: `artifacts/stage8-smoke/<timestamp>/smoke.log`
 
 ### 3-B. 서버 실행 필요 검증 항목
 
@@ -116,7 +143,7 @@ BannerSpec Stage 8의 아래 항목을 운영서버 Docker 환경에서 실행 (
 
 ---
 
-## 5. 변경 파일 전체 목록 (이번 세션)
+## 5. 변경 파일 전체 목록 (이번 세션들)
 
 | 파일 | 커밋 | 변경 내용 | 문법 검증 |
 |---|---|---|---|
@@ -138,7 +165,7 @@ BannerSpec Stage 8의 아래 항목을 운영서버 Docker 환경에서 실행 (
 
 ---
 
-## 6. 최소 검증 결과 (이번 세션)
+## 6. 최소 검증 결과
 
 | 검증 항목 | 결과 |
 |---|---|
@@ -149,6 +176,7 @@ BannerSpec Stage 8의 아래 항목을 운영서버 Docker 환경에서 실행 (
 | 민감정보 패턴 스캔 (mongodb+srv, password, api_key 등) | **NO SENSITIVE DATA** |
 | `WorkerResponseDeserializationTest` 33/33 | PASS (b9c911b 커밋 시 로컬 JDK21 확인) |
 | `mkdir + touch` 시뮬레이션 (artifacts 디렉토리 생성) | **PASS** |
+| 코드 전수 검토 (4차 세션) | **PASS — 추가 수정 불필요** |
 
 ---
 
@@ -175,17 +203,16 @@ docker-compose.smoke.yml (project: creative-resizer-stage8-smoke)
 ## 8. 다음 세션 시작 순서
 
 1. 이 파일(`CHECKPOINT_BANNERSPEC_STAGE8.md`) 읽기
-2. `git log -3 --oneline` 으로 HEAD가 `1da5e57` 인지 확인
-3. 운영서버에서:
+2. 운영서버에서 실행 (4차 세션에서 코드 검토 완료, 추가 수정 불필요):
    ```bash
    cd /opt/creative-resizer
    git pull origin master
    bash scripts/run-stage8-smoke-server.sh
    ```
-4. `artifacts/stage8-smoke/<timestamp>/smoke.log` 확인
-5. 실패 단계가 있으면 오류 원인 분석 후 최소 수정
-6. 전체 Smoke Test PASS 확인
-7. 최종 완료 커밋: `test: stage 8 smoke all pass`
+3. `artifacts/stage8-smoke/<timestamp>/smoke.log` 내용 확인
+4. 실패 단계가 있으면 오류 원인 분석 후 최소 수정
+5. 전체 Smoke Test PASS 확인
+6. 최종 완료 커밋: `test: stage 8 smoke all pass`
 
 **진행 방침**: 다음 세션에서도 사용자에게 진행 여부를 묻지 않고,
 체크포인트와 현재 Git 상태를 대조하여 합리적으로 진행한다.
@@ -196,6 +223,7 @@ docker-compose.smoke.yml (project: creative-resizer-stage8-smoke)
 
 | 커밋 | 메시지 | 주요 변경 |
 |---|---|---|
+| `f1e00dd` | chore: checkpoint stage 8 server smoke implementation | 체크포인트 문서 |
 | `1da5e57` | fix: create smoke artifact directory before logging | 초기화 순서 수정 |
 | `defa527` | test: add isolated server-side stage 8 smoke environment | Smoke 환경 전체 구성 |
 | `b9c911b` | fix: align worker JSON response with WorkerResponse contract | WorkerResponse 계약 수정 |
@@ -215,6 +243,7 @@ docker-compose.smoke.yml (project: creative-resizer-stage8-smoke)
 - [x] artifact 초기화 순서 수정 (commit 1da5e57)
 - [x] `bash -n` 통과
 - [x] `py_compile` 통과
+- [x] **코드 전수 검토 완료 (4차 세션) — 추가 수정 불필요**
 - [ ] 서버에서 `git pull` 후 `smoke.log` 정상 생성 확인
 - [ ] Java 17 compileJava (Docker 내부)
 - [ ] Java 17 전체 test (Docker 내부)
