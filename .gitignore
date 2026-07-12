@@ -1,7 +1,6 @@
 # Gradle
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 
 # IntelliJ
 .idea/
@@ -14,6 +13,8 @@ out/
 *.jar
 *.war
 logs/
+# Gradle wrapper jar는 반드시 커밋 (*.jar 예외는 *.jar 규칙 다음에 위치해야 함)
+!gradle/wrapper/gradle-wrapper.jar
 
 # Storage (업로드/생성 파일)
 storage/

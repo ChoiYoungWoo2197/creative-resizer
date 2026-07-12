@@ -20,8 +20,12 @@ COPY build.gradle   build.gradle
 COPY settings.gradle settings.gradle
 RUN chmod +x gradlew
 
+# gradle-wrapper.jar 존재 검증 — 누락 시 즉시 실패 (|| true로 숨기지 않음)
+RUN test -f /app/gradle/wrapper/gradle-wrapper.jar \
+    || (echo "[FAIL] gradle-wrapper.jar is missing from Docker build context" && exit 1)
+
 # 의존성 다운로드 (소스 변경 시에도 이 레이어는 캐시 활용)
-RUN ./gradlew dependencies --no-daemon --quiet 2>/dev/null || true
+RUN ./gradlew dependencies --no-daemon --quiet
 
 # 소스 복사
 COPY src/ src/
