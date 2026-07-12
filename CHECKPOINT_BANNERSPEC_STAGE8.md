@@ -1,8 +1,8 @@
 # BannerSpec Stage 8 Checkpoint
 
-- 작성 시각: 2026-07-12 (5차 세션 — 서버 실행 오류 수정 완료)
+- 작성 시각: 2026-07-12 (6차 세션 — gradle-wrapper.jar 수정 완료)
 - 현재 브랜치: master
-- 작업 상태: **FIXES APPLIED — 서버 재실행 대기**
+- 작업 상태: **FIXES APPLIED — 서버 재실행 대기 (3차)**
 
 ---
 
@@ -12,7 +12,39 @@
 
 ---
 
-## 2. 서버 실행 결과 (1차 — FAIL)
+## 2. 서버 실행 결과 (2차 — FAIL: gradle-wrapper.jar 누락)
+
+**실행 일시**: 2026-07-12 (2차)  
+**실패 단계**: Step 7 (Docker 이미지 빌드 — Gradle 실행 실패)
+
+| 항목 | 결과 |
+|---|---|
+| Worker image 빌드 | OK (1차 수정 효과) |
+| Python requirements 설치 | OK |
+| Java 17 버전 확인 | OK (OpenJDK 17.0.19) |
+| Gradle compileJava | **FAIL** |
+| 오류 메시지 | `Error: Unable to access jarfile /app/gradle/wrapper/gradle-wrapper.jar` |
+
+### 실패 원인: gradle-wrapper.jar git 미추적
+
+```
+.gitignore line 4:  !gradle/wrapper/gradle-wrapper.jar  ← 예외 (line 14에 덮어씌워짐)
+.gitignore line 14: *.jar                                ← 이 규칙이 나중 → 예외 무효화
+```
+gitignore의 후규칙 우선 특성 때문에 jar가 git에서 제외됨 → 서버에 미존재 → Docker context 미포함.
+
+### 수정 사항 (commit `d9b031a`)
+
+| 파일 | 수정 내용 |
+|---|---|
+| `.gitignore` | `!gradle/wrapper/gradle-wrapper.jar` 예외를 `*.jar` 규칙 다음으로 이동 |
+| `gradle/wrapper/gradle-wrapper.jar` | `git add -f`로 강제 추가 (48K binary) |
+| `Dockerfile.smoke` | jar 존재 검증 RUN 추가 (`\|\| true` 없이 즉시 실패) |
+| `Dockerfile.smoke` | `./gradlew dependencies \|\| true` → `\|\| true` 제거 (실패 은폐 방지) |
+
+---
+
+## 3. 서버 실행 결과 (1차 — FAIL)
 
 **실행 일시**: 2026-07-12  
 **실패 단계**: Step 7 (Docker 이미지 빌드)
@@ -104,7 +136,7 @@ ERROR: "/worker" not found
 ## 6. 다음 세션 시작 순서
 
 1. 이 파일(`CHECKPOINT_BANNERSPEC_STAGE8.md`) 읽기
-2. 운영서버에서 재실행:
+2. **운영서버에서 재실행 (3차)**:
    ```bash
    cd /opt/creative-resizer
    git pull origin master
@@ -114,13 +146,16 @@ ERROR: "/worker" not found
 4. 실패 단계가 있으면 오류 내용 붙여넣기
 5. 전체 PASS 후 최종 완료 커밋: `test: stage 8 smoke all pass`
 
+> origin/master: `d9b031a`
+
 ---
 
 ## 7. 커밋 이력
 
 | 커밋 | 메시지 | 주요 변경 |
 |---|---|---|
-| `(이번 커밋)` | fix: correct smoke worker build context and failure reporting | 이번 세션 수정 |
+| `d9b031a` | fix: include Gradle wrapper jar in smoke API build | gradle-wrapper.jar git 추가 + Dockerfile 검증 |
+| `b3ce998` | fix: correct smoke worker build context and failure reporting | Worker context, false PASS 버그 |
 | `56daef5` | chore: pre-execution review complete | 사전 검토 |
 | `f1e00dd` | chore: checkpoint stage 8 server smoke implementation | 체크포인트 |
 | `1da5e57` | fix: create smoke artifact directory before logging | 초기화 순서 수정 |
@@ -135,8 +170,9 @@ ERROR: "/worker" not found
 - [x] Smoke 환경 구성 (defa527)
 - [x] artifact 초기화 순서 수정 (1da5e57)
 - [x] 코드 전수 검토 완료 (56daef5)
-- [x] **Worker build context 수정 — `.dockerignore` + context `./worker` (이번 커밋)**
-- [x] **cleanup() false PASS 버그 수정 (이번 커밋)**
+- [x] Worker build context 수정 (b3ce998)
+- [x] cleanup() false PASS 버그 수정 (b3ce998)
+- [x] **gradle-wrapper.jar git 추가 + Dockerfile 검증 추가 (d9b031a)**
 - [ ] 서버 재실행 후 Step 7 빌드 통과 확인
 - [ ] MongoDB/Worker/API healthy
 - [ ] seed 1차 (INSERT=68)
