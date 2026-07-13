@@ -233,36 +233,35 @@ _SQUARE_TEMPLATES = [
 _HORIZONTAL_TEMPLATES_EXTRA = [
     {
         "id": "horizontal_text_left_product_right",
+        # image zone을 w=0.45로 확장하여 crop ratio 22%로 낮춤 (기존 w=0.27→53% crop → FAIL)
         "zones": [
             {"zone_id": "logo",   "roles": ["logo"],
-             "x": 0.21, "y": 0.06, "w": 0.16, "h": 0.14,
+             "x": 0.21, "y": 0.09, "w": 0.16, "h": 0.14,
              "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
             {"zone_id": "text",   "roles": ["headline", "body_text", "price", "discount"],
-             "x": 0.21, "y": 0.24, "w": 0.27, "h": 0.44,
+             "x": 0.21, "y": 0.26, "w": 0.27, "h": 0.42,
              "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 3},
             {"zone_id": "cta",    "roles": ["cta"],
              "x": 0.21, "y": 0.72, "w": 0.27, "h": 0.20,
              "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
             {"zone_id": "image",  "roles": ["main_image", "person"],
-             "x": 0.52, "y": 0.05, "w": 0.27, "h": 0.90,
+             "x": 0.50, "y": 0.05, "w": 0.45, "h": 0.90,
              "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
         ],
     },
     {
         "id": "horizontal_background_full_text_cta_center",
+        # 배경 전용 레이아웃: image zone 없음 (psd_background가 canvas 전체 커버)
         "zones": [
             {"zone_id": "logo",   "roles": ["logo"],
-             "x": 0.21, "y": 0.06, "w": 0.18, "h": 0.14,
+             "x": 0.21, "y": 0.09, "w": 0.18, "h": 0.14,
              "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
             {"zone_id": "text",   "roles": ["headline", "body_text", "price", "discount"],
-             "x": 0.21, "y": 0.24, "w": 0.58, "h": 0.40,
+             "x": 0.21, "y": 0.26, "w": 0.58, "h": 0.38,
              "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 4},
             {"zone_id": "cta",    "roles": ["cta"],
              "x": 0.30, "y": 0.68, "w": 0.40, "h": 0.22,
              "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
-            {"zone_id": "image",  "roles": ["main_image", "person"],
-             "x": 0.21, "y": 0.05, "w": 0.58, "h": 0.17,
-             "mode": "center",        "allow_crop": True,  "optional": True,  "max_objs": 1},
         ],
     },
     {

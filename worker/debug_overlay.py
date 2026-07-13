@@ -277,19 +277,105 @@ def _build_layout_json(comp_meta: dict,
         }
 
     # 9단계: repair / dedup / CTA group 메타 (layout_result.metadata에서 읽음)
-    layout_meta = layout_result.get("metadata", {})
+    layout_meta  = layout_result.get("metadata", {})
+    repair_reasons = layout_meta.get("repairReasons", [])
+    active_placements = [p for p in placements if not p.get("dropped")]
 
     # allCandidates 요약에 candidateType 추가
     all_summary_with_type = []
     for entry in all_summary:
         c_id = entry.get("candidateId", "")
-        # repaired_ prefix or repairApplied flag
         ctype = "original"
         for c in all_candidates:
             if c.get("candidateId") == c_id and c.get("repairApplied"):
                 ctype = "repaired"
                 break
         all_summary_with_type.append({**entry, "candidateType": ctype})
+
+    # ── 9단계: headline 관련 파생 필드 ──────────────────────────────────────────
+    headline_ps  = [p for p in active_placements if p.get("role") == "headline"]
+    headline_p   = headline_ps[0] if headline_ps else None
+    hl_clamped   = any("headline" in r for r in repair_reasons)
+    hl_scaled    = hl_clamped and any("scale" in r.lower() for r in repair_reasons if "headline" in r)
+    hl_bbox      = None
+    hl_in_canvas = False
+    hl_in_sz     = False
+    if headline_p:
+        hl_bbox = {
+            "x": int(headline_p.get("x", 0)), "y": int(headline_p.get("y", 0)),
+            "width": int(headline_p.get("width", 0)), "height": int(headline_p.get("height", 0)),
+        }
+        hl_in_canvas = (
+            headline_p["x"] >= 0 and headline_p["y"] >= 0
+            and headline_p["x"] + headline_p["width"] <= target_w
+            and headline_p["y"] + headline_p["height"] <= target_h
+        )
+        sz_hl = get_object_safe_zone("headline", safe_zones)
+        hl_in_sz = rect_inside_safe_zone(
+            {"x": headline_p["x"], "y": headline_p["y"],
+             "width": headline_p["width"], "height": headline_p["height"]},
+            sz_hl, target_w, target_h
+        ) if sz_hl else hl_in_canvas
+
+    # ── 9단계: CTA 관련 파생 필드 ───────────────────────────────────────────────
+    cta_ps        = [p for p in active_placements if p.get("role") == "cta"]
+    cta_p         = cta_ps[0] if cta_ps else None
+    cta_visible   = cta_p is not None
+    cta_in_sz     = False
+    cta_bbox      = None
+    cta_occluded  = False
+    if cta_p:
+        cta_bbox = {
+            "x": int(cta_p.get("x", 0)), "y": int(cta_p.get("y", 0)),
+            "width": int(cta_p.get("width", 0)), "height": int(cta_p.get("height", 0)),
+        }
+        sz_cta = get_object_safe_zone("cta", safe_zones)
+        cta_in_sz = rect_inside_safe_zone(
+            {"x": cta_p["x"], "y": cta_p["y"],
+             "width": cta_p["width"], "height": cta_p["height"]},
+            sz_cta, target_w, target_h
+        ) if sz_cta else True
+        # CTA 가려짐: main_image/person이 CTA와 겹치고 z-order가 같거나 높으면 가려질 수 있음
+        # layout_compositor는 z-order=cta(6) > main_image(1)이므로 CTA는 위에 렌더링됨
+        # 여기서는 bbox 겹침만 기록 (실제 렌더 가려짐은 compositor가 결정)
+        img_ps = [p for p in active_placements if p.get("role") in ("main_image", "person")]
+        if img_ps:
+            from layout_compiler import _rect_iou
+            cta_occluded = any(_rect_iou(cta_p, ip) > 0.15 for ip in img_ps)
+
+    # ── 9단계: background 관련 파생 필드 ────────────────────────────────────────
+    background_mode   = comp_meta.get("backgroundMode") or comp_meta.get("background_mode")
+    background_source = comp_meta.get("backgroundSource") or background_mode
+    blur_fallback     = comp_meta.get("blurFallbackUsed", False)
+    if background_mode and "blur" in str(background_mode).lower():
+        blur_fallback = True
+
+    # ── 9단계: scoring 이유 파생 ─────────────────────────────────────────────────
+    breakdown = best.get("scoringBreakdown") or {}
+    positive_reasons: list = []
+    negative_reasons: list = []
+    if breakdown.get("safeZoneScore", 0) >= 95:
+        positive_reasons.append("safeZone fully satisfied")
+    if breakdown.get("noCropScore", 0) >= 95:
+        positive_reasons.append("no crop on required roles")
+    if cta_visible and cta_in_sz:
+        positive_reasons.append("CTA inside safe zone")
+    if headline_p and hl_in_sz:
+        positive_reasons.append("headline inside safe zone")
+    if layout_meta.get("duplicateObjectsRemoved"):
+        positive_reasons.append("duplicate main_image removed")
+    if blur_fallback:
+        negative_reasons.append("blur_fallback used for background")
+    if cta_occluded:
+        negative_reasons.append("CTA bbox overlaps with product/person")
+    if layout_meta.get("fallbackUsed") or comp_meta.get("fallbackUsed"):
+        negative_reasons.append("emergency_fallback used")
+    if breakdown.get("overlapScore", 100) < 80:
+        negative_reasons.append("significant object overlap detected")
+    if not cta_visible:
+        negative_reasons.append("CTA not placed")
+    if not headline_p:
+        negative_reasons.append("headline not placed")
 
     return {
         "target":              {"width": target_w, "height": target_h},
@@ -307,7 +393,9 @@ def _build_layout_json(comp_meta: dict,
             "cta":     safe_zones.get("cta"),
         },
         "safeZoneBox":         sz_box,
-        "backgroundMode":      comp_meta.get("backgroundMode"),
+        "backgroundMode":      background_mode,
+        "backgroundSource":    background_source,
+        "blurFallbackUsed":    blur_fallback,
         "candidateCount":      comp_meta.get("candidateCount"),
         "objects":             objects_info,
         "droppedObjects":      comp_meta.get("droppedObjects", []),
@@ -318,13 +406,26 @@ def _build_layout_json(comp_meta: dict,
         "topCandidates":       top_summary,
         "allCandidates":       all_summary_with_type,
         # 9단계 추가 필드
-        "scoringBreakdown":          best.get("scoringBreakdown"),
+        "scoringBreakdown":          breakdown if breakdown else None,
+        "scorePositiveReasons":      positive_reasons,
+        "scoreNegativeReasons":      negative_reasons,
         "repairAttempted":           layout_meta.get("repairAttempted", False),
         "repairApplied":             layout_meta.get("repairApplied", False),
-        "repairReasons":             layout_meta.get("repairReasons", []),
+        "repairReasons":             repair_reasons,
         "repairedObjects":           layout_meta.get("repairedObjects", []),
         "duplicateObjectsRemoved":   layout_meta.get("duplicateObjectsRemoved", []),
         "ctaGroupCreated":           layout_meta.get("ctaGroupCreated", False),
+        "ctaVisible":                cta_visible,
+        "ctaOccluded":               cta_occluded,
+        "ctaInsideSafeZone":         cta_in_sz,
+        "ctaGroupBbox":              cta_bbox,
+        "headlineClamped":           hl_clamped,
+        "headlineScaled":            hl_scaled,
+        "headlineOverflowFixed":     hl_clamped,
+        "headlineVisible":           headline_p is not None,
+        "headlineBbox":              hl_bbox,
+        "headlineInsideCanvas":      hl_in_canvas,
+        "headlineInsideSafeZone":    hl_in_sz,
     }
 
 
