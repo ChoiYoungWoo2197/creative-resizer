@@ -152,7 +152,7 @@ def test_duplicate_main_image_removal():
     """중복 main_image 2개 → 1개로 줄이는지 검증."""
     cos = _make_cos(extra_main_images=2)
     objs = cos["objects"]
-    by_role, filtered_objs, dropped_ids = _deduplicate_main_images(
+    by_role, filtered_objs, dropped_ids, _ = _deduplicate_main_images(
         _objects_by_role(objs), objs
     )
     main_imgs = by_role.get("main_image", [])

@@ -1169,8 +1169,11 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                         creative_object_set, artboard_img, w, h, output_dir, job_id
                     )
 
-                    # 2. 5개 이상 layout candidates 생성·점수화
-                    layout_result = compile_layout(creative_object_set, w, h, safe_zones)
+                    # 2. 5개 이상 layout candidates 생성·점수화 (Stage 15: bg naturalness 전달)
+                    layout_result = compile_layout(
+                        creative_object_set, w, h, safe_zones,
+                        bg_naturalness=bg_meta_out.get("backgroundNaturalnessScore"),
+                    )
                     layout_meta_out = layout_result.get("metadata", {})
                     if layout_meta_out.get("fallbackUsed"):
                         print(f"[{job_id or 'job'}][ObjectReflow] emergency layout spec={name}")

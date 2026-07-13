@@ -1017,20 +1017,155 @@ def compute_competitor_style_score(placements: list, canvas_w: int, canvas_h: in
     return min(100.0, score)
 
 
-def _competitor_style_adjustment(candidate: dict, canvas_w: int, canvas_h: int) -> float:
-    """경쟁사 스타일 점수를 기반으로 최종 점수 조정값 반환 (-3.0 ~ +3.0).
+def _competitor_style_adjustment(
+    candidate: dict,
+    canvas_w: int,
+    canvas_h: int,
+    bg_naturalness: float | None = None,
+) -> float:
+    """경쟁사 스타일 점수를 기반으로 최종 점수 조정값 반환 (-3.5 ~ +3.5).
 
     competitorStyleScore=100 → +3.0 (경쟁사 구성 완벽)
     competitorStyleScore= 50 → +0.0 (중립)
     competitorStyleScore=  0 → -3.0 (경쟁사 구성 없음)
+
+    Stage 15: bg_naturalness >= 70 → +0.5, < 40 → -0.5
     """
     cs = compute_competitor_style_score(candidate.get("placements", []), canvas_w, canvas_h)
-    return round((cs - 50.0) / 50.0 * 3.0, 2)
+    base = round((cs - 50.0) / 50.0 * 3.0, 2)
+    bg_bonus = 0.0
+    if bg_naturalness is not None:
+        if bg_naturalness >= 70.0:
+            bg_bonus = 0.5
+        elif bg_naturalness < 40.0:
+            bg_bonus = -0.5
+    return round(base + bg_bonus, 2)
+
+
+# ─── Stage 14: 제품 단독 추출 강화 ───────────────────────────────────────────
+
+def score_product_candidate(obj: dict, canvas_w: int, canvas_h: int) -> float:
+    """제품 단독 추출 품질 점수 (0~100).
+
+    높을수록 '손/배경 없이 제품만' 분리된 가능성 높음.
+    Score factors:
+      - Photoroom/cutout 경로 → +30 (배경제거 도구 사용)
+      - PSD smartobject 소스 → +15
+      - ai_bbox_crop 소스    → -20 (배경 포함 가능성)
+      - 세장형 (height/width > 2.0) → +20
+      - 세장형 (height/width > 1.5) → +12
+      - 약간 세장형 (> 1.0)         → +5
+      - 가로형 (width/height > 2.0) → -15 (손+제품 조합 가능성)
+      - 소면적 (< 8% of canvas)     → +15
+      - 적정 면적 (< 20%)           → +8
+      - 과대 면적 (> 50%)           → -25 (전체 장면 포함 가능성)
+      - 과대 면적 (> 35%)           → -10
+      - qualityRisk 없음            → +5 (레이어 정상 추출)
+    """
+    score = 50.0
+
+    bb       = obj.get("bbox") or {}
+    w        = bb.get("width", 0)
+    h        = bb.get("height", 0)
+    area     = w * h
+    canvas_a = max(canvas_w * canvas_h, 1)
+    area_r   = area / canvas_a
+
+    source_type = obj.get("sourceType", "")
+    img_path    = (obj.get("imagePath") or "").replace("\\", "/")
+
+    if "Photoroom" in img_path or "cutout" in img_path.lower():
+        score += 30.0
+    elif source_type in ("psd_layer_smartobject", "psd_layer"):
+        score += 15.0
+    elif source_type == "ai_bbox_crop":
+        score -= 20.0
+
+    if w > 0 and h > 0:
+        aspect = h / w
+        if aspect > 2.0:
+            score += 20.0
+        elif aspect > 1.5:
+            score += 12.0
+        elif aspect > 1.0:
+            score += 5.0
+        elif w / h >= 2.0:
+            score -= 15.0
+
+    if area_r < 0.08:
+        score += 15.0
+    elif area_r < 0.20:
+        score += 8.0
+    elif area_r > 0.50:
+        score -= 25.0
+    elif area_r > 0.35:
+        score -= 10.0
+
+    if obj.get("qualityRisk") is None:
+        score += 5.0
+
+    return max(0.0, min(100.0, score))
+
+
+def find_isolated_product_candidates(
+    main_imgs: list, canvas_w: int, canvas_h: int
+) -> list:
+    """main_image 역할 객체 목록을 isolation score 내림차순으로 반환.
+
+    반환: [(score, obj), ...]
+    """
+    scored = [(score_product_candidate(o, canvas_w, canvas_h), o) for o in main_imgs]
+    scored.sort(key=lambda x: -x[0])
+    return scored
+
+
+def choose_primary_product_object(
+    main_imgs: list, canvas_w: int, canvas_h: int
+) -> tuple:
+    """main_image 후보 중 제품 단독 분리 점수 기준 최적 객체 선택.
+
+    반환: (chosen_obj, meta_dict)
+    meta_dict keys: isolatedProductCandidateUsed, isolatedProductCandidateId,
+                    productCandidateScore, productIsolationReason
+    """
+    if not main_imgs:
+        return None, {
+            "isolatedProductCandidateUsed": False,
+            "isolatedProductCandidateId":   None,
+            "productCandidateScore":        None,
+            "productIsolationReason":       "no_main_image",
+        }
+
+    scored = find_isolated_product_candidates(main_imgs, canvas_w, canvas_h)
+    best_score, best_obj = scored[0]
+
+    if best_score >= 60.0:
+        reason = "isolated_product_selected"
+        used   = True
+    elif best_score >= 40.0:
+        reason = "partially_isolated_selected"
+        used   = True
+    else:
+        def _area(o):
+            bb = o.get("bbox") or {}
+            return bb.get("width", 0) * bb.get("height", 0)
+        best_obj   = max(main_imgs, key=_area)
+        best_score = score_product_candidate(best_obj, canvas_w, canvas_h)
+        reason     = "area_fallback_selected"
+        used       = False
+
+    return best_obj, {
+        "isolatedProductCandidateUsed": used,
+        "isolatedProductCandidateId":   best_obj.get("id"),
+        "productCandidateScore":        round(best_score, 1),
+        "productIsolationReason":       reason,
+    }
 
 
 def score_candidate(candidate: dict, safe_zones: dict,
                     canvas_w: int, canvas_h: int,
-                    objs_by_id: dict) -> float:
+                    objs_by_id: dict,
+                    bg_naturalness: float | None = None) -> float:
     """7-component 가중 점수 + 경쟁사 스타일 조정 (0~100)."""
     ps   = candidate["placements"]
     base = (
@@ -1042,7 +1177,7 @@ def score_candidate(candidate: dict, safe_zones: dict,
         + compute_background_clean_score(ps)                           * _W_BG_CLEAN
         + compute_original_intent_score(ps, objs_by_id)                * _W_ORIGINAL_INTENT
     )
-    adj = _competitor_style_adjustment(candidate, canvas_w, canvas_h)
+    adj = _competitor_style_adjustment(candidate, canvas_w, canvas_h, bg_naturalness)
     return round(min(100.0, max(0.0, base + adj)), 1)
 
 
@@ -1185,27 +1320,38 @@ def _emergency_layout(objs_by_role: dict, canvas_w: int, canvas_h: int,
 def _deduplicate_main_images(
     objs_by_role: dict,
     objects: list,
+    canvas_w: int = 0,
+    canvas_h: int = 0,
 ) -> tuple:
-    """main_image 2개 이상 → bbox area 기준 최대 1개만 유지.
+    """main_image 2개 이상 → Stage 14 isolation score 기준 최대 1개만 유지.
 
-    반환: (filtered_objs_by_role, filtered_objects, dropped_ids)
+    반환: (filtered_objs_by_role, filtered_objects, dropped_ids, isolation_meta)
     """
     main_imgs = objs_by_role.get("main_image", [])
     if len(main_imgs) <= 1:
-        return objs_by_role, objects, []
+        return objs_by_role, objects, [], {}
 
-    def _area(obj):
-        bb = obj.get("bbox") or {}
-        return bb.get("width", 0) * bb.get("height", 0)
+    if canvas_w > 0 and canvas_h > 0:
+        best, isolation_meta = choose_primary_product_object(main_imgs, canvas_w, canvas_h)
+    else:
+        def _area(o):
+            bb = o.get("bbox") or {}
+            return bb.get("width", 0) * bb.get("height", 0)
+        best = max(main_imgs, key=_area)
+        isolation_meta = {
+            "isolatedProductCandidateUsed": False,
+            "isolatedProductCandidateId":   best.get("id"),
+            "productCandidateScore":        None,
+            "productIsolationReason":       "no_canvas_dims",
+        }
 
-    best = max(main_imgs, key=_area)
     dropped_ids = [o["id"] for o in main_imgs if o["id"] != best["id"]]
     dropped_set = set(dropped_ids)
 
     filtered_objects = [o for o in objects if o.get("id") not in dropped_set]
-    updated_role = dict(objs_by_role)
+    updated_role     = dict(objs_by_role)
     updated_role["main_image"] = [best]
-    return updated_role, filtered_objects, dropped_ids
+    return updated_role, filtered_objects, dropped_ids, isolation_meta
 
 
 def _merge_cta_group(objs_by_role: dict) -> tuple:
@@ -1325,6 +1471,7 @@ def score_candidate_with_breakdown(
     canvas_w: int,
     canvas_h: int,
     objs_by_id: dict,
+    bg_naturalness: float | None = None,
 ) -> tuple:
     """score_candidate와 동일하지만 구성요소별 breakdown도 반환.
 
@@ -1339,7 +1486,7 @@ def score_candidate_with_breakdown(
     bg = compute_background_clean_score(ps)
     oi = compute_original_intent_score(ps, objs_by_id)
     cs = compute_competitor_style_score(ps, canvas_w, canvas_h)
-    adj = _competitor_style_adjustment(candidate, canvas_w, canvas_h)
+    adj = _competitor_style_adjustment(candidate, canvas_w, canvas_h, bg_naturalness)
 
     total = round(min(100.0, max(0.0,
         sz * _W_SAFE_ZONE
@@ -1383,6 +1530,7 @@ def compile_layout(
     target_height: int,
     safe_zones: dict | None = None,
     layout_profile: str | None = None,
+    bg_naturalness: float | None = None,
 ) -> dict:
     """CreativeObjectSet → multi-candidate layout 생성·점수화·선택.
 
@@ -1409,8 +1557,10 @@ def compile_layout(
 
     objs_by_role = _objects_by_role(objects)
 
-    # 9단계: 중복 main_image 제거
-    objs_by_role, objects, dup_dropped_ids = _deduplicate_main_images(objs_by_role, objects)
+    # 9단계: 중복 main_image 제거 (Stage 14: isolation score 기반 선택)
+    objs_by_role, objects, dup_dropped_ids, isolation_meta = _deduplicate_main_images(
+        objs_by_role, objects, target_width, target_height
+    )
 
     # 9단계: 복수 CTA 통합
     objs_by_role, cta_group_created = _merge_cta_group(objs_by_role)
@@ -1432,7 +1582,7 @@ def compile_layout(
             cand["hardFail"]        = is_fail
             cand["hardFailReasons"] = reasons
             cand["score"]           = score_candidate(
-                cand, safe_zones, target_width, target_height, objs_by_id
+                cand, safe_zones, target_width, target_height, objs_by_id, bg_naturalness
             )
         except Exception as e:
             cand = {
@@ -1468,7 +1618,7 @@ def compile_layout(
                 if not is_fail:
                     # repair 후보는 자연 통과 후보보다 5% 낮은 점수 부여
                     repaired["score"] = max(0.0, round(
-                        score_candidate(repaired, safe_zones, target_width, target_height, objs_by_id)
+                        score_candidate(repaired, safe_zones, target_width, target_height, objs_by_id, bg_naturalness)
                         * 0.95, 1
                     ))
                     repaired_candidates.append(repaired)
@@ -1481,7 +1631,7 @@ def compile_layout(
     if not valid_candidates:
         emg = _emergency_layout(objs_by_role, target_width, target_height, safe_zones)
         emg["score"] = score_candidate(
-            emg, safe_zones, target_width, target_height, objs_by_id
+            emg, safe_zones, target_width, target_height, objs_by_id, bg_naturalness
         )
         candidates.append(emg)
         valid_candidates = [emg]
@@ -1492,7 +1642,7 @@ def compile_layout(
     # scoring breakdown 저장 (debug overlay에서 사용)
     try:
         _, best["scoringBreakdown"] = score_candidate_with_breakdown(
-            best, safe_zones, target_width, target_height, objs_by_id
+            best, safe_zones, target_width, target_height, objs_by_id, bg_naturalness
         )
     except Exception:
         best["scoringBreakdown"] = None
@@ -1529,5 +1679,12 @@ def compile_layout(
             "repairedObjects":         best.get("repairedObjects", []),
             "duplicateObjectsRemoved": dup_dropped_ids,
             "ctaGroupCreated":         cta_group_created,
+            # Stage 14: 제품 단독 추출 강화
+            "isolatedProductCandidateUsed": isolation_meta.get("isolatedProductCandidateUsed", False),
+            "isolatedProductCandidateId":   isolation_meta.get("isolatedProductCandidateId"),
+            "productCandidateScore":        isolation_meta.get("productCandidateScore"),
+            "productIsolationReason":       isolation_meta.get("productIsolationReason"),
+            # Stage 15: 배경 자연스러움
+            "backgroundNaturalnessScore":   bg_naturalness,
         },
     }

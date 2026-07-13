@@ -293,6 +293,35 @@ def build_dominant_gradient(
     return result
 
 
+# ─── Stage 15: background naturalness scoring ─────────────────────────────────
+
+def compute_background_naturalness_score(mode: str, blur_used: bool = False) -> float:
+    """배경 자연스러움 점수 (0~100).
+
+    배경 생성 모드별 기본 점수:
+      psd_background_cover       → 85  (PSD 원본 커버, 가장 자연스러움)
+      psd_background_extend      → 70  (에지 스트레칭, 약간 부자연)
+      flattened_clean_area_cover → 65  (원본 clean area 크롭)
+      dominant_gradient          → 40  (그라디언트, 인공적)
+      solid_brand_color          → 25  (단색, 매우 인공적)
+      emergency_neutral          → 15  (비상 회색)
+
+    Penalty: blur 사용 시 -25 (현재 pipeline에서 blurUsed=False이므로 적용 안 됨)
+    """
+    _MODE_SCORES: dict[str, float] = {
+        "psd_background_cover":       85.0,
+        "psd_background_extend":      70.0,
+        "flattened_clean_area_cover": 65.0,
+        "dominant_gradient":          40.0,
+        "solid_brand_color":          25.0,
+        "emergency_neutral":          15.0,
+    }
+    score = _MODE_SCORES.get(mode, 50.0)
+    if blur_used:
+        score = max(0.0, score - 25.0)
+    return round(score, 1)
+
+
 # ─── orchestration ────────────────────────────────────────────────────────────
 
 def build_background(
@@ -322,11 +351,12 @@ def build_background(
         if out.size != (target_w, target_h):
             out = out.resize((target_w, target_h), Image.LANCZOS)
         return out, {
-            "backgroundMode": mode,
-            "cropAnchor":     anchor,
-            "fallbackUsed":   fallback_used,
-            "fallbackReason": fallback_reason,
-            "blurUsed":       False,
+            "backgroundMode":             mode,
+            "cropAnchor":                 anchor,
+            "fallbackUsed":               fallback_used,
+            "fallbackReason":             fallback_reason,
+            "blurUsed":                   False,
+            "backgroundNaturalnessScore": compute_background_naturalness_score(mode),
         }
 
     objects = (creative_object_set or {}).get("objects", [])
