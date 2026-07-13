@@ -227,6 +227,116 @@ _SQUARE_TEMPLATES = [
     },
 ]
 
+# ─── 9단계: 좁은 safe zone용 추가 horizontal 후보 (tight left/right margin 대응) ──
+# x 범위를 0.20~0.80 내로 제한 → safeZone right/left 20% 지면에서도 hard fail 없음
+
+_HORIZONTAL_TEMPLATES_EXTRA = [
+    {
+        "id": "horizontal_text_left_product_right",
+        "zones": [
+            {"zone_id": "logo",   "roles": ["logo"],
+             "x": 0.21, "y": 0.06, "w": 0.16, "h": 0.14,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "text",   "roles": ["headline", "body_text", "price", "discount"],
+             "x": 0.21, "y": 0.24, "w": 0.27, "h": 0.44,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 3},
+            {"zone_id": "cta",    "roles": ["cta"],
+             "x": 0.21, "y": 0.72, "w": 0.27, "h": 0.20,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "image",  "roles": ["main_image", "person"],
+             "x": 0.52, "y": 0.05, "w": 0.27, "h": 0.90,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "horizontal_background_full_text_cta_center",
+        "zones": [
+            {"zone_id": "logo",   "roles": ["logo"],
+             "x": 0.21, "y": 0.06, "w": 0.18, "h": 0.14,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "text",   "roles": ["headline", "body_text", "price", "discount"],
+             "x": 0.21, "y": 0.24, "w": 0.58, "h": 0.40,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 4},
+            {"zone_id": "cta",    "roles": ["cta"],
+             "x": 0.30, "y": 0.68, "w": 0.40, "h": 0.22,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "image",  "roles": ["main_image", "person"],
+             "x": 0.21, "y": 0.05, "w": 0.58, "h": 0.17,
+             "mode": "center",        "allow_crop": True,  "optional": True,  "max_objs": 1},
+        ],
+    },
+    {
+        "id": "horizontal_no_product_reposition_preserve_original",
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.21, "y": 0.05, "w": 0.18, "h": 0.14,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "headline", "roles": ["headline"],
+             "x": 0.21, "y": 0.20, "w": 0.58, "h": 0.30,
+             "mode": "center",        "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.30, "y": 0.72, "w": 0.40, "h": 0.20,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+]
+
+# ─── 9단계: 추가 square 후보 ──────────────────────────────────────────────────
+
+_SQUARE_TEMPLATES_EXTRA = [
+    {
+        "id": "square_headline_top_product_right_cta_bottom",
+        "zones": [
+            {"zone_id": "logo",  "roles": ["logo"],
+             "x": 0.04, "y": 0.04, "w": 0.22, "h": 0.10,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "text",  "roles": ["headline", "body_text"],
+             "x": 0.04, "y": 0.16, "w": 0.48, "h": 0.34,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 2},
+            {"zone_id": "image", "roles": ["main_image", "person"],
+             "x": 0.55, "y": 0.10, "w": 0.41, "h": 0.56,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "cta",   "roles": ["cta"],
+             "x": 0.15, "y": 0.84, "w": 0.70, "h": 0.12,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "square_original_center_crop_cta_bottom",
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.04, "y": 0.03, "w": 0.22, "h": 0.10,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "image",    "roles": ["main_image", "person"],
+             "x": 0.05, "y": 0.04, "w": 0.90, "h": 0.74,
+             "mode": "center",        "allow_crop": True,  "optional": True,  "max_objs": 1},
+            {"zone_id": "headline", "roles": ["headline"],
+             "x": 0.05, "y": 0.77, "w": 0.90, "h": 0.10,
+             "mode": "center",        "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.20, "y": 0.87, "w": 0.60, "h": 0.09,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "square_product_center_cta_below",
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.04, "y": 0.03, "w": 0.22, "h": 0.09,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "image",    "roles": ["main_image", "person"],
+             "x": 0.08, "y": 0.04, "w": 0.84, "h": 0.67,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "headline", "roles": ["headline"],
+             "x": 0.05, "y": 0.73, "w": 0.90, "h": 0.12,
+             "mode": "center",        "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.20, "y": 0.86, "w": 0.60, "h": 0.11,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+]
+
 _VERTICAL_TEMPLATES = [
     {
         "id": "vertical_logo_top_product_center_cta_bottom",
@@ -338,10 +448,10 @@ def _ratio_type(w: int, h: int) -> str:
 
 def _get_templates(ratio_type: str) -> list:
     return {
-        "horizontal": _HORIZONTAL_TEMPLATES,
-        "square":     _SQUARE_TEMPLATES,
+        "horizontal": _HORIZONTAL_TEMPLATES + _HORIZONTAL_TEMPLATES_EXTRA,
+        "square":     _SQUARE_TEMPLATES + _SQUARE_TEMPLATES_EXTRA,
         "vertical":   _VERTICAL_TEMPLATES,
-    }.get(ratio_type, _HORIZONTAL_TEMPLATES)
+    }.get(ratio_type, _HORIZONTAL_TEMPLATES + _HORIZONTAL_TEMPLATES_EXTRA)
 
 
 def _objects_by_role(objects: list) -> dict:
@@ -872,6 +982,196 @@ def _emergency_layout(objs_by_role: dict, canvas_w: int, canvas_h: int,
     }
 
 
+# ─── 9단계: 중복 제거 / CTA 그룹화 / repair ────────────────────────────────────
+
+def _deduplicate_main_images(
+    objs_by_role: dict,
+    objects: list,
+) -> tuple:
+    """main_image 2개 이상 → bbox area 기준 최대 1개만 유지.
+
+    반환: (filtered_objs_by_role, filtered_objects, dropped_ids)
+    """
+    main_imgs = objs_by_role.get("main_image", [])
+    if len(main_imgs) <= 1:
+        return objs_by_role, objects, []
+
+    def _area(obj):
+        bb = obj.get("bbox") or {}
+        return bb.get("width", 0) * bb.get("height", 0)
+
+    best = max(main_imgs, key=_area)
+    dropped_ids = [o["id"] for o in main_imgs if o["id"] != best["id"]]
+    dropped_set = set(dropped_ids)
+
+    filtered_objects = [o for o in objects if o.get("id") not in dropped_set]
+    updated_role = dict(objs_by_role)
+    updated_role["main_image"] = [best]
+    return updated_role, filtered_objects, dropped_ids
+
+
+def _merge_cta_group(objs_by_role: dict) -> tuple:
+    """CTA 객체 2개 이상 → area 기준 최대 1개만 유지.
+
+    반환: (updated_objs_by_role, cta_group_created: bool)
+    """
+    ctas = objs_by_role.get("cta", [])
+    if len(ctas) <= 1:
+        return objs_by_role, False
+
+    def _area(obj):
+        bb = obj.get("bbox") or {}
+        return bb.get("width", 0) * bb.get("height", 0)
+
+    best_cta = max(ctas, key=_area)
+    updated = dict(objs_by_role)
+    updated["cta"] = [best_cta]
+    return updated, True
+
+
+def _repair_candidate(
+    candidate: dict,
+    safe_zones: dict,
+    canvas_w: int,
+    canvas_h: int,
+) -> dict:
+    """safe zone 밖 객체를 safe zone 안으로 이동/축소하여 hard fail 해소 시도.
+
+    원본 candidate를 변경하지 않고 수정된 복사본 반환.
+    각 역할의 safe zone 기준: get_object_safe_zone() 결과 사용.
+    객체가 너무 크면 safe zone 폭/높이 내로 축소 후 위치 조정.
+    """
+    placements = [dict(p) for p in candidate.get("placements", [])]
+    repair_reasons: list = []
+    repaired_ids: list = []
+
+    for p in placements:
+        if p.get("dropped"):
+            continue
+        role = p.get("role", "unknown")
+        # background/decoration/unknown은 safe zone 제약 없음
+        if role in ("background", "decoration", "unknown"):
+            continue
+
+        sz = get_object_safe_zone(role, safe_zones)
+
+        # safe zone 없으면 canvas 경계만 클램프
+        if not sz:
+            new_x = max(0, min(p["x"], canvas_w - p["width"]))
+            new_y = max(0, min(p["y"], canvas_h - p["height"]))
+            if new_x != p["x"] or new_y != p["y"]:
+                p["x"], p["y"] = new_x, new_y
+                repair_reasons.append(f"{role} clamped to canvas boundary")
+                repaired_ids.append(p.get("objectId", ""))
+            continue
+
+        rect = {"x": p["x"], "y": p["y"], "width": p["width"], "height": p["height"]}
+        if rect_inside_safe_zone(rect, sz, canvas_w, canvas_h):
+            continue  # 이미 안에 있음
+
+        safe_x1 = sz.get("left", 0)
+        safe_y1 = sz.get("top", 0)
+        safe_x2 = canvas_w - sz.get("right", 0)
+        safe_y2 = canvas_h - sz.get("bottom", 0)
+        safe_w  = max(1, safe_x2 - safe_x1)
+        safe_h  = max(1, safe_y2 - safe_y1)
+
+        new_w = p["width"]
+        new_h = p["height"]
+
+        # 객체가 safe zone보다 넓으면 축소
+        if new_w > safe_w:
+            factor = safe_w / max(new_w, 1)
+            new_h  = max(8, int(new_h * factor))
+            new_w  = safe_w
+            p["scale"] = round(p.get("scale", 1.0) * factor, 4)
+
+        # 객체가 safe zone보다 높으면 축소
+        if new_h > safe_h:
+            factor = safe_h / max(new_h, 1)
+            new_w  = max(8, int(new_w * factor))
+            new_h  = safe_h
+            p["scale"] = round(p.get("scale", 1.0) * factor, 4)
+
+        # 위치 클램프
+        new_x = max(safe_x1, min(p["x"], safe_x2 - new_w))
+        new_y = max(safe_y1, min(p["y"], safe_y2 - new_h))
+
+        changed = (
+            new_x != p["x"] or new_y != p["y"]
+            or new_w != p["width"] or new_h != p["height"]
+        )
+        if changed:
+            reason = (
+                f"{role}({p.get('objectId', '')})"
+                f" moved [{p['x']},{p['y']},{p['width']},{p['height']}]"
+                f"→[{new_x},{new_y},{new_w},{new_h}]"
+            )
+            p["x"], p["y"]       = new_x, new_y
+            p["width"], p["height"] = new_w, new_h
+            repair_reasons.append(reason)
+            repaired_ids.append(p.get("objectId", ""))
+
+    repaired = dict(candidate)
+    repaired["placements"]      = placements
+    repaired["repairAttempted"] = True
+    repaired["repairApplied"]   = bool(repair_reasons)
+    repaired["repairReasons"]   = repair_reasons
+    repaired["repairedObjects"] = list(dict.fromkeys(repaired_ids))  # 순서 유지 + 중복 제거
+    return repaired
+
+
+def score_candidate_with_breakdown(
+    candidate: dict,
+    safe_zones: dict,
+    canvas_w: int,
+    canvas_h: int,
+    objs_by_id: dict,
+) -> tuple:
+    """score_candidate와 동일하지만 구성요소별 breakdown도 반환.
+
+    반환: (total_score: float, breakdown: dict)
+    """
+    ps = candidate["placements"]
+    sz = compute_safe_zone_score(ps, safe_zones, canvas_w, canvas_h)
+    nc = compute_no_crop_score(ps)
+    rd = compute_readability_score(ps, canvas_w, canvas_h)
+    ov = compute_overlap_score(ps)
+    vb = compute_visual_balance_score(ps, canvas_w, canvas_h)
+    bg = compute_background_clean_score(ps)
+    oi = compute_original_intent_score(ps, objs_by_id)
+
+    total = round(min(100.0, max(0.0,
+        sz * _W_SAFE_ZONE
+        + nc * _W_NO_CROP
+        + rd * _W_READABILITY
+        + ov * _W_OVERLAP
+        + vb * _W_VISUAL_BALANCE
+        + bg * _W_BG_CLEAN
+        + oi * _W_ORIGINAL_INTENT
+    )), 1)
+
+    breakdown = {
+        "safeZoneScore":        round(sz, 1),
+        "noCropScore":          round(nc, 1),
+        "readabilityScore":     round(rd, 1),
+        "overlapScore":         round(ov, 1),
+        "visualBalanceScore":   round(vb, 1),
+        "backgroundCleanScore": round(bg, 1),
+        "originalIntentScore":  round(oi, 1),
+        "weights": {
+            "safeZone":        _W_SAFE_ZONE,
+            "noCrop":          _W_NO_CROP,
+            "readability":     _W_READABILITY,
+            "overlap":         _W_OVERLAP,
+            "visualBalance":   _W_VISUAL_BALANCE,
+            "backgroundClean": _W_BG_CLEAN,
+            "originalIntent":  _W_ORIGINAL_INTENT,
+        },
+    }
+    return total, breakdown
+
+
 # ─── 메인 진입점 ──────────────────────────────────────────────────────────────
 
 def compile_layout(
@@ -893,7 +1193,9 @@ def compile_layout(
       "allCandidates": [...],
       "metadata": {
         "candidateCount", "validCount", "selectedCandidateId",
-        "layoutScore", "ratioType", "hardFailures", "warnings", "fallbackUsed"
+        "layoutScore", "ratioType", "hardFailures", "warnings", "fallbackUsed",
+        "repairAttempted", "repairApplied", "repairReasons", "repairedObjects",
+        "duplicateObjectsRemoved", "ctaGroupCreated"
       }
     }
     """
@@ -903,7 +1205,14 @@ def compile_layout(
         safe_zones = normalize_safe_zone({}, target_width, target_height)
 
     objs_by_role = _objects_by_role(objects)
-    objs_by_id   = _objects_by_id(objects)
+
+    # 9단계: 중복 main_image 제거
+    objs_by_role, objects, dup_dropped_ids = _deduplicate_main_images(objs_by_role, objects)
+
+    # 9단계: 복수 CTA 통합
+    objs_by_role, cta_group_created = _merge_cta_group(objs_by_role)
+
+    objs_by_id = _objects_by_id(objects)
 
     ratio_type = _ratio_type(target_width, target_height)
     templates  = _get_templates(ratio_type)
@@ -924,18 +1233,47 @@ def compile_layout(
             )
         except Exception as e:
             cand = {
-                "candidateId":    tmpl["id"],
-                "targetWidth":    target_width,
-                "targetHeight":   target_height,
-                "placements":     [],
-                "score":          0.0,
-                "hardFail":       True,
+                "candidateId":     tmpl["id"],
+                "targetWidth":     target_width,
+                "targetHeight":    target_height,
+                "placements":      [],
+                "score":           0.0,
+                "hardFail":        True,
                 "hardFailReasons": [f"generation error: {e}"],
-                "warnings":       [],
+                "warnings":        [],
             }
         candidates.append(cand)
 
     valid_candidates = [c for c in candidates if not c.get("hardFail")]
+
+    # 9단계: repair 단계 — valid candidate가 없을 때만 실행
+    repair_attempted    = False
+    repaired_candidates: list = []
+
+    if not valid_candidates:
+        repair_attempted = True
+        for cand in candidates:
+            if not cand.get("hardFail"):
+                continue
+            try:
+                repaired = _repair_candidate(cand, safe_zones, target_width, target_height)
+                is_fail, reasons = hard_fail_candidate(
+                    repaired, safe_zones, target_width, target_height
+                )
+                repaired["hardFail"]        = is_fail
+                repaired["hardFailReasons"] = reasons
+                if not is_fail:
+                    # repair 후보는 자연 통과 후보보다 5% 낮은 점수 부여
+                    repaired["score"] = max(0.0, round(
+                        score_candidate(repaired, safe_zones, target_width, target_height, objs_by_id)
+                        * 0.95, 1
+                    ))
+                    repaired_candidates.append(repaired)
+            except Exception:
+                pass
+
+        if repaired_candidates:
+            valid_candidates = repaired_candidates
 
     if not valid_candidates:
         emg = _emergency_layout(objs_by_role, target_width, target_height, safe_zones)
@@ -945,29 +1283,48 @@ def compile_layout(
         candidates.append(emg)
         valid_candidates = [emg]
 
-    best          = max(valid_candidates, key=lambda c: c["score"])
+    best           = max(valid_candidates, key=lambda c: c["score"])
     top_candidates = sorted(valid_candidates, key=lambda c: -c["score"])[:3]
+
+    # scoring breakdown 저장 (debug overlay에서 사용)
+    try:
+        _, best["scoringBreakdown"] = score_candidate_with_breakdown(
+            best, safe_zones, target_width, target_height, objs_by_id
+        )
+    except Exception:
+        best["scoringBreakdown"] = None
 
     all_hard_failures = list({
         r
-        for c in candidates
+        for c in candidates + repaired_candidates
         if c.get("hardFail")
         for r in c.get("hardFailReasons", [])
     })
-    all_warnings = list({w for c in candidates for w in c.get("warnings", [])})
+    all_warnings = list({
+        w
+        for c in candidates + repaired_candidates
+        for w in c.get("warnings", [])
+    })
 
     return {
         "best":          best,
         "topCandidates": top_candidates,
-        "allCandidates": candidates,
+        "allCandidates": candidates + repaired_candidates,
         "metadata": {
-            "candidateCount":      len(candidates),
-            "validCount":          len(valid_candidates),
-            "selectedCandidateId": best["candidateId"],
-            "layoutScore":         best["score"],
-            "ratioType":           ratio_type,
-            "hardFailures":        all_hard_failures,
-            "warnings":            all_warnings,
-            "fallbackUsed":        best.get("fallbackUsed", False),
+            "candidateCount":          len(candidates),
+            "validCount":              len(valid_candidates),
+            "selectedCandidateId":     best["candidateId"],
+            "layoutScore":             best["score"],
+            "ratioType":               ratio_type,
+            "hardFailures":            all_hard_failures,
+            "warnings":                all_warnings,
+            "fallbackUsed":            best.get("fallbackUsed", False),
+            # 9단계 추가 메타
+            "repairAttempted":         repair_attempted,
+            "repairApplied":           best.get("repairApplied", False),
+            "repairReasons":           best.get("repairReasons", []),
+            "repairedObjects":         best.get("repairedObjects", []),
+            "duplicateObjectsRemoved": dup_dropped_ids,
+            "ctaGroupCreated":         cta_group_created,
         },
     }

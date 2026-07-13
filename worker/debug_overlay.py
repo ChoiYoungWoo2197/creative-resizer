@@ -276,6 +276,21 @@ def _build_layout_json(comp_meta: dict,
             "sourceUrl":          spec_info.get("sourceUrl"),
         }
 
+    # 9단계: repair / dedup / CTA group 메타 (layout_result.metadata에서 읽음)
+    layout_meta = layout_result.get("metadata", {})
+
+    # allCandidates 요약에 candidateType 추가
+    all_summary_with_type = []
+    for entry in all_summary:
+        c_id = entry.get("candidateId", "")
+        # repaired_ prefix or repairApplied flag
+        ctype = "original"
+        for c in all_candidates:
+            if c.get("candidateId") == c_id and c.get("repairApplied"):
+                ctype = "repaired"
+                break
+        all_summary_with_type.append({**entry, "candidateType": ctype})
+
     return {
         "target":              {"width": target_w, "height": target_h},
         "bannerSpec":          banner_spec_meta,
@@ -301,7 +316,15 @@ def _build_layout_json(comp_meta: dict,
         "warnings":            comp_meta.get("warnings", []),
         "missingRequiredAssets": comp_meta.get("missingRequiredAssets", []),
         "topCandidates":       top_summary,
-        "allCandidates":       all_summary,
+        "allCandidates":       all_summary_with_type,
+        # 9단계 추가 필드
+        "scoringBreakdown":          best.get("scoringBreakdown"),
+        "repairAttempted":           layout_meta.get("repairAttempted", False),
+        "repairApplied":             layout_meta.get("repairApplied", False),
+        "repairReasons":             layout_meta.get("repairReasons", []),
+        "repairedObjects":           layout_meta.get("repairedObjects", []),
+        "duplicateObjectsRemoved":   layout_meta.get("duplicateObjectsRemoved", []),
+        "ctaGroupCreated":           layout_meta.get("ctaGroupCreated", False),
     }
 
 
