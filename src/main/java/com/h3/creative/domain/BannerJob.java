@@ -134,6 +134,26 @@ public class BannerJob {
         // layout_compositor.py는 hardFailReasons에서 필터링한 문자열 리스트를 반환 (dict 아님)
         private List<String> safeZoneViolations;
 
+        // 9단계: Layout Repair & Quality Meta
+        private Boolean repairAttempted;
+        private Boolean repairApplied;
+        private List<String> repairReasons;
+        private List<String> repairedObjects;
+        private java.util.Map<String, Object> scoringBreakdown;
+        private List<String> duplicateObjectsRemoved;
+        private Boolean ctaGroupCreated;
+
+        // 9단계: Debug Overlay Optional Fields (null 허용)
+        private Boolean ctaVisible;
+        private Boolean ctaOccluded;
+        private Boolean ctaInsideSafeZone;
+        private java.util.Map<String, Object> ctaGroupBbox;
+        private Boolean headlineVisible;
+        private Boolean headlineClamped;
+        private Boolean headlineScaled;
+        private Boolean headlineOverflowFixed;
+        private Boolean blurFallbackUsed;
+
         // AI 후보 적용 이력
         private String selectedCompareId;
         private String selectedCandidate;       // safe / balanced / fill

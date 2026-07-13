@@ -1315,6 +1315,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "hardFailReasons": comp_meta_out.get("hardFailReasons", []) if obj_reflow_succeeded else [],
                 "droppedObjects": comp_meta_out.get("droppedObjects", []) if obj_reflow_succeeded else [],
                 "warnings": comp_meta_out.get("warnings", []) if obj_reflow_succeeded else [],
+                # 9단계: Layout Repair & Quality Meta
+                "repairAttempted":         layout_meta_out.get("repairAttempted") if obj_reflow_succeeded else None,
+                "repairApplied":           layout_meta_out.get("repairApplied") if obj_reflow_succeeded else None,
+                "repairReasons":           layout_meta_out.get("repairReasons", []) if obj_reflow_succeeded else [],
+                "repairedObjects":         layout_meta_out.get("repairedObjects", []) if obj_reflow_succeeded else [],
+                "scoringBreakdown":        (layout_result.get("topCandidates") or [{}])[0].get("scoringBreakdown") if obj_reflow_succeeded else None,
+                "duplicateObjectsRemoved": layout_meta_out.get("duplicateObjectsRemoved") if obj_reflow_succeeded else None,
+                "ctaGroupCreated":         layout_meta_out.get("ctaGroupCreated") if obj_reflow_succeeded else None,
             })
         return results, []
 

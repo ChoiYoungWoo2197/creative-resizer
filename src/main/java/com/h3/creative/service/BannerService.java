@@ -296,6 +296,24 @@ public class BannerService {
                         br.setSafeZonePassed(r.getSafeZonePassed());
                         br.setLayoutScoreStatus(r.getLayoutScoreStatus());
                         br.setSafeZoneViolations(r.getSafeZoneViolations());
+                        // 9단계: Layout Repair & Quality Meta
+                        br.setRepairAttempted(r.getRepairAttempted());
+                        br.setRepairApplied(r.getRepairApplied());
+                        br.setRepairReasons(r.getRepairReasons());
+                        br.setRepairedObjects(r.getRepairedObjects());
+                        br.setScoringBreakdown(r.getScoringBreakdown());
+                        br.setDuplicateObjectsRemoved(r.getDuplicateObjectsRemoved());
+                        br.setCtaGroupCreated(r.getCtaGroupCreated());
+                        // 9단계: Debug Overlay Optional Fields
+                        br.setCtaVisible(r.getCtaVisible());
+                        br.setCtaOccluded(r.getCtaOccluded());
+                        br.setCtaInsideSafeZone(r.getCtaInsideSafeZone());
+                        br.setCtaGroupBbox(r.getCtaGroupBbox());
+                        br.setHeadlineVisible(r.getHeadlineVisible());
+                        br.setHeadlineClamped(r.getHeadlineClamped());
+                        br.setHeadlineScaled(r.getHeadlineScaled());
+                        br.setHeadlineOverflowFixed(r.getHeadlineOverflowFixed());
+                        br.setBlurFallbackUsed(r.getBlurFallbackUsed());
                         return br;
                     }).toList()
                     : List.of();
