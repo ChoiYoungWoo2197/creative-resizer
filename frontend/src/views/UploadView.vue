@@ -46,112 +46,23 @@
                 </div>
                 <button class="file-change" @click="clearFile">변경</button>
               </div>
-              <!-- PSD 처리 방식 선택 -->
-            <div v-if="isPsdFile" class="psd-mode-section">
-              <div class="psd-mode-title">
-                PSD 처리 방식
-                <span v-if="psdLayerAnalyzing" class="psd-compat-loading">
+              <!-- PSD 처리 방식: 자동 선택 배지만 표시 (선택 UI 숨김) -->
+              <div v-if="isPsdFile" class="psd-auto-badge">
+                <template v-if="psdLayerAnalyzing">
                   <span class="spinner" style="width:10px;height:10px;border-width:1.5px;display:inline-block;" />
                   레이어 분석 중...
-                </span>
-              </div>
-              <!-- PSD 호환성 진단 결과 -->
-              <div v-if="!psdLayerAnalyzing && psdLayerAnalysis" class="psd-compat-status">
-                <template v-if="psdLayerAnalysis.layerReadable === false">
-                  <div class="psd-compat-row psd-compat-error">
-                    <span class="psd-compat-icon">✕</span>
-                    <div>
-                      <div class="psd-compat-label">PSD 레이어 분석 불가</div>
-                      <div class="psd-compat-reason">
-                        사유: {{ psdLayerAnalysis.layerReadErrorCode === 'PSD_VERSION_8_UNSUPPORTED' ? 'Invalid version 8' : (psdLayerAnalysis.layerReadError || '알 수 없음') }}
-                      </div>
-                      <div class="psd-compat-hint">이 PSD는 레이어 재배치를 사용할 수 없습니다. 단순 이미지 처리로 자동 전환됩니다.</div>
-                    </div>
-                  </div>
                 </template>
-                <template v-else-if="psdLayerAnalysis.psdCompatPatched">
-                  <div class="psd-compat-row psd-compat-warn">
-                    <span class="psd-compat-icon">⚠</span>
-                    <div>
-                      <div class="psd-compat-label">PSD 호환 모드 적용됨</div>
-                      <div class="psd-compat-hint">일부 최신 PSD 기능은 제한될 수 있습니다.</div>
-                    </div>
-                  </div>
+                <template v-else-if="psdLayerAnalysis?.layerReadable === false">
+                  ⚠ 레이어 분석이 제한되어 이미지 기반으로 처리됩니다.
                 </template>
-                <template v-else-if="psdLayerAnalysis.layerReflowAvailable">
-                  <div class="psd-compat-row psd-compat-ok">
-                    <span class="psd-compat-icon">✓</span>
-                    <div>
-                      <div class="psd-compat-label">PSD 레이어 분석 가능</div>
-                      <div class="psd-compat-hint">레이어 {{ psdLayerAnalysis.layerCount }}개 감지 · 레이어 재배치 Beta를 사용할 수 있습니다.</div>
-                    </div>
-                  </div>
+                <template v-else-if="psdMode === 'object-reflow'">
+                  ✦ 객체 기반 재배치 자동 선택됨
                 </template>
-                <template v-else-if="psdLayerAnalysis.layerReadable">
-                  <div class="psd-compat-row psd-compat-warn">
-                    <span class="psd-compat-icon">⚠</span>
-                    <div>
-                      <div class="psd-compat-label">레이어 재배치 지원 불가</div>
-                      <div class="psd-compat-hint">필수 레이어(메인카피, 제품/비주얼 또는 CTA)가 감지되지 않았습니다.</div>
-                    </div>
-                  </div>
+                <template v-else>
+                  ✦ 자동 최적화 적용 중
                 </template>
               </div>
-              <div class="psd-mode-options">
-                <label class="psd-mode-option" :class="{ on: psdMode === 'artboard-first' }">
-                  <input type="radio" name="psdMode" value="artboard-first" v-model="psdMode" style="display:none" />
-                  <div class="psd-mode-body" @click="psdMode = 'artboard-first'">
-                    <div class="psd-mode-name">아트보드 우선 <span class="psd-mode-badge">기본</span></div>
-                    <div class="psd-mode-desc">PSD 안의 가로형·세로형·정방형 아트보드를 자동 선택합니다.</div>
-                  </div>
-                </label>
-                <label class="psd-mode-option" :class="{ on: psdMode === 'flatten' }">
-                  <input type="radio" name="psdMode" value="flatten" v-model="psdMode" style="display:none" />
-                  <div class="psd-mode-body" @click="psdMode = 'flatten'">
-                    <div class="psd-mode-name">단순 이미지 처리</div>
-                    <div class="psd-mode-desc">PSD 전체를 하나의 이미지로 렌더링한 뒤 기존 리사이징을 적용합니다.</div>
-                  </div>
-                </label>
-                <label class="psd-mode-option"
-                  :class="{ on: psdMode === 'layer-reflow', disabled: psdLayerAnalysis && !psdLayerAnalysis.layerReflowAvailable }">
-                  <input type="radio" name="psdMode" value="layer-reflow" v-model="psdMode" style="display:none"
-                    :disabled="psdLayerAnalysis && !psdLayerAnalysis.layerReflowAvailable" />
-                  <div class="psd-mode-body"
-                    @click="(!psdLayerAnalysis || psdLayerAnalysis.layerReflowAvailable) ? psdMode = 'layer-reflow' : null">
-                    <div class="psd-mode-name">
-                      레이어 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span>
-                    </div>
-                    <div class="psd-mode-desc">
-                      <template v-if="psdLayerAnalysis && !psdLayerAnalysis.layerReflowAvailable">
-                        사용 불가: PSD 레이어 분석이 지원되지 않는 파일입니다.
-                      </template>
-                      <template v-else>
-                        PSD 레이어를 분석해 배너 규격에 맞게 다시 배치합니다. 현재 1250×560 가로형 우선 지원.
-                      </template>
-                    </div>
-                  </div>
-                </label>
-                <label v-if="objReflowCanActivate"
-                  class="psd-mode-option"
-                  :class="{ on: psdMode === 'object-reflow', 'psd-mode-option-warn': !objAnalysisResult?.reflowReady }">
-                  <input type="radio" name="psdMode" value="object-reflow" v-model="psdMode" style="display:none" />
-                  <div class="psd-mode-body" @click="psdMode = 'object-reflow'">
-                    <div class="psd-mode-name">
-                      객체 기반 재배치 <span class="psd-mode-badge psd-mode-beta">Beta</span>
-                    </div>
-                    <div class="psd-mode-desc">
-                      <template v-if="objAnalysisResult?.reflowReady">
-                        AI 객체 분석 결과를 기반으로 레이아웃을 재구성합니다.
-                      </template>
-                      <template v-else>
-                        ⚠ 일부 객체가 레이어 미매칭 상태입니다. AI 영역 crop으로 재배치합니다(품질이 낮을 수 있음).
-                      </template>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </div>
-            <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
+              <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
                 <span v-if="aiAnalyzing" class="spinner" style="width:12px;height:12px;border-width:1.5px;" />
                 <span v-else>✦</span>
                 {{ aiAnalyzing ? 'AI 분석 중...' : 'AI 추천 분석' }}
@@ -260,6 +171,10 @@
           </div>
           <div v-show="mediaOpen">
             <div v-if="specsLoading" class="side-loading">불러오는 중...</div>
+            <div v-else-if="naverLoadError" class="spec-load-error">
+              ⚠ Naver 매체 가이드 로드 실패
+              <button class="spec-retry-btn" @click="loadSpecs">재시도</button>
+            </div>
             <template v-else>
               <div v-for="platform in platformOrder.filter(p => groupedSpecs[p])" :key="platform">
                 <div class="pf-row" @click="toggleExpand(platform)">
@@ -280,6 +195,7 @@
                     <input type="checkbox" class="check sm" :checked="selectedSpecIds.includes(spec.id)" @click.stop @change="toggleSpec(spec.id)" />
                     <span class="sp-name">{{ spec.placementName }}</span>
                     <span class="sp-dim">{{ spec.width }}×{{ spec.height }}</span>
+                    <span v-if="spec.safeZone" class="sp-sz-badge">SZ</span>
                   </div>
                 </div>
               </div>
@@ -385,89 +301,32 @@
           </div>
         </div>
 
-        <!-- PSD 아트보드 선택 섹션 -->
-        <div v-if="isPsdFile && (psdLayerAnalyzing || psdLayerAnalysis)" class="azs-section">
-          <div class="azs-header">
-            <div>
-              <div class="azs-title">AI가 분석할 광고 영역을 선택해 주세요</div>
-              <div class="azs-sub">리사이즈할 배너의 가로, 세로 비율에 맞는 배너를 선택해 주세요.</div>
-            </div>
-            <button v-if="detectedArtboards.length > 0" class="azs-select-all"
-              @click="toggleAllArtboards">
-              {{ selectedArtboardIds.length === detectedArtboards.length ? '전체 해제' : '전체 선택' }}
-            </button>
-          </div>
-
-          <!-- 분석 중 skeleton -->
-          <div v-if="psdLayerAnalyzing" class="azs-cards">
-            <div v-for="i in 3" :key="i" class="azs-card azs-card-skeleton">
-              <div class="azs-thumb-skeleton" />
-              <div class="azs-skeleton-line" style="width:60%;margin-top:8px" />
-              <div class="azs-skeleton-line" style="width:40%;margin-top:4px" />
-            </div>
-          </div>
-
-          <!-- 카드 목록 -->
-          <div v-else-if="detectedArtboards.length > 0" class="azs-cards">
-            <div v-for="ab in detectedArtboards" :key="ab.id"
-                 class="azs-card"
-                 :class="[
-                   { 'azs-selected': selectedArtboardIds.includes(ab.id) },
-                   'azs-' + ab.artboardType
-                 ]"
-                 @click="toggleArtboard(ab.id)">
-              <div class="azs-thumb-wrap">
-                <img v-if="ab.thumbnail" :src="ab.thumbnail" class="azs-thumb" :alt="ab.name" />
-                <div v-else class="azs-thumb-placeholder">
-                  {{ ab.width }}×{{ ab.height }}
-                </div>
-              </div>
-              <div class="azs-card-body">
-                <div class="azs-card-badges">
-                  <div class="azs-type-badge" :class="'azst-' + ab.artboardType">
-                    {{ artboardTypeLabel(ab.artboardType) }}
-                  </div>
-                  <div v-if="ab.source" class="azs-source-badge" :class="'azss-' + ab.source">
-                    {{ sourceLabel(ab.source) }}
-                  </div>
-                </div>
-                <div class="azs-card-name">{{ ab.name }}</div>
-                <div class="azs-card-size">{{ ab.width }}×{{ ab.height }}</div>
-              </div>
-              <div class="azs-check" :class="{ 'azs-checked': selectedArtboardIds.includes(ab.id) }">
-                <span v-if="selectedArtboardIds.includes(ab.id)">✓</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 아트보드 감지 불가 (분석 완료 후 멀티존 없음) -->
-          <div v-else class="azs-empty">
-            <div class="azs-empty-icon">◻</div>
-            <div class="azs-empty-text">멀티 아트보드를 감지하지 못했습니다.<br>전체 캔버스를 원본으로 사용합니다.</div>
-          </div>
-
-          <!-- 부족한 비율 경고 -->
-          <div v-if="!psdLayerAnalyzing && detectedArtboards.length > 0 && missingRatioWarning" class="azs-warn">
-            ⚠ {{ missingRatioWarning }}
-          </div>
-        </div>
-
-        <!-- AI 객체 분석 섹션 -->
+        <!-- AI 객체 분석 섹션 (PSD 전용) -->
         <div v-if="isPsdFile && psdLayerAnalysis && !psdLayerAnalyzing" class="oa-section">
           <!-- 툴바 -->
           <div class="oa-toolbar">
             <div class="oa-toolbar-left">
               <span class="oa-title">AI 객체 분석</span>
               <span class="oa-beta">Beta</span>
-              <select v-if="detectedArtboards.length > 0" v-model="objAnalysisArtboardId" class="oa-artboard-sel">
-                <option v-for="ab in detectedArtboards" :key="ab.id" :value="ab.id">
-                  {{ ab.name }} · {{ ab.width }}×{{ ab.height }}
-                </option>
-              </select>
+              <!-- 자동 선택 분석 영역 정보 -->
+              <span class="oa-artboard-info">
+                <template v-if="detectedArtboards.length > 0">
+                  분석 영역: {{ detectedArtboards.find(a => a.id === objAnalysisArtboardId) ? detectedArtboards.find(a => a.id === objAnalysisArtboardId).name : detectedArtboards[0]?.name }} 자동 선택
+                </template>
+                <template v-else>
+                  분석 영역: 전체 캔버스 자동 선택
+                </template>
+              </span>
             </div>
-            <button class="oa-btn" :disabled="objAnalyzing" @click="runObjectAnalysis">
-              {{ objAnalyzing ? '분석 중…' : 'AI 객체 분석' }}
-            </button>
+            <div class="oa-toolbar-actions">
+              <button v-if="objAnalysisResult && selectedObjId"
+                class="oa-view-all-btn" @click="selectedObjId = null">
+                전체 보기
+              </button>
+              <button class="oa-btn" :disabled="objAnalyzing" @click="runObjectAnalysis">
+                {{ objAnalyzing ? '분석 중…' : 'AI 객체 분석' }}
+              </button>
+            </div>
           </div>
 
           <!-- 로딩 -->
@@ -481,13 +340,16 @@
 
           <!-- 결과 -->
           <template v-if="objAnalysisResult && !objAnalyzing">
-            <!-- 상태 바 -->
+            <!-- compact 상태 바 -->
             <div class="oa-status-bar">
               <span class="oa-rf-badge" :class="objAnalysisResult.reflowReady ? 'rf-ok' : 'rf-ng'">
                 {{ objAnalysisResult.reflowReady ? '✓ 재배치 준비 완료' : '✗ 재배치 준비 미완료' }}
               </span>
               <span v-if="!objAnalysisResult.reflowReady && objAnalysisResult.missingRequiredRoles?.length" class="oa-missing">
                 누락: {{ objAnalysisResult.missingRequiredRoles.map(objRoleLabel).join(' · ') }}
+              </span>
+              <span v-if="selectedObjId" class="oa-selected-info">
+                · {{ objRoleLabel(visibleObjects.find(o => o.id === selectedObjId)?.role) }} 선택됨
               </span>
             </div>
 
@@ -507,31 +369,67 @@
                     v-for="obj in visibleObjects"
                     :key="'bbox-' + obj.id"
                     class="oa-bbox"
-                    :class="['oa-role-' + obj.role, 'oa-ms-' + obj.matchStatus, { 'oa-bbox-hl': hoveredObjId === obj.id }]"
+                    :class="[
+                      'oa-role-' + obj.role,
+                      'oa-ms-' + obj.matchStatus,
+                      {
+                        'oa-bbox-hl': hoveredObjId === obj.id,
+                        'oa-bbox-selected': selectedObjId === obj.id,
+                        'oa-bbox-dim': selectedObjId && selectedObjId !== obj.id,
+                      }
+                    ]"
                     :style="bboxOverlayStyle(obj.bbox)"
                     @mouseenter="hoveredObjId = obj.id"
                     @mouseleave="hoveredObjId = null"
+                    @click="toggleSelectObj(obj.id)"
                   >
                     <span class="oa-bbox-label">{{ objRoleLabel(obj.role) }}</span>
                   </div>
+                </div>
+
+                <!-- 객체 crop 미리보기 (선택된 객체) -->
+                <div v-if="selectedObjId && selectedObjCropStyle" class="oa-crop-preview">
+                  <div class="oa-crop-header">
+                    <span class="oa-crop-title">{{ objRoleLabel(visibleObjects.find(o => o.id === selectedObjId)?.role) }} — 확대 보기</span>
+                    <button class="oa-crop-close" @click="selectedObjId = null">×</button>
+                  </div>
+                  <div class="oa-crop-canvas" :style="selectedObjCropStyle" />
+                  <div class="oa-crop-meta">
+                    <template v-if="visibleObjects.find(o => o.id === selectedObjId)">
+                      {{ visibleObjects.find(o => o.id === selectedObjId)?.bbox?.width ?? 0 }}×{{ visibleObjects.find(o => o.id === selectedObjId)?.bbox?.height ?? 0 }}px
+                      · {{ visibleObjects.find(o => o.id === selectedObjId)?.label }}
+                    </template>
+                  </div>
+                </div>
+                <div class="oa-preview-hint" v-if="!objAnalysisResult.previewBase64 || !previewImgMeta">
+                  객체를 클릭하면 해당 영역을 확대해서 볼 수 있습니다.
                 </div>
               </div>
 
               <!-- 인스펙터 패널 -->
               <div class="oa-inspector">
+                <div class="oa-inspector-hint">객체를 클릭하면 이미지에서 해당 영역을 강조해서 볼 수 있습니다.</div>
                 <div
                   v-for="obj in visibleObjects"
                   :key="'ins-' + obj.id"
                   class="oa-ins-card"
-                  :class="{ 'oa-ins-hl': hoveredObjId === obj.id }"
+                  :class="{
+                    'oa-ins-hl': hoveredObjId === obj.id,
+                    'oa-ins-selected': selectedObjId === obj.id,
+                  }"
                   @mouseenter="hoveredObjId = obj.id"
                   @mouseleave="hoveredObjId = null"
+                  @click="toggleSelectObj(obj.id)"
                 >
                   <div class="oa-ins-row">
                     <span class="oa-role-dot" :class="'oa-dot-' + obj.role" />
                     <span class="oa-ins-role">{{ objRoleLabel(obj.role) }}</span>
                     <span class="oa-ins-label">{{ obj.label }}</span>
                     <span class="oa-imp-chip" :class="'imp-' + obj.importance">{{ objImportanceLabel(obj.importance) }}</span>
+                  </div>
+                  <div class="oa-ins-detail" v-if="obj.bbox">
+                    <span class="oa-ins-bbox">{{ obj.bbox.width }}×{{ obj.bbox.height }}</span>
+                    <span class="oa-ins-conf" v-if="obj.confidence">{{ Math.round(obj.confidence * 100) }}%</span>
                   </div>
                   <div class="oa-ins-pipeline">
                     <span class="oa-stage oa-stage-ok">AI 감지됨</span>
@@ -652,7 +550,7 @@ import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { readPsd } from 'ag-psd'
 import 'ag-psd/initialize-canvas'
-import { uploadPsd, listSpecs, analyzeBanner, analyzePsdLayers, analyzePsdObjects } from '../api/banner.js'
+import { uploadPsd, listBannerSpecs, analyzeBanner, analyzePsdLayers, analyzePsdObjects } from '../api/banner.js'
 import { useRouter } from 'vue-router'
 const router = useRouter()
 
@@ -663,11 +561,11 @@ const aiAnalysis   = ref(null)
 const aiApplied    = ref(false)
 const psdLayerAnalyzing = ref(false)
 const psdLayerAnalysis  = ref(null)
-const psdCanvas         = ref(null)   // ag-psd 렌더링된 캔버스 (아트보드 썸네일용)
+const psdCanvas         = ref(null)
 const psdNativeW        = ref(0)
 const psdNativeH        = ref(0)
-const detectedArtboards = ref([])     // {id, name, width, height, artboardType, thumbnail}
-const selectedArtboardIds = ref([])   // 사용자가 선택한 아트보드 ID 목록
+const detectedArtboards = ref([])
+const selectedArtboardIds = ref([])
 const objAnalyzing        = ref(false)
 const objAnalysisResult   = ref(null)
 const objAnalysisError    = ref(null)
@@ -675,8 +573,10 @@ const objAnalysisArtboardId = ref(null)
 const previewWrapRef      = ref(null)
 const previewImgMeta      = ref(null)
 const hoveredObjId        = ref(null)
+const selectedObjId       = ref(null)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
+const naverLoadError = ref(false)
 const selectedSpecIds = ref([])
 const dragover     = ref(false)
 const materialType = ref('')
@@ -895,7 +795,8 @@ function clearFile() {
   detectedArtboards.value = []; selectedArtboardIds.value = []
   psdMode.value = 'artboard-first'
   objAnalyzing.value = false; objAnalysisResult.value = null; objAnalysisError.value = null
-  objAnalysisArtboardId.value = null; previewImgMeta.value = null; hoveredObjId.value = null
+  objAnalysisArtboardId.value = null; previewImgMeta.value = null
+  hoveredObjId.value = null; selectedObjId.value = null
 }
 
 async function runAiAnalyze() {
@@ -916,14 +817,15 @@ async function runAiAnalyze() {
   }
 }
 
-// 드롭다운 기본값: detectedArtboards가 채워지면 첫 아이템으로 세팅
 watch(detectedArtboards, (v) => {
   if (v.length > 0 && !objAnalysisArtboardId.value) {
     objAnalysisArtboardId.value = v[0].id
   }
 })
-// 결과 변경 시 이미지 메타 초기화
-watch(objAnalysisResult, () => { previewImgMeta.value = null })
+watch(objAnalysisResult, () => {
+  previewImgMeta.value = null
+  selectedObjId.value = null
+})
 
 const objReflowCanActivate = computed(() => {
   if (!objAnalysisResult.value) return false
@@ -944,6 +846,23 @@ const hiddenObjects = computed(() => {
   return objs.filter(o => HIDDEN_ROLES.has(o.role))
 })
 
+function toggleSelectObj(id) {
+  selectedObjId.value = selectedObjId.value === id ? null : id
+}
+
+function normalizeBbox(raw) {
+  if (!raw) return null
+  if (raw.width !== undefined && raw.x !== undefined) return raw
+  if (raw.left !== undefined) {
+    return { x: raw.left, y: raw.top, width: raw.right - raw.left, height: raw.bottom - raw.top }
+  }
+  if (raw.w !== undefined) return { x: raw.x ?? 0, y: raw.y ?? 0, width: raw.w, height: raw.h }
+  if (raw.x1 !== undefined) {
+    return { x: raw.x1, y: raw.y1, width: raw.x2 - raw.x1, height: raw.y2 - raw.y1 }
+  }
+  return raw
+}
+
 function onPreviewImgLoad(e) {
   const img = e.target
   previewImgMeta.value = {
@@ -954,7 +873,8 @@ function onPreviewImgLoad(e) {
   }
 }
 
-function bboxOverlayStyle(bbox) {
+function bboxOverlayStyle(rawBbox) {
+  const bbox = normalizeBbox(rawBbox)
   const m = previewImgMeta.value
   if (!m || !bbox || !m.natW || !m.natH || !m.w || !m.h) return { display: 'none' }
   const scale = Math.min(m.w / m.natW, m.h / m.natH)
@@ -970,9 +890,35 @@ function bboxOverlayStyle(bbox) {
   }
 }
 
+const selectedObjCropStyle = computed(() => {
+  if (!selectedObjId.value || !objAnalysisResult.value?.previewBase64 || !previewImgMeta.value) return null
+  const obj = visibleObjects.value.find(o => o.id === selectedObjId.value)
+  if (!obj) return null
+  const bbox = normalizeBbox(obj.bbox)
+  if (!bbox) return null
+  const m = previewImgMeta.value
+  const CANVAS_W = 260
+  const CANVAS_H = 180
+  const scaleToFit = Math.min(CANVAS_W / bbox.width, CANVAS_H / bbox.height) * 0.85
+  const bgW = m.natW * scaleToFit
+  const bgH = m.natH * scaleToFit
+  const bx = -bbox.x * scaleToFit + (CANVAS_W - bbox.width * scaleToFit) / 2
+  const by = -bbox.y * scaleToFit + (CANVAS_H - bbox.height * scaleToFit) / 2
+  return {
+    width: CANVAS_W + 'px',
+    height: CANVAS_H + 'px',
+    backgroundImage: `url('data:image/jpeg;base64,${objAnalysisResult.value.previewBase64}')`,
+    backgroundSize: `${bgW.toFixed(0)}px ${bgH.toFixed(0)}px`,
+    backgroundPosition: `${bx.toFixed(0)}px ${by.toFixed(0)}px`,
+    backgroundRepeat: 'no-repeat',
+    backgroundColor: '#111',
+    borderRadius: '6px',
+    outline: '2px solid rgba(124,58,237,0.4)',
+  }
+})
+
 async function runObjectAnalysis() {
   if (!form.psdFile || !psdLayerAnalysis.value) return
-  // 드롭다운에서 선택한 아트보드
   const ab = detectedArtboards.value.find(a => a.id === objAnalysisArtboardId.value)
     || detectedArtboards.value[0]
 
@@ -1015,11 +961,6 @@ function objRoleLabel(role) { return OBJ_ROLE_LABELS[role] ?? (role || '') }
 
 const OBJ_IMPORTANCE_LABELS = { required: '필수', priority: '우선', optional: '선택' }
 function objImportanceLabel(imp) { return OBJ_IMPORTANCE_LABELS[imp] ?? (imp || '') }
-
-const OBJ_MATCH_LABELS = {
-  ready: '매칭 완료', matched_low_confidence: '낮은 신뢰도', missing_layer: '레이어 없음',
-}
-function objMatchLabel(s) { return OBJ_MATCH_LABELS[s] ?? (s || '') }
 
 function applyAiAnalysis() {
   if (!aiAnalysis.value) return
@@ -1068,7 +1009,6 @@ async function runPsdLayerAnalyze(file) {
     fd.append('psdFile', file)
     const { data } = await analyzePsdLayers(fd)
     psdLayerAnalysis.value = data
-    // 레이어 재배치 불가 시 기본 모드로 전환
     if (data.layerReadable === false || data.layerReflowAvailable === false) {
       if (psdMode.value === 'layer-reflow') psdMode.value = 'artboard-first'
     }
@@ -1115,10 +1055,7 @@ const ARTBOARD_TYPE_LABELS_KO = {
 function artboardTypeLabel(t) { return ARTBOARD_TYPE_LABELS_KO[t] ?? (t || '') }
 
 const SOURCE_LABELS = {
-  artboard_tag: '아트보드',
-  group_name: '그룹명',
-  layer_bbox: '영역 추정',
-  fallback: '전체 캔버스',
+  artboard_tag: '아트보드', group_name: '그룹명', layer_bbox: '영역 추정', fallback: '전체 캔버스',
 }
 function sourceLabel(s) { return SOURCE_LABELS[s] ?? (s || '') }
 
@@ -1203,14 +1140,21 @@ async function submit() {
   } finally { loading.value = false }
 }
 
-onMounted(async () => {
+async function loadSpecs() {
+  specsLoading.value = true
+  naverLoadError.value = false
   try {
-    const { data } = await listSpecs()
+    const { data } = await listBannerSpecs()
     allSpecs.value = data
     for (const s of data) { if (!(s.media in expandedPlatforms)) expandedPlatforms[s.media] = false }
-  } catch { ElMessage.error('규격 로딩 실패') }
+  } catch {
+    naverLoadError.value = true
+    ElMessage.error('매체 가이드 로딩 실패')
+  }
   finally { specsLoading.value = false }
-})
+}
+
+onMounted(loadSpecs)
 </script>
 
 <style scoped>
@@ -1275,328 +1219,31 @@ onMounted(async () => {
 .file-change { background: none; border: 1px solid #E5E8EB; border-radius: 6px; font-size: 11px; color: #6B7684; padding: 3px 8px; cursor: pointer; font-family: inherit; }
 .file-change:hover { border-color: #7C3AED; color: #7C3AED; }
 
-/* ── PSD 아트보드 선택 섹션 ── */
-.azs-section {
-  margin: 0 0 24px;
-  padding: 20px 24px;
-  background: #F9FAFB;
-  border-radius: 14px;
-  border: 1px solid #E5E8EB;
-}
-.azs-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 16px;
-}
-.azs-title { font-size: 15px; font-weight: 700; color: #1A1D27; margin-bottom: 3px; }
-.azs-sub   { font-size: 12px; color: #6B7684; }
-.azs-select-all {
-  font-size: 11px; font-weight: 600; color: #7C3AED;
-  background: none; border: 1px solid #DDD6FE; border-radius: 6px;
-  padding: 4px 10px; cursor: pointer; white-space: nowrap; font-family: inherit;
-  flex-shrink: 0; margin-top: 2px;
-}
-.azs-select-all:hover { background: #F5F3FF; }
-.azs-cards {
-  display: flex; flex-wrap: wrap; gap: 12px;
-}
-.azs-card {
-  position: relative; cursor: pointer;
-  border: 2px solid #E5E8EB; border-radius: 12px;
-  background: #fff; overflow: hidden;
-  transition: border-color 0.15s, box-shadow 0.15s;
-  flex: 0 0 calc(33.333% - 8px);
-  min-width: 120px;
-  display: flex; flex-direction: column;
-}
-.azs-card:hover { border-color: #C4B5FD; box-shadow: 0 2px 8px rgba(124,58,237,0.1); }
-.azs-selected { border-color: #7C3AED !important; box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important; }
-.azs-thumb-wrap {
-  width: 100%; height: 110px; flex-shrink: 0;
-  overflow: hidden; background: #F3F4F6; display: flex; align-items: center; justify-content: center;
-}
-.azs-thumb { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
-.azs-thumb-placeholder {
-  font-size: 11px; color: #9CA3AF; font-weight: 600; padding: 8px;
-}
-.azs-card-body { padding: 8px 10px 10px; }
-.azs-card-badges { display: flex; gap: 4px; flex-wrap: wrap; }
-.azs-card-name { font-size: 11px; color: #374151; font-weight: 500; margin: 4px 0 2px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.azs-card-size { font-size: 10px; color: #9CA3AF; }
-.azs-type-badge {
-  display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px;
-  border-radius: 4px; margin-bottom: 2px;
-}
-.azst-square     { background: #ECFDF5; color: #065F46; }
-.azst-vertical   { background: #EFF6FF; color: #1E40AF; }
-.azst-horizontal { background: #FFFBEB; color: #92400E; }
-.azst-custom, .azst-unknown { background: #F3F4F6; color: #6B7684; }
-/* source badge */
-.azs-source-badge {
-  display: inline-block; font-size: 9.5px; font-weight: 600; padding: 1px 5px;
-  border-radius: 4px; background: #F1F5F9; color: #64748B;
-}
-.azss-artboard_tag { background: #EFF6FF; color: #3B82F6; }
-.azss-group_name   { background: #F0FDF4; color: #16A34A; }
-.azss-layer_bbox   { background: #FFF7ED; color: #EA580C; }
-/* empty state */
-.azs-empty {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 24px 16px; background: #F9FAFB; border-radius: 10px; gap: 6px;
-}
-.azs-empty-icon { font-size: 24px; color: #D1D5DB; }
-.azs-empty-text { font-size: 12px; color: #9CA3AF; text-align: center; line-height: 1.6; }
-.azs-check {
-  position: absolute; top: 6px; right: 6px;
-  width: 20px; height: 20px; border-radius: 50%;
-  border: 2px solid #D1D5DB; background: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: #fff;
-  transition: background 0.15s, border-color 0.15s;
-}
-.azs-checked { background: #7C3AED !important; border-color: #7C3AED !important; }
-.azs-warn {
-  margin-top: 12px; padding: 10px 12px;
-  background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px;
-  font-size: 12px; color: #92400E; line-height: 1.5;
-}
-/* skeleton */
-.azs-card-skeleton { pointer-events: none; }
-.azs-thumb-skeleton {
-  width: 100%; aspect-ratio: 1/1; background: linear-gradient(90deg,#F3F4F6 25%,#E5E7EB 50%,#F3F4F6 75%);
-  background-size: 200% 100%; animation: azs-shimmer 1.4s infinite;
-}
-.azs-skeleton-line {
-  height: 10px; border-radius: 5px; margin: 0 10px;
-  background: linear-gradient(90deg,#F3F4F6 25%,#E5E7EB 50%,#F3F4F6 75%);
-  background-size: 200% 100%; animation: azs-shimmer 1.4s infinite;
-}
-@keyframes azs-shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
-
-/* ── AI 객체 분석 섹션 ─────────────────────────────────────── */
-.oa-section {
-  border: 1.5px solid #E5E7EB; border-radius: 12px;
-  background: #F8FAFC; padding: 11px 13px; margin-bottom: 12px;
-}
-/* 툴바 */
-.oa-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.oa-toolbar-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.oa-title { font-size: 12px; font-weight: 700; color: #1F2937; }
-.oa-beta {
-  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
-  background: #EDE9FE; color: #7C3AED; flex-shrink: 0;
-}
-.oa-artboard-sel {
-  font-size: 11px; padding: 3px 6px; border-radius: 6px; font-family: inherit;
-  border: 1px solid #DDE0E7; background: #fff; color: #374151;
-  max-width: 180px; cursor: pointer; flex-shrink: 1; min-width: 0;
-}
-.oa-btn {
-  font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: 7px;
-  background: linear-gradient(135deg, #7C3AED, #3B82F6); color: #fff; border: none;
-  cursor: pointer; white-space: nowrap; transition: opacity 0.15s; flex-shrink: 0;
-}
-.oa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-/* 로딩 */
-.oa-loading { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #6B7280; padding: 8px 0; }
-.oa-spinner {
-  width: 14px; height: 14px; border: 2px solid #E5E7EB;
-  border-top-color: #7C3AED; border-radius: 50%; animation: oa-spin 0.7s linear infinite; flex-shrink: 0;
-}
-@keyframes oa-spin { to { transform: rotate(360deg); } }
-/* 에러 */
-.oa-error { font-size: 11px; color: #DC2626; background: #FEF2F2; border-radius: 6px; padding: 7px 10px; }
-/* 상태 바 */
-.oa-status-bar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 5px 8px; border-radius: 7px; background: #F1F5F9; margin-bottom: 9px;
-}
-.oa-rf-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
-.rf-ok { background: #D1FAE5; color: #065F46; }
-.rf-ng { background: #FEE2E2; color: #991B1B; }
-.oa-missing { font-size: 10px; color: #92400E; }
-/* 본문 레이아웃 */
-.oa-body { display: flex; gap: 10px; align-items: flex-start; }
-/* 프리뷰 패널 */
-.oa-preview-panel { flex: 0 0 55%; min-width: 0; }
-.oa-preview-wrap {
-  position: relative; width: 100%; height: 280px;
-  background: #111; border-radius: 8px; overflow: hidden;
-  display: flex; align-items: center; justify-content: center;
-}
-.oa-preview-img { width: 100%; height: 100%; object-fit: contain; display: block; }
-/* bbox 오버레이 — JS로 px 기반 위치 계산 */
-.oa-bbox {
-  position: absolute; border: 2px solid; border-radius: 2px;
-  box-sizing: border-box; pointer-events: auto; cursor: default;
-  transition: box-shadow 0.12s;
-}
-.oa-bbox-hl { box-shadow: 0 0 0 2px rgba(255,255,255,0.5); z-index: 10; }
-.oa-bbox-label {
-  position: absolute; top: 0; left: 0; font-size: 9px; font-weight: 700;
-  padding: 1px 3px; border-radius: 0 0 2px 0; white-space: nowrap; line-height: 1.4;
-}
-/* role별 색상 */
-.oa-role-background { border-color: rgba(107,114,128,0.5); }
-.oa-role-background .oa-bbox-label { background: rgba(107,114,128,0.75); color: #fff; }
-.oa-role-title { border-color: rgba(59,130,246,0.85); }
-.oa-role-title .oa-bbox-label { background: rgba(59,130,246,0.85); color: #fff; }
-.oa-role-main_image { border-color: rgba(16,185,129,0.85); }
-.oa-role-main_image .oa-bbox-label { background: rgba(16,185,129,0.85); color: #fff; }
-.oa-role-cta { border-color: rgba(239,68,68,0.85); }
-.oa-role-cta .oa-bbox-label { background: rgba(239,68,68,0.85); color: #fff; }
-.oa-role-logo { border-color: rgba(124,58,237,0.85); }
-.oa-role-logo .oa-bbox-label { background: rgba(124,58,237,0.85); color: #fff; }
-.oa-role-body_text { border-color: rgba(245,158,11,0.85); }
-.oa-role-body_text .oa-bbox-label { background: rgba(245,158,11,0.85); color: #fff; }
-.oa-role-badge { border-color: rgba(234,88,12,0.85); }
-.oa-role-badge .oa-bbox-label { background: rgba(234,88,12,0.85); color: #fff; }
-.oa-role-decoration, .oa-role-unknown { border-color: rgba(156,163,175,0.4); border-style: dashed; }
-.oa-role-decoration .oa-bbox-label, .oa-role-unknown .oa-bbox-label { background: rgba(156,163,175,0.5); color: #374151; }
-/* 매칭 상태 투명도 */
-.oa-ms-ready { opacity: 1; }
-.oa-ms-matched_low_confidence { opacity: 0.75; }
-.oa-ms-missing_layer { opacity: 0.35; border-style: dashed; }
-/* 인스펙터 패널 */
-.oa-inspector {
-  flex: 1; min-width: 0;
-  max-height: 280px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 3px;
-}
-.oa-inspector::-webkit-scrollbar { width: 4px; }
-.oa-inspector::-webkit-scrollbar-track { background: transparent; }
-.oa-inspector::-webkit-scrollbar-thumb { background: #DDE0E7; border-radius: 2px; }
-/* 인스펙터 카드 */
-.oa-ins-card {
-  border: 1px solid #E5E7EB; border-radius: 7px;
-  padding: 5px 8px; background: #fff; cursor: default; transition: border-color 0.1s;
-}
-.oa-ins-hl { border-color: #A78BFA !important; background: #F5F3FF !important; }
-.oa-ins-secondary { opacity: 0.7; }
-.oa-ins-row { display: flex; align-items: center; gap: 5px; }
-.oa-role-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.oa-dot-background { background: #6B7280; }
-.oa-dot-title { background: #3B82F6; }
-.oa-dot-main_image { background: #10B981; }
-.oa-dot-cta { background: #EF4444; }
-.oa-dot-logo { background: #7C3AED; }
-.oa-dot-body_text { background: #F59E0B; }
-.oa-dot-badge { background: #EA580C; }
-.oa-dot-decoration { background: #9CA3AF; }
-.oa-dot-unknown { background: #D1D5DB; }
-.oa-ins-role { font-size: 11px; font-weight: 700; color: #374151; white-space: nowrap; flex-shrink: 0; }
-.oa-ins-label { font-size: 11px; color: #6B7280; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.oa-imp-chip { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
-.imp-required { background: #FEE2E2; color: #991B1B; }
-.imp-priority  { background: #FEF3C7; color: #92400E; }
-.imp-optional  { background: #F3F4F6; color: #6B7280; }
-.oa-ins-pipeline { display: flex; align-items: center; gap: 3px; margin-top: 3px; flex-wrap: wrap; }
-.oa-pipe-arrow { font-size: 9px; color: #D1D5DB; flex-shrink: 0; }
-.oa-stage {
-  font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 6px;
-  white-space: nowrap; flex-shrink: 0;
-}
-.oa-stage-ok   { background: #D1FAE5; color: #065F46; }
-.oa-stage-warn { background: #FEF3C7; color: #92400E; }
-.oa-stage-fail { background: #FEE2E2; color: #991B1B; }
-.oa-stage-info { background: #DBEAFE; color: #1E40AF; }
-.oa-stage-muted { background: #F3F4F6; color: #9CA3AF; }
-.oa-ins-layer { font-size: 10px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 4px; }
-.oa-ins-score { font-size: 10px; font-weight: 700; color: #374151; flex-shrink: 0; }
-/* 기타 접기 */
-.oa-ins-more { margin-top: 2px; }
-.oa-ins-more-lbl { font-size: 10px; color: #9CA3AF; cursor: pointer; padding: 3px 0; list-style: none; }
-.oa-ins-more summary::-webkit-details-marker { display: none; }
-
-@media (prefers-color-scheme: dark) {
-  .oa-section { background: #1A1D27; border-color: #2D3142; }
-  .oa-title { color: #F9FAFB; }
-  .oa-artboard-sel { background: #252836; border-color: #374151; color: #E5E7EB; }
-  .oa-status-bar { background: #252836; }
-  .oa-preview-wrap { background: #0D0D0D; }
-  .oa-ins-card { background: #252836; border-color: #374151; }
-  .oa-ins-hl { border-color: #7C3AED !important; background: #2D1F4A !important; }
-  .oa-ins-role { color: #E5E7EB; }
-  .oa-ins-label { color: #9CA3AF; }
-  .oa-ins-layer { color: #6B7280; }
-  .oa-ins-score { color: #E5E7EB; }
-  .oa-error { background: #3B1212; color: #FCA5A5; }
-  .imp-optional { background: #374151; color: #9CA3AF; }
-  .oa-stage-ok   { background: #064E3B; color: #6EE7B7; }
-  .oa-stage-warn { background: #451A03; color: #FCD34D; }
-  .oa-stage-fail { background: #450A0A; color: #FCA5A5; }
-  .oa-stage-info { background: #1E3A5F; color: #93C5FD; }
-  .oa-stage-muted { background: #374151; color: #6B7280; }
-  .oa-ins-more-lbl { color: #6B7280; }
-  .psd-mode-option-warn { border-color: #92400E !important; background: #451A03; }
-  .psd-mode-option-warn.on { border-color: #D97706 !important; background: #78350F; }
-  .psd-mode-option-warn .psd-mode-desc { color: #FCD34D; }
+/* PSD 자동 모드 배지 */
+.psd-auto-badge {
+  margin: 8px 0 6px;
+  font-size: 10.5px; font-weight: 500; color: #6D28D9;
+  background: #F5F0FF; border-radius: 6px; padding: 5px 9px;
+  display: flex; align-items: center; gap: 4px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .azs-section { background: #1A1D27; border-color: #2D3142; }
-  .azs-title { color: #F9FAFB; }
-  .azs-sub { color: #9CA3AF; }
-  .azs-card { background: #252836; border-color: #374151; }
-  .azs-card:hover { border-color: #7C3AED; }
-  .azs-thumb-wrap { background: #1F2937; }
-  .azs-card-name { color: #E5E7EB; }
-  .azs-warn { background: #451A03; border-color: #92400E; color: #FCD34D; }
-  .azs-empty { background: #1A1D27; }
-  .azs-empty-text { color: #6B7280; }
-  .azs-thumb-skeleton,.azs-skeleton-line { background: linear-gradient(90deg,#1F2937 25%,#374151 50%,#1F2937 75%); background-size:200% 100%; }
+/* spec 로드 에러 */
+.spec-load-error {
+  padding: 10px 16px; font-size: 12px; color: #B45309;
+  background: #FFFBEB; border-bottom: 1px solid #FDE68A;
+  display: flex; align-items: center; gap: 8px;
 }
+.spec-retry-btn {
+  margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 5px;
+  border: 1px solid #F59E0B; background: #fff; color: #B45309; cursor: pointer; font-family: inherit;
+}
+.spec-retry-btn:hover { background: #FFFBEB; }
 
-/* PSD 처리 방식 */
-.psd-mode-section { margin: 10px 0 8px; }
-.psd-mode-title { font-size: 11px; font-weight: 700; color: #6B7684; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
-.psd-mode-options { display: flex; flex-direction: column; gap: 5px; }
-.psd-mode-option {
-  border: 1.5px solid #EAEDF0; border-radius: 8px;
-  padding: 8px 10px; cursor: pointer; transition: all 0.12s;
-  display: block;
+/* safe zone badge on spec item */
+.sp-sz-badge {
+  font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px;
+  background: #EDE9FF; color: #7C3AED; flex-shrink: 0;
 }
-.psd-mode-option:hover:not(.psd-mode-disabled) { border-color: #C4B5FD; background: #FAFAFF; }
-.psd-mode-option.on { border-color: #7C3AED; background: #F5F0FF; }
-.psd-mode-disabled { cursor: default; opacity: 0.5; }
-.psd-mode-body { pointer-events: none; }
-.psd-mode-option:not(.psd-mode-disabled) .psd-mode-body { pointer-events: auto; cursor: pointer; }
-.psd-mode-name { font-size: 12px; font-weight: 600; color: #333D4B; display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
-.psd-mode-desc { font-size: 10.5px; color: #8B95A1; line-height: 1.4; }
-.psd-mode-badge {
-  font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
-  background: #7C3AED; color: #fff;
-}
-.psd-mode-beta {
-  background: #0891B2; color: #fff;
-}
-.psd-mode-soon {
-  font-size: 9.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
-  background: #F2F4F6; color: #8B95A1;
-}
-.psd-mode-option.disabled { opacity: 0.5; cursor: not-allowed; }
-.psd-mode-option.disabled .psd-mode-body { pointer-events: none; }
-.psd-mode-option-warn { border-color: #FDE68A !important; background: #FFFBEB; }
-.psd-mode-option-warn.on { border-color: #D97706 !important; background: #FEF3C7; }
-.psd-mode-option-warn .psd-mode-desc { color: #92400E; }
-
-/* PSD 호환성 진단 */
-.psd-compat-loading { font-size: 10px; color: #8B95A1; font-weight: 400; margin-left: 6px; display: inline-flex; align-items: center; gap: 4px; }
-.psd-compat-status { margin-bottom: 8px; }
-.psd-compat-row {
-  display: flex; align-items: flex-start; gap: 7px;
-  padding: 7px 9px; border-radius: 7px; font-size: 11px; margin-bottom: 4px;
-}
-.psd-compat-ok  { background: #F0FFF4; border: 1px solid #D1FAE5; }
-.psd-compat-warn { background: #FFFBEB; border: 1px solid #FDE68A; }
-.psd-compat-error { background: #FFF5F5; border: 1px solid #FED7D7; }
-.psd-compat-icon { font-size: 12px; margin-top: 1px; flex-shrink: 0; }
-.psd-compat-ok .psd-compat-icon  { color: #22C55E; }
-.psd-compat-warn .psd-compat-icon { color: #D97706; }
-.psd-compat-error .psd-compat-icon { color: #EF4444; }
-.psd-compat-label { font-weight: 600; color: #333D4B; }
-.psd-compat-reason { color: #6B7684; font-size: 10px; margin-top: 1px; }
-.psd-compat-hint  { color: #8B95A1; font-size: 10px; margin-top: 2px; line-height: 1.4; }
 
 /* inputs */
 .field-stack { display: flex; flex-direction: column; gap: 8px; }
@@ -1833,8 +1480,6 @@ onMounted(async () => {
 
 /* horizontal cards */
 .hcards-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
-/* list mode */
 .hcards-list { display: flex; flex-direction: column; gap: 8px; }
 .hcards-list .hcard { height: 72px; }
 .hcards-list .hcard-preview { width: 96px; }
@@ -1897,6 +1542,191 @@ onMounted(async () => {
   padding: 2px 7px; border-radius: 4px; font-weight: 500;
 }
 
+/* ── AI 객체 분석 섹션 ─────────────────────────────────────── */
+.oa-section {
+  border: 1.5px solid #E5E7EB; border-radius: 12px;
+  background: #F8FAFC; padding: 14px 16px; margin-bottom: 16px;
+}
+/* 툴바 */
+.oa-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.oa-toolbar-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; flex-wrap: wrap; }
+.oa-toolbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.oa-title { font-size: 13px; font-weight: 700; color: #1F2937; }
+.oa-beta {
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+  background: #EDE9FE; color: #7C3AED; flex-shrink: 0;
+}
+.oa-artboard-info {
+  font-size: 10.5px; color: #6B7280;
+  background: #F1F5F9; border-radius: 5px; padding: 2px 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.oa-btn {
+  font-size: 11px; font-weight: 600; padding: 6px 14px; border-radius: 7px;
+  background: linear-gradient(135deg, #7C3AED, #3B82F6); color: #fff; border: none;
+  cursor: pointer; white-space: nowrap; transition: opacity 0.15s; flex-shrink: 0;
+}
+.oa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.oa-view-all-btn {
+  font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 7px;
+  background: #fff; color: #7C3AED; border: 1.5px solid #DDD6FE;
+  cursor: pointer; white-space: nowrap; transition: all 0.12s;
+}
+.oa-view-all-btn:hover { background: #F5F3FF; }
+/* 로딩 */
+.oa-loading { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #6B7280; padding: 8px 0; }
+.oa-spinner {
+  width: 14px; height: 14px; border: 2px solid #E5E7EB;
+  border-top-color: #7C3AED; border-radius: 50%; animation: oa-spin 0.7s linear infinite; flex-shrink: 0;
+}
+@keyframes oa-spin { to { transform: rotate(360deg); } }
+/* 에러 */
+.oa-error { font-size: 11px; color: #DC2626; background: #FEF2F2; border-radius: 6px; padding: 7px 10px; }
+/* compact 상태 바 */
+.oa-status-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 5px 8px; border-radius: 7px; background: #F1F5F9; margin-bottom: 10px;
+}
+.oa-rf-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.rf-ok { background: #D1FAE5; color: #065F46; }
+.rf-ng { background: #FEE2E2; color: #991B1B; }
+.oa-missing { font-size: 10px; color: #92400E; }
+.oa-selected-info { font-size: 10px; color: #7C3AED; font-weight: 600; }
+/* 본문 레이아웃 */
+.oa-body { display: flex; gap: 12px; align-items: flex-start; }
+/* 프리뷰 패널 */
+.oa-preview-panel { flex: 0 0 58%; min-width: 0; }
+.oa-preview-wrap {
+  position: relative; width: 100%;
+  min-height: 520px; height: 520px;
+  background: #111; border-radius: 8px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.oa-preview-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* bbox 오버레이 */
+.oa-bbox {
+  position: absolute; border: 2px solid; border-radius: 2px;
+  box-sizing: border-box; pointer-events: auto; cursor: pointer;
+  transition: box-shadow 0.12s, opacity 0.12s;
+}
+.oa-bbox-hl { box-shadow: 0 0 0 2px rgba(255,255,255,0.5); z-index: 10; }
+.oa-bbox-selected { box-shadow: 0 0 0 3px rgba(255,255,255,0.9) !important; z-index: 20; border-width: 3px; }
+.oa-bbox-dim { opacity: 0.2; }
+.oa-bbox-label {
+  position: absolute; top: 0; left: 0; font-size: 9px; font-weight: 700;
+  padding: 1px 3px; border-radius: 0 0 2px 0; white-space: nowrap; line-height: 1.4;
+}
+/* role별 색상 */
+.oa-role-background { border-color: rgba(107,114,128,0.5); }
+.oa-role-background .oa-bbox-label { background: rgba(107,114,128,0.75); color: #fff; }
+.oa-role-title { border-color: rgba(59,130,246,0.85); }
+.oa-role-title .oa-bbox-label { background: rgba(59,130,246,0.85); color: #fff; }
+.oa-role-main_image { border-color: rgba(16,185,129,0.85); }
+.oa-role-main_image .oa-bbox-label { background: rgba(16,185,129,0.85); color: #fff; }
+.oa-role-cta { border-color: rgba(239,68,68,0.85); }
+.oa-role-cta .oa-bbox-label { background: rgba(239,68,68,0.85); color: #fff; }
+.oa-role-logo { border-color: rgba(124,58,237,0.85); }
+.oa-role-logo .oa-bbox-label { background: rgba(124,58,237,0.85); color: #fff; }
+.oa-role-body_text { border-color: rgba(245,158,11,0.85); }
+.oa-role-body_text .oa-bbox-label { background: rgba(245,158,11,0.85); color: #fff; }
+.oa-role-badge { border-color: rgba(234,88,12,0.85); }
+.oa-role-badge .oa-bbox-label { background: rgba(234,88,12,0.85); color: #fff; }
+.oa-role-decoration, .oa-role-unknown { border-color: rgba(156,163,175,0.4); border-style: dashed; }
+.oa-role-decoration .oa-bbox-label, .oa-role-unknown .oa-bbox-label { background: rgba(156,163,175,0.5); color: #374151; }
+/* 매칭 상태 */
+.oa-ms-ready { opacity: 1; }
+.oa-ms-matched_low_confidence { opacity: 0.75; }
+.oa-ms-missing_layer { opacity: 0.35; border-style: dashed; }
+
+/* crop preview */
+.oa-crop-preview {
+  margin-top: 10px; border-radius: 8px; overflow: hidden;
+  border: 1px solid #E5E7EB; background: #111;
+}
+.oa-crop-header {
+  display: flex; align-items: center; padding: 6px 10px;
+  background: #1F2937; border-bottom: 1px solid #374151;
+}
+.oa-crop-title { font-size: 11px; font-weight: 600; color: #E5E7EB; flex: 1; }
+.oa-crop-close {
+  background: none; border: none; color: #9CA3AF; cursor: pointer; font-size: 16px;
+  padding: 0 2px; line-height: 1; font-family: inherit;
+}
+.oa-crop-close:hover { color: #F87171; }
+.oa-crop-canvas { display: block; margin: 0 auto; }
+.oa-crop-meta {
+  font-size: 10px; color: #6B7280; text-align: center;
+  padding: 4px; background: #1F2937;
+}
+.oa-preview-hint {
+  margin-top: 6px; font-size: 10.5px; color: #9CA3AF;
+  text-align: center;
+}
+
+/* 인스펙터 패널 */
+.oa-inspector {
+  flex: 1; min-width: 0;
+  max-height: 600px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.oa-inspector::-webkit-scrollbar { width: 4px; }
+.oa-inspector::-webkit-scrollbar-track { background: transparent; }
+.oa-inspector::-webkit-scrollbar-thumb { background: #DDE0E7; border-radius: 2px; }
+.oa-inspector-hint {
+  font-size: 10px; color: #9CA3AF; margin-bottom: 6px;
+  background: #F9FAFB; border-radius: 5px; padding: 4px 7px;
+  line-height: 1.4;
+}
+/* 인스펙터 카드 */
+.oa-ins-card {
+  border: 1px solid #E5E7EB; border-radius: 7px;
+  padding: 6px 9px; background: #fff;
+  cursor: pointer; transition: border-color 0.1s, background 0.1s;
+}
+.oa-ins-card:hover { border-color: #C4B5FD; }
+.oa-ins-hl { border-color: #A78BFA !important; background: #F5F3FF !important; }
+.oa-ins-selected { border-color: #7C3AED !important; background: #EDE9FF !important; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
+.oa-ins-secondary { opacity: 0.7; }
+.oa-ins-row { display: flex; align-items: center; gap: 5px; }
+.oa-role-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.oa-dot-background { background: #6B7280; }
+.oa-dot-title { background: #3B82F6; }
+.oa-dot-main_image { background: #10B981; }
+.oa-dot-cta { background: #EF4444; }
+.oa-dot-logo { background: #7C3AED; }
+.oa-dot-body_text { background: #F59E0B; }
+.oa-dot-badge { background: #EA580C; }
+.oa-dot-decoration { background: #9CA3AF; }
+.oa-dot-unknown { background: #D1D5DB; }
+.oa-ins-role { font-size: 11px; font-weight: 700; color: #374151; white-space: nowrap; flex-shrink: 0; }
+.oa-ins-label { font-size: 11px; color: #6B7280; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oa-imp-chip { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
+.imp-required { background: #FEE2E2; color: #991B1B; }
+.imp-priority  { background: #FEF3C7; color: #92400E; }
+.imp-optional  { background: #F3F4F6; color: #6B7280; }
+.oa-ins-detail {
+  display: flex; align-items: center; gap: 6px; margin-top: 2px;
+  font-size: 10px; color: #9CA3AF;
+}
+.oa-ins-bbox { font-family: monospace; }
+.oa-ins-conf { font-weight: 600; color: #7C3AED; }
+.oa-ins-pipeline { display: flex; align-items: center; gap: 3px; margin-top: 3px; flex-wrap: wrap; }
+.oa-pipe-arrow { font-size: 9px; color: #D1D5DB; flex-shrink: 0; }
+.oa-stage {
+  font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 6px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.oa-stage-ok   { background: #D1FAE5; color: #065F46; }
+.oa-stage-warn { background: #FEF3C7; color: #92400E; }
+.oa-stage-fail { background: #FEE2E2; color: #991B1B; }
+.oa-stage-info { background: #DBEAFE; color: #1E40AF; }
+.oa-stage-muted { background: #F3F4F6; color: #9CA3AF; }
+.oa-ins-layer { font-size: 10px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 4px; }
+.oa-ins-score { font-size: 10px; font-weight: 700; color: #374151; flex-shrink: 0; }
+.oa-ins-more { margin-top: 2px; }
+.oa-ins-more-lbl { font-size: 10px; color: #9CA3AF; cursor: pointer; padding: 3px 0; list-style: none; }
+.oa-ins-more summary::-webkit-details-marker { display: none; }
+
 /* AI bar */
 .ai-bar {
   flex-shrink: 0; padding: 12px 24px;
@@ -1932,4 +1762,40 @@ onMounted(async () => {
 .toast-enter-active, .toast-leave-active { transition: all 0.3s; }
 .toast-enter-from { opacity: 0; transform: translateY(16px); }
 .toast-leave-to   { opacity: 0; transform: translateY(16px); }
+
+/* mobile responsive */
+@media (max-width: 900px) {
+  .oa-body { flex-direction: column; }
+  .oa-preview-panel { flex: none; width: 100%; }
+  .oa-preview-wrap { min-height: 280px; height: 280px; }
+  .oa-inspector { max-height: 300px; }
+}
+
+/* dark mode */
+@media (prefers-color-scheme: dark) {
+  .oa-section { background: #1A1D27; border-color: #2D3142; }
+  .oa-title { color: #F9FAFB; }
+  .oa-artboard-info { background: #252836; color: #9CA3AF; }
+  .oa-status-bar { background: #252836; }
+  .oa-preview-wrap { background: #0D0D0D; }
+  .oa-ins-card { background: #252836; border-color: #374151; }
+  .oa-ins-hl { border-color: #7C3AED !important; background: #2D1F4A !important; }
+  .oa-ins-selected { border-color: #7C3AED !important; background: #2D1F4A !important; }
+  .oa-ins-role { color: #E5E7EB; }
+  .oa-ins-label { color: #9CA3AF; }
+  .oa-ins-layer { color: #6B7280; }
+  .oa-ins-score { color: #E5E7EB; }
+  .oa-error { background: #3B1212; color: #FCA5A5; }
+  .imp-optional { background: #374151; color: #9CA3AF; }
+  .oa-stage-ok   { background: #064E3B; color: #6EE7B7; }
+  .oa-stage-warn { background: #451A03; color: #FCD34D; }
+  .oa-stage-fail { background: #450A0A; color: #FCA5A5; }
+  .oa-stage-info { background: #1E3A5F; color: #93C5FD; }
+  .oa-stage-muted { background: #374151; color: #6B7280; }
+  .oa-ins-more-lbl { color: #6B7280; }
+  .oa-crop-preview { border-color: #374151; }
+  .oa-inspector-hint { background: #252836; color: #6B7280; }
+  .psd-auto-badge { background: #2D1F4A; color: #C4B5FD; }
+  .oa-view-all-btn { background: #252836; border-color: #4C3D6E; color: #C4B5FD; }
+}
 </style>

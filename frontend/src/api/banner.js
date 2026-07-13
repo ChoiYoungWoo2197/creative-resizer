@@ -23,6 +23,9 @@ export const previewUrl = (jobId, fileName) =>
 export const listSpecs = (media) =>
   api.get('/spec', { params: media ? { media } : {} })
 
+export const listBannerSpecs = (media) =>
+  api.get('/banner-specs', { params: media ? { media } : {} })
+
 export const saveSpec = (spec) => api.post('/spec', spec)
 
 export const deleteSpec = (id) => api.delete(`/spec/${id}`)
