@@ -146,7 +146,8 @@
               </div>
               <div v-if="r.renderSource === 'psd_object_reflow' || r.objectReflowAttempted" class="object-reflow-badge">
                 ⊙ AI 객체 기반 재배치
-                <span v-if="r.objectReflowMode" class="object-reflow-mode">{{ objectReflowModeLabel(r.objectReflowMode) }}</span>
+                <span v-if="r.objectReflowMode" class="object-reflow-mode"
+                      :title="r.objectReflowMode">{{ objectReflowModeLabel(r.objectReflowMode) }}</span>
                 <span v-if="r.objectSafeZonePass != null" class="safe-zone-badge"
                       :class="r.objectSafeZonePass ? 'safe-zone-ok' : 'safe-zone-fail'">
                   {{ r.objectSafeZonePass ? '✓ 세이프존' : '✕ 세이프존' }}
@@ -518,7 +519,37 @@ const ROLE_LABELS = {
 function roleLabel(role) { return ROLE_LABELS[role] ?? role }
 
 const OBJECT_REFLOW_MODE_LABELS = {
+  // 렌더 소스
   layer_asset: '레이어 추출', bbox_crop: 'AI 영역 크롭', flat_background: '배경 합성',
+  // horizontal 기본
+  horizontal_split_left: '제품 좌측',
+  horizontal_split_right: '제품 우측',
+  horizontal_center_product: '제품 중앙',
+  horizontal_text_overlay_safe: '텍스트 오버레이',
+  horizontal_minimal: '미니멀 수평',
+  horizontal_text_left_product_right: '텍스트좌·제품우',
+  horizontal_background_full_text_cta_center: '배경+텍스트 중앙',
+  horizontal_no_product_reposition_preserve_original: '텍스트만 배치',
+  // horizontal 경쟁사
+  competitor_product_right_cta_bottom: '경쟁사: 제품우·CTA하',
+  competitor_headline_left_product_right_cta_bottom: '경쟁사: 헤드라인좌·제품우',
+  competitor_full_background_product_right_cta_bar: '경쟁사: 배경·제품우·CTA바',
+  competitor_preserve_bg_reposition_product_cta: '경쟁사: BG유지·제품재배치',
+  // square 기본
+  square_product_top_text_bottom: '제품상·텍스트하',
+  square_text_top_product_center: '텍스트상·제품중',
+  square_center_focus: '중앙 집중',
+  square_split_left_right: '좌우 분할',
+  square_minimal: '미니멀 정방',
+  square_headline_top_product_right_cta_bottom: '헤드라인상·제품우',
+  square_original_center_crop_cta_bottom: '원본 크롭',
+  square_product_center_cta_below: '제품중앙·CTA하',
+  // square 경쟁사
+  competitor_square_headline_top_product_center_cta_bottom: '경쟁사: 헤드라인상·제품중',
+  competitor_square_product_focus_cta_bottom: '경쟁사: 제품집중',
+  competitor_square_preserve_bg_cta_bottom: '경쟁사: BG유지',
+  // fallback
+  emergency_fallback: '비상 레이아웃',
 }
 function objectReflowModeLabel(mode) { return OBJECT_REFLOW_MODE_LABELS[mode] ?? mode }
 
@@ -1118,6 +1149,13 @@ onUnmounted(stopPolling)
   font-size: 10px; font-weight: 500;
   color: #7C3AED; background: #DDD6FE;
   border-radius: 4px; padding: 1px 5px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+  cursor: help;
 }
 .reflow-sub-label {
   font-size: 9.5px; font-weight: 600; color: #9CA3AF; flex-shrink: 0; margin-right: 2px;

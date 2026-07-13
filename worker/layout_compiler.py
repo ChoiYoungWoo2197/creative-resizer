@@ -336,6 +336,152 @@ _SQUARE_TEMPLATES_EXTRA = [
     },
 ]
 
+# ─── 11단계: 경쟁사 스타일 horizontal 후보 ────────────────────────────────────
+# product 오른쪽 + headline 상단 + CTA 하단 바 구성
+# safe zone left=0.192, right=0.192 (1250×560) 내에서 text/CTA 배치
+
+_COMPETITOR_HORIZONTAL_TEMPLATES = [
+    {
+        "id": "competitor_product_right_cta_bottom",
+        # flagship: 배경 전체 + 제품 우측 tall + 헤드라인 좌상 + CTA 좌하
+        # CTA: y=0.74, h=0.13 → bottom=0.87 (≈487px < cta safe_y2≈504px)
+        "zones": [
+            {"zone_id": "logo",   "roles": ["logo"],
+             "x": 0.21, "y": 0.04, "w": 0.15, "h": 0.12,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "text",   "roles": ["headline", "body_text"],
+             "x": 0.21, "y": 0.10, "w": 0.27, "h": 0.40,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 2},
+            {"zone_id": "image",  "roles": ["main_image", "person"],
+             "x": 0.50, "y": 0.02, "w": 0.46, "h": 0.96,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "cta",    "roles": ["cta"],
+             "x": 0.21, "y": 0.74, "w": 0.27, "h": 0.13,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "competitor_headline_left_product_right_cta_bottom",
+        # 헤드라인 최상단 + 바디텍스트 중간 + 제품 우측 + CTA 좌하
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.21, "y": 0.04, "w": 0.13, "h": 0.10,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "headline", "roles": ["headline"],
+             "x": 0.21, "y": 0.07, "w": 0.27, "h": 0.22,
+             "mode": "center",        "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "bodytext", "roles": ["body_text", "price", "discount"],
+             "x": 0.21, "y": 0.32, "w": 0.27, "h": 0.28,
+             "mode": "stack_v",       "allow_crop": False, "optional": True,  "max_objs": 2},
+            {"zone_id": "image",    "roles": ["main_image", "person"],
+             "x": 0.50, "y": 0.02, "w": 0.46, "h": 0.96,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.21, "y": 0.74, "w": 0.27, "h": 0.13,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "competitor_full_background_product_right_cta_bar",
+        # 배경 full + 제품 우측(h=0.74 → 425px, CTA_top=431px) + 와이드 CTA 바 하단
+        # product_bottom(425) < CTA_top(431) 보장 → bg_clean = 100
+        "zones": [
+            {"zone_id": "logo",   "roles": ["logo"],
+             "x": 0.21, "y": 0.04, "w": 0.15, "h": 0.12,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "text",   "roles": ["headline", "body_text"],
+             "x": 0.21, "y": 0.10, "w": 0.27, "h": 0.46,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 2},
+            {"zone_id": "image",  "roles": ["main_image", "person"],
+             "x": 0.50, "y": 0.02, "w": 0.46, "h": 0.74,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "cta",    "roles": ["cta"],
+             "x": 0.21, "y": 0.77, "w": 0.58, "h": 0.12,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "competitor_preserve_bg_reposition_product_cta",
+        # 배경 유지 + 제품 재배치(우측, optional) + 텍스트 좌측 + CTA 하단
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.21, "y": 0.04, "w": 0.16, "h": 0.12,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "headline", "roles": ["headline"],
+             "x": 0.21, "y": 0.12, "w": 0.26, "h": 0.22,
+             "mode": "center",        "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "bodytext", "roles": ["body_text", "price", "discount"],
+             "x": 0.21, "y": 0.36, "w": 0.26, "h": 0.26,
+             "mode": "stack_v",       "allow_crop": False, "optional": True,  "max_objs": 2},
+            {"zone_id": "image",    "roles": ["main_image", "person"],
+             "x": 0.50, "y": 0.02, "w": 0.46, "h": 0.96,
+             "mode": "center",        "allow_crop": True,  "optional": True,  "max_objs": 1},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.21, "y": 0.74, "w": 0.26, "h": 0.13,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+]
+
+# ─── 11단계: 경쟁사 스타일 square 후보 ───────────────────────────────────────
+
+_COMPETITOR_SQUARE_TEMPLATES = [
+    {
+        "id": "competitor_square_headline_top_product_center_cta_bottom",
+        # 헤드라인 최상단 + 제품 중앙 + CTA 하단 바
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.04, "y": 0.04, "w": 0.22, "h": 0.10,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "headline", "roles": ["headline"],
+             "x": 0.04, "y": 0.04, "w": 0.92, "h": 0.18,
+             "mode": "center",        "allow_crop": False, "optional": False, "max_objs": 1},
+            {"zone_id": "image",    "roles": ["main_image", "person"],
+             "x": 0.08, "y": 0.24, "w": 0.84, "h": 0.52,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.15, "y": 0.82, "w": 0.70, "h": 0.14,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "competitor_square_product_focus_cta_bottom",
+        # 제품 대형 중앙 포커스 + 헤드라인 하단 + CTA 최하단
+        "zones": [
+            {"zone_id": "logo",     "roles": ["logo"],
+             "x": 0.04, "y": 0.04, "w": 0.22, "h": 0.09,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "image",    "roles": ["main_image", "person"],
+             "x": 0.05, "y": 0.04, "w": 0.90, "h": 0.66,
+             "mode": "center",        "allow_crop": True,  "optional": False, "max_objs": 1},
+            {"zone_id": "text",     "roles": ["headline", "body_text"],
+             "x": 0.05, "y": 0.72, "w": 0.90, "h": 0.14,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 2},
+            {"zone_id": "cta",      "roles": ["cta"],
+             "x": 0.15, "y": 0.86, "w": 0.70, "h": 0.11,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+    {
+        "id": "competitor_square_preserve_bg_cta_bottom",
+        # 배경 유지 + 텍스트 좌측 + 제품 우측(optional) + CTA 하단
+        "zones": [
+            {"zone_id": "logo",   "roles": ["logo"],
+             "x": 0.04, "y": 0.04, "w": 0.22, "h": 0.10,
+             "mode": "top_left",      "allow_crop": False, "optional": True,  "max_objs": 1},
+            {"zone_id": "text",   "roles": ["headline", "body_text"],
+             "x": 0.04, "y": 0.16, "w": 0.60, "h": 0.48,
+             "mode": "stack_v",       "allow_crop": False, "optional": False, "max_objs": 2},
+            {"zone_id": "image",  "roles": ["main_image", "person"],
+             "x": 0.55, "y": 0.10, "w": 0.41, "h": 0.65,
+             "mode": "center",        "allow_crop": True,  "optional": True,  "max_objs": 1},
+            {"zone_id": "cta",    "roles": ["cta"],
+             "x": 0.15, "y": 0.83, "w": 0.70, "h": 0.13,
+             "mode": "bottom_center", "allow_crop": False, "optional": False, "max_objs": 1},
+        ],
+    },
+]
+
 _VERTICAL_TEMPLATES = [
     {
         "id": "vertical_logo_top_product_center_cta_bottom",
@@ -447,10 +593,10 @@ def _ratio_type(w: int, h: int) -> str:
 
 def _get_templates(ratio_type: str) -> list:
     return {
-        "horizontal": _HORIZONTAL_TEMPLATES + _HORIZONTAL_TEMPLATES_EXTRA,
-        "square":     _SQUARE_TEMPLATES + _SQUARE_TEMPLATES_EXTRA,
+        "horizontal": _HORIZONTAL_TEMPLATES + _HORIZONTAL_TEMPLATES_EXTRA + _COMPETITOR_HORIZONTAL_TEMPLATES,
+        "square":     _SQUARE_TEMPLATES + _SQUARE_TEMPLATES_EXTRA + _COMPETITOR_SQUARE_TEMPLATES,
         "vertical":   _VERTICAL_TEMPLATES,
-    }.get(ratio_type, _HORIZONTAL_TEMPLATES + _HORIZONTAL_TEMPLATES_EXTRA)
+    }.get(ratio_type, _HORIZONTAL_TEMPLATES + _HORIZONTAL_TEMPLATES_EXTRA + _COMPETITOR_HORIZONTAL_TEMPLATES)
 
 
 def _objects_by_role(objects: list) -> dict:
@@ -713,11 +859,15 @@ def _intersection_area(a: dict, b: dict) -> int:
 
 def compute_safe_zone_score(placements: list, safe_zones: dict,
                              canvas_w: int, canvas_h: int) -> float:
-    """safe zone 준수 점수 (0~100)."""
+    """safe zone 준수 점수 (0~100).
+
+    이미지 역할(main_image/person)은 safe zone 점수 평가에서 제외.
+    (이미지는 canvas 경계를 넘어도 괜찮음 — hard_fail 예외와 일관성 유지)
+    """
     score = 100.0
     for p in _active(placements):
         role = p["role"]
-        if role in ("background", "decoration"):
+        if role in ("background", "decoration") or role in IMAGE_ROLES:
             continue
         sz = get_object_safe_zone(role, safe_zones)
         if not sz:
@@ -830,12 +980,60 @@ def compute_original_intent_score(placements: list, objs_by_id: dict) -> float:
     return max(0.0, score)
 
 
+def compute_competitor_style_score(placements: list, canvas_w: int, canvas_h: int) -> float:
+    """경쟁사 스타일 점수 (0~100).
+
+    product-right(+40) + headline-top(+30) + cta-bottom(+30) 구성에 점수 부여.
+    이 점수는 최종 점수 조정에 사용되며, breakdown에도 포함된다.
+    """
+    active = _active(placements)
+    score  = 0.0
+
+    product_ps  = [p for p in active if p["role"] == "main_image"]
+    headline_ps = [p for p in active if p["role"] == "headline"]
+    cta_ps      = [p for p in active if p["role"] == "cta"]
+
+    # 제품이 오른쪽 절반에 배치 (+40)
+    if product_ps:
+        p  = product_ps[0]
+        cx = p["x"] + p["width"] / 2
+        if cx > canvas_w * 0.5:
+            score += 40.0
+
+    # 헤드라인이 상단 40% 이내 (+30)
+    if headline_ps:
+        p  = headline_ps[0]
+        cy = p["y"] + p["height"] / 2
+        if cy < canvas_h * 0.4:
+            score += 30.0
+
+    # CTA가 하단 35% 이내에 끝남 (+30)
+    if cta_ps:
+        p      = cta_ps[0]
+        bottom = p["y"] + p["height"]
+        if bottom > canvas_h * 0.65:
+            score += 30.0
+
+    return min(100.0, score)
+
+
+def _competitor_style_adjustment(candidate: dict, canvas_w: int, canvas_h: int) -> float:
+    """경쟁사 스타일 점수를 기반으로 최종 점수 조정값 반환 (-3.0 ~ +3.0).
+
+    competitorStyleScore=100 → +3.0 (경쟁사 구성 완벽)
+    competitorStyleScore= 50 → +0.0 (중립)
+    competitorStyleScore=  0 → -3.0 (경쟁사 구성 없음)
+    """
+    cs = compute_competitor_style_score(candidate.get("placements", []), canvas_w, canvas_h)
+    return round((cs - 50.0) / 50.0 * 3.0, 2)
+
+
 def score_candidate(candidate: dict, safe_zones: dict,
                     canvas_w: int, canvas_h: int,
                     objs_by_id: dict) -> float:
-    """7-component 가중 점수 (0~100)."""
-    ps = candidate["placements"]
-    s = (
+    """7-component 가중 점수 + 경쟁사 스타일 조정 (0~100)."""
+    ps   = candidate["placements"]
+    base = (
           compute_safe_zone_score(ps, safe_zones, canvas_w, canvas_h) * _W_SAFE_ZONE
         + compute_no_crop_score(ps)                                    * _W_NO_CROP
         + compute_readability_score(ps, canvas_w, canvas_h)            * _W_READABILITY
@@ -844,7 +1042,8 @@ def score_candidate(candidate: dict, safe_zones: dict,
         + compute_background_clean_score(ps)                           * _W_BG_CLEAN
         + compute_original_intent_score(ps, objs_by_id)                * _W_ORIGINAL_INTENT
     )
-    return round(min(100.0, max(0.0, s)), 1)
+    adj = _competitor_style_adjustment(candidate, canvas_w, canvas_h)
+    return round(min(100.0, max(0.0, base + adj)), 1)
 
 
 # ─── Hard fail 검사 ───────────────────────────────────────────────────────────
@@ -1139,6 +1338,8 @@ def score_candidate_with_breakdown(
     vb = compute_visual_balance_score(ps, canvas_w, canvas_h)
     bg = compute_background_clean_score(ps)
     oi = compute_original_intent_score(ps, objs_by_id)
+    cs = compute_competitor_style_score(ps, canvas_w, canvas_h)
+    adj = _competitor_style_adjustment(candidate, canvas_w, canvas_h)
 
     total = round(min(100.0, max(0.0,
         sz * _W_SAFE_ZONE
@@ -1148,16 +1349,19 @@ def score_candidate_with_breakdown(
         + vb * _W_VISUAL_BALANCE
         + bg * _W_BG_CLEAN
         + oi * _W_ORIGINAL_INTENT
+        + adj
     )), 1)
 
     breakdown = {
-        "safeZoneScore":        round(sz, 1),
-        "noCropScore":          round(nc, 1),
-        "readabilityScore":     round(rd, 1),
-        "overlapScore":         round(ov, 1),
-        "visualBalanceScore":   round(vb, 1),
-        "backgroundCleanScore": round(bg, 1),
-        "originalIntentScore":  round(oi, 1),
+        "safeZoneScore":          round(sz, 1),
+        "noCropScore":            round(nc, 1),
+        "readabilityScore":       round(rd, 1),
+        "overlapScore":           round(ov, 1),
+        "visualBalanceScore":     round(vb, 1),
+        "backgroundCleanScore":   round(bg, 1),
+        "originalIntentScore":    round(oi, 1),
+        "competitorStyleScore":   round(cs, 1),
+        "competitorStyleAdj":     adj,
         "weights": {
             "safeZone":        _W_SAFE_ZONE,
             "noCrop":          _W_NO_CROP,
