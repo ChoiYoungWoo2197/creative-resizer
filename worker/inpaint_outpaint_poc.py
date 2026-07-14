@@ -222,6 +222,7 @@ def run_inpaint_poc(
     inpaint_applied = False
     provider = "none"
     quality = 0.0
+    raw_quality = 0.0
 
     try:
         # 외부 AI 시도 (key 없으면 None 반환)
@@ -267,7 +268,8 @@ def run_inpaint_poc(
                 clean_bg = _heuristic_inpaint(bg_img, union)
                 provider = "local_heuristic"
                 mask_ratio = n_masked / max(target_w * target_h, 1)
-                quality = round(max(40.0, 80.0 - mask_ratio * 100), 1)
+                raw_quality = 80.0 - mask_ratio * 100
+                quality = round(min(75.0, max(40.0, raw_quality)), 1)
                 inpaint_applied = True
                 print(f"{prefix} heuristic mask_ratio={mask_ratio:.3f} quality={quality}")
             else:
@@ -289,15 +291,39 @@ def run_inpaint_poc(
         result_img = clean_bg if (inpaint_applied and clean_bg is not None) else bg_img
         bg_mask_ids = [m["maskId"] for m in masks if m.get("role") in {"product", "text", "cta"}]
 
+        if provider == "local_heuristic":
+            quality_level = "high" if quality >= 70.0 else ("medium" if quality >= 55.0 else "low")
+            cap_applied = (provider == "local_heuristic") and (raw_quality > 75.0)
+            seam_reduced = inpaint_applied
+            use_for_final = inpaint_applied and (quality >= 55.0)
+            fallback_reason = "" if inpaint_applied else warnings[-1] if warnings else "unknown"
+        elif provider == "external_ai":
+            quality_level = "high"
+            cap_applied = False
+            seam_reduced = True
+            use_for_final = inpaint_applied
+            fallback_reason = "" if inpaint_applied else "externalAiFailed"
+        else:
+            quality_level = "low"
+            cap_applied = False
+            seam_reduced = False
+            use_for_final = False
+            fallback_reason = warnings[-1] if warnings else "noMaskedPixels"
+
         return result_img, {
-            "inpaintPocEnabled":    True,
-            "inpaintApplied":       inpaint_applied,
-            "inpaintProvider":      provider,
-            "inpaintQualityScore":  quality,
-            "inpaintFallbackUsed":  not inpaint_applied,
-            "cleanBackgroundUsed":  inpaint_applied,
-            "backgroundMaskIds":    bg_mask_ids,
-            "warnings":             warnings,
+            "inpaintPocEnabled":        True,
+            "inpaintApplied":           inpaint_applied,
+            "inpaintProvider":          provider,
+            "inpaintQualityScore":      quality,
+            "inpaintQualityLevel":      quality_level,
+            "inpaintQualityCapApplied": cap_applied,
+            "seamReduced":              seam_reduced,
+            "inpaintUseForFinal":       use_for_final,
+            "inpaintFallbackReason":    fallback_reason,
+            "inpaintFallbackUsed":      not inpaint_applied,
+            "cleanBackgroundUsed":      inpaint_applied,
+            "backgroundMaskIds":        bg_mask_ids,
+            "warnings":                 warnings,
         }
 
     except Exception as e:

@@ -253,12 +253,30 @@ def compute_mask_quality(
         + edge_sharpness     * 0.20
         + alpha_coverage     * 0.10
     )
+    feather_applied = source in ("object_bbox_coarse", "visual_context")
+    if source == "psd_alpha":
+        edge_quality = "sharp"
+        post_process = False
+    elif source == "psd_layer_mask":
+        edge_quality = "sharp"
+        post_process = False
+    elif source in ("object_bbox_coarse", "visual_context"):
+        edge_quality = "coarse"
+        post_process = True   # GaussianBlur feather applied
+    else:
+        edge_quality = "medium"
+        post_process = False
+
     return {
-        "edgeSharpness":   round(edge_sharpness, 3),
-        "alphaCoverage":   round(alpha_coverage, 3),
-        "leakRisk":        round(leak_risk, 3),
-        "sourcePriority":  round(priority, 3),
-        "areaRatio":       area_ratio,
-        "overallScore":    round(overall, 3),
+        "edgeSharpness":       round(edge_sharpness, 3),
+        "alphaCoverage":       round(alpha_coverage, 3),
+        "leakRisk":            round(leak_risk, 3),
+        "maskLeakRisk":        round(leak_risk, 3),
+        "sourcePriority":      round(priority, 3),
+        "areaRatio":           area_ratio,
+        "overallScore":        round(overall, 3),
         "productCandidateScore": round(product_score, 1) if product_score is not None else None,
+        "maskFeatherApplied":  feather_applied,
+        "maskEdgeQuality":     edge_quality,
+        "maskPostProcessApplied": post_process,
     }

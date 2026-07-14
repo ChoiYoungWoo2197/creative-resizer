@@ -1216,9 +1216,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                                 bg_meta_out["backgroundNaturalnessScore"] = round(
                                     min(90.0, _nat + 5.0), 1
                                 )
-                                bg_meta_out["backgroundMode"] = (
-                                    "poc_inpainted_" + bg_meta_out.get("backgroundMode", "unknown")
+                                _orig_bg_mode = bg_meta_out.get("backgroundMode", "unknown")
+                                bg_meta_out["baseBackgroundMode"] = _orig_bg_mode
+                                bg_meta_out["pocBackgroundApplied"] = True
+                                bg_meta_out["pocBackgroundMode"] = "poc_inpainted"
+                                bg_meta_out["backgroundProcessingMode"] = (
+                                    "poc_inpainted_" + _orig_bg_mode
                                 )
+                                # backgroundMode kept as-is (original value preserved)
                         except Exception as _ip_e:
                             _poc_inpaint_meta = {
                                 "inpaintPocEnabled": True, "inpaintApplied": False,

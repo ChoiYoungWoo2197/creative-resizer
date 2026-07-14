@@ -506,7 +506,7 @@ class TestMetadataFields(unittest.TestCase):
             self.assertIn(key, meta, f"missing key: {key}")
 
     def test_inpaint_metadata_required_fields(self):
-        """run_inpaint_poc metadata 필수 필드 존재 확인."""
+        """run_inpaint_poc metadata 필수 필드 존재 확인 (신규 필드 포함)."""
         bg = _solid_rgba(400, 300)
         masks = self._make_simple_masks(400, 300)
         _, meta = run_inpaint_poc(
@@ -518,6 +518,9 @@ class TestMetadataFields(unittest.TestCase):
             "inpaintPocEnabled", "inpaintApplied", "inpaintProvider",
             "inpaintQualityScore", "inpaintFallbackUsed",
             "cleanBackgroundUsed", "backgroundMaskIds",
+            # new fields (booster task 3)
+            "inpaintQualityLevel", "inpaintQualityCapApplied",
+            "seamReduced", "inpaintUseForFinal", "inpaintFallbackReason",
         ]
         for key in required:
             self.assertIn(key, meta, f"missing key: {key}")
@@ -552,17 +555,109 @@ class TestMetadataFields(unittest.TestCase):
         self.assertIn("quality", m)
 
     def test_compute_mask_quality_structure(self):
-        """compute_mask_quality: 필수 키 존재 + 범위 유효."""
+        """compute_mask_quality: 필수 키 존재 + 범위 유효 (신규 필드 포함)."""
         q = compute_mask_quality(
             "psd_alpha", {"x": 0, "y": 0, "width": 100, "height": 100},
             1000, 500, product_score=85.0,
         )
         for key in ("edgeSharpness", "alphaCoverage", "leakRisk",
+                    "sourcePriority", "overallScore",
+                    "maskFeatherApplied", "maskEdgeQuality",
+                    "maskLeakRisk", "maskPostProcessApplied"):
+            self.assertIn(key, q, f"missing key: {key}")
+        for key in ("edgeSharpness", "alphaCoverage", "leakRisk",
                     "sourcePriority", "overallScore"):
-            self.assertIn(key, q)
-            if key != "areaRatio":
-                self.assertGreaterEqual(q[key], 0.0)
-                self.assertLessEqual(q[key], 1.0)
+            self.assertGreaterEqual(q[key], 0.0)
+            self.assertLessEqual(q[key], 1.0)
+
+    def test_mask_edge_quality_psd_alpha(self):
+        """psd_alpha: maskFeatherApplied=False, maskEdgeQuality='sharp', maskPostProcessApplied=False."""
+        q = compute_mask_quality("psd_alpha", {"x": 0, "y": 0, "width": 50, "height": 50}, 200, 200)
+        self.assertFalse(q["maskFeatherApplied"])
+        self.assertEqual(q["maskEdgeQuality"], "sharp")
+        self.assertFalse(q["maskPostProcessApplied"])
+
+    def test_mask_edge_quality_bbox_coarse(self):
+        """object_bbox_coarse: maskFeatherApplied=True, maskEdgeQuality='coarse', maskPostProcessApplied=True."""
+        q = compute_mask_quality("object_bbox_coarse", {"x": 0, "y": 0, "width": 50, "height": 50}, 200, 200)
+        self.assertTrue(q["maskFeatherApplied"])
+        self.assertEqual(q["maskEdgeQuality"], "coarse")
+        self.assertTrue(q["maskPostProcessApplied"])
+
+    def test_mask_leak_risk_alias(self):
+        """maskLeakRisk == leakRisk."""
+        q = compute_mask_quality("psd_alpha", {"x": 0, "y": 0, "width": 50, "height": 50}, 200, 200)
+        self.assertAlmostEqual(q["maskLeakRisk"], q["leakRisk"])
+
+
+# ─── I. inpaint quality cap test ─────────────────────────────────────────────
+
+class TestInpaintQualityCap(unittest.TestCase):
+    def _make_small_mask(self, canvas_w, canvas_h, region_ratio=0.02) -> dict:
+        """inpaint quality ≈ 80 - 2 = 78 (should be capped at 75)."""
+        mask_img = Image.new("L", (canvas_w, canvas_h), 0)
+        rw = int(canvas_w * region_ratio ** 0.5)
+        rh = int(canvas_h * region_ratio ** 0.5)
+        mask_img.paste(Image.new("L", (rw, rh), 255), (10, 10))
+        return {
+            "maskId": "mask_product_001", "objectId": "obj_jar",
+            "role": "product", "source": "psd_alpha",
+            "bbox": {"x": 10, "y": 10, "width": rw, "height": rh},
+            "areaRatio": region_ratio, "quality": {}, "maskPath": None,
+            "_maskImg": mask_img,
+        }
+
+    def test_quality_capped_at_75_for_local_heuristic(self):
+        """local_heuristic inpaint quality는 최대 75."""
+        bg = _solid_rgba(600, 400)
+        mask = self._make_small_mask(600, 400, region_ratio=0.01)
+        _, meta = run_inpaint_poc(
+            bg, [mask], 600, 400, 600, 400,
+            None, "test_i1",
+            extra_flags={"experimentalInpaint": True},
+        )
+        if meta.get("inpaintApplied") and meta.get("inpaintProvider") == "local_heuristic":
+            self.assertLessEqual(meta["inpaintQualityScore"], 75.0,
+                                 "local_heuristic quality must not exceed 75")
+
+    def test_quality_level_field_present(self):
+        """inpaintQualityLevel 필드가 low/medium/high 중 하나."""
+        bg = _solid_rgba(400, 300)
+        mask_img = Image.new("L", (400, 300), 0)
+        mask_img.paste(Image.new("L", (80, 60), 255), (10, 10))
+        mask = {
+            "maskId": "mask_001", "objectId": "obj1", "role": "product",
+            "source": "psd_alpha", "bbox": {}, "areaRatio": 0.04,
+            "quality": {}, "maskPath": None, "_maskImg": mask_img,
+        }
+        _, meta = run_inpaint_poc(
+            bg, [mask], 400, 300, 400, 300,
+            None, "test_i2",
+            extra_flags={"experimentalInpaint": True},
+        )
+        if meta.get("inpaintApplied"):
+            self.assertIn(meta["inpaintQualityLevel"], {"low", "medium", "high"},
+                          "inpaintQualityLevel must be low/medium/high")
+
+    def test_quality_cap_applied_flag(self):
+        """inpaintQualityCapApplied=True when raw quality > 75 for local_heuristic."""
+        bg = _solid_rgba(600, 400)
+        # very small masked region → raw quality ≈ 80 → cap at 75 → capApplied=True
+        mask_img = Image.new("L", (600, 400), 0)
+        mask_img.paste(Image.new("L", (5, 5), 255), (10, 10))  # tiny: 25px / 240000 = 0.01%
+        mask = {
+            "maskId": "mask_001", "objectId": "obj1", "role": "product",
+            "source": "psd_alpha", "bbox": {}, "areaRatio": 0.0001,
+            "quality": {}, "maskPath": None, "_maskImg": mask_img,
+        }
+        _, meta = run_inpaint_poc(
+            bg, [mask], 600, 400, 600, 400,
+            None, "test_i3",
+            extra_flags={"experimentalInpaint": True},
+        )
+        if meta.get("inpaintApplied") and meta.get("inpaintProvider") == "local_heuristic":
+            self.assertTrue(meta["inpaintQualityCapApplied"],
+                            "tiny mask ratio → raw_quality>75 → cap should be applied")
 
 
 # ─── Regression: existing Stage 14+15 tests must still pass ──────────────────
@@ -626,6 +721,7 @@ if __name__ == "__main__":
         TestLocalOutpaintSmoke,
         TestFallbackSafety,
         TestMetadataFields,
+        TestInpaintQualityCap,
         TestRegressionImports,
     ]
     for cls in test_classes:
