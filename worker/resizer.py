@@ -1134,6 +1134,33 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             artboard_img = None
             creative_object_set = None
 
+        # ── Stage 16 PoC: segmentation (PSD당 1회, spec loop 외부) ──────────────
+        # Flag: CREATIVE_SEGMENTATION_POC=true 또는 request.experimentalSegmentation=true
+        # 기존 경로에 영향 없음 — 실패해도 masks=[] 로 처리
+        _poc_extra_flags = {
+            "experimentalSegmentation": bool((object_analysis or {}).get("experimentalSegmentation")),
+            "experimentalInpaint":      bool((object_analysis or {}).get("experimentalInpaint")),
+            "experimentalOutpaint":     bool((object_analysis or {}).get("experimentalOutpaint")),
+        }
+        _poc_masks: list = []
+        _poc_seg_meta: dict = {}
+        _poc_seg_on = (
+            os.environ.get("CREATIVE_SEGMENTATION_POC", "false").lower() == "true"
+            or _poc_extra_flags["experimentalSegmentation"]
+        )
+        if _poc_seg_on and creative_object_set:
+            try:
+                from segmentation_poc import run_segmentation_poc
+                _poc_masks, _poc_seg_meta = run_segmentation_poc(
+                    creative_object_set, artboard_img, canvas_w, canvas_h,
+                    output_dir, job_id, extra_flags=_poc_extra_flags,
+                )
+            except Exception as _seg_e:
+                print(f"[{job_id or 'job'}][SegPoc] import/run failed: {_seg_e}")
+                _poc_seg_meta = {"segmentationPocEnabled": True, "maskFallbackUsed": True,
+                                 "maskWarnings": [str(_seg_e)]}
+        # ── end Stage 16 PoC ────────────────────────────────────────────────────
+
         for spec in specs:
             media = spec["media"]
             w = spec["width"]
@@ -1157,6 +1184,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             _is_emergency = False
             layout_score_status = None
             effective_layout_score = None
+            _poc_inpaint_meta: dict = {}   # Stage 17 PoC — 항상 초기화
             safe_zones = normalize_safe_zone(spec, w, h)
 
             print(f"[{job_id or 'job'}][ObjectReflow] spec={name} size={w}x{h}")
@@ -1169,7 +1197,67 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                         creative_object_set, artboard_img, w, h, output_dir, job_id
                     )
 
-                    # 2. 5개 이상 layout candidates 생성·점수화 (Stage 15: bg naturalness 전달)
+                    # 2a. Stage 17 PoC: inpaint (flag 켜진 경우만, 실패 시 기존 bg 유지)
+                    _poc_inpaint_meta: dict = {}
+                    _poc_inpaint_on = (
+                        os.environ.get("CREATIVE_INPAINT_POC", "false").lower() == "true"
+                        or _poc_extra_flags.get("experimentalInpaint")
+                    )
+                    if _poc_inpaint_on and _poc_masks:
+                        try:
+                            from inpaint_outpaint_poc import run_inpaint_poc
+                            bg_img, _poc_inpaint_meta = run_inpaint_poc(
+                                bg_img, _poc_masks,
+                                canvas_w, canvas_h, w, h,
+                                output_dir, job_id, extra_flags=_poc_extra_flags,
+                            )
+                            if _poc_inpaint_meta.get("inpaintApplied"):
+                                _nat = bg_meta_out.get("backgroundNaturalnessScore", 70.0)
+                                bg_meta_out["backgroundNaturalnessScore"] = round(
+                                    min(90.0, _nat + 5.0), 1
+                                )
+                                bg_meta_out["backgroundMode"] = (
+                                    "poc_inpainted_" + bg_meta_out.get("backgroundMode", "unknown")
+                                )
+                        except Exception as _ip_e:
+                            _poc_inpaint_meta = {
+                                "inpaintPocEnabled": True, "inpaintApplied": False,
+                                "inpaintFallbackUsed": True,
+                                "warnings": [f"inpaintImportFailed:{_ip_e}"],
+                            }
+                            bg_meta_out.setdefault("warnings", []).append(
+                                f"stage17InpaintFailed:{_ip_e}"
+                            )
+
+                    # 2b. Stage 16+17 debug JSON 저장
+                    if _poc_seg_on and output_dir:
+                        try:
+                            import json as _json
+                            _s16_17 = {
+                                "segmentationPocEnabled": _poc_seg_meta.get("segmentationPocEnabled", False),
+                                "inpaintPocEnabled":  _poc_inpaint_meta.get("inpaintPocEnabled", False),
+                                "outpaintPocEnabled": False,
+                                "masksGenerated":     _poc_seg_meta.get("masksGenerated", 0),
+                                "productMaskSelected": _poc_seg_meta.get("productMaskSelected", False),
+                                "productMaskId":      _poc_seg_meta.get("productMaskId"),
+                                "maskQualityScore":   _poc_seg_meta.get("maskQualityScore", 0.0),
+                                "cleanBackgroundUsed": _poc_inpaint_meta.get("cleanBackgroundUsed", False),
+                                "inpaintApplied":     _poc_inpaint_meta.get("inpaintApplied", False),
+                                "outpaintApplied":    False,
+                                "backgroundQualityScore": bg_meta_out.get("backgroundNaturalnessScore", 0.0),
+                                "fallbackUsed":       _poc_inpaint_meta.get("inpaintFallbackUsed", True),
+                                "warnings": (
+                                    _poc_seg_meta.get("maskWarnings", [])
+                                    + _poc_inpaint_meta.get("warnings", [])
+                                ),
+                            }
+                            _json_path = os.path.join(output_dir, "result.stage16_17.json")
+                            with open(_json_path, "w", encoding="utf-8") as _jf:
+                                _json.dump(_s16_17, _jf, indent=2)
+                        except Exception:
+                            pass
+
+                    # 2c. 기존 layout candidates 생성 (Stage 15: bg naturalness 전달)
                     layout_result = compile_layout(
                         creative_object_set, w, h, safe_zones,
                         bg_naturalness=bg_meta_out.get("backgroundNaturalnessScore"),
@@ -1326,6 +1414,16 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "scoringBreakdown":        (layout_result.get("topCandidates") or [{}])[0].get("scoringBreakdown") if obj_reflow_succeeded else None,
                 "duplicateObjectsRemoved": layout_meta_out.get("duplicateObjectsRemoved") if obj_reflow_succeeded else None,
                 "ctaGroupCreated":         layout_meta_out.get("ctaGroupCreated") if obj_reflow_succeeded else None,
+                # Stage 16+17 PoC metadata (flag OFF 시 모두 None)
+                "segmentationPocEnabled":  _poc_seg_meta.get("segmentationPocEnabled"),
+                "masksGenerated":          _poc_seg_meta.get("masksGenerated"),
+                "productMaskSelected":     _poc_seg_meta.get("productMaskSelected"),
+                "productMaskId":           _poc_seg_meta.get("productMaskId"),
+                "maskQualityScore":        _poc_seg_meta.get("maskQualityScore"),
+                "inpaintPocEnabled":       _poc_inpaint_meta.get("inpaintPocEnabled"),
+                "inpaintApplied":          _poc_inpaint_meta.get("inpaintApplied"),
+                "cleanBackgroundUsed":     _poc_inpaint_meta.get("cleanBackgroundUsed"),
+                "pocFallbackUsed":         _poc_seg_meta.get("maskFallbackUsed"),
             })
         return results, []
 
