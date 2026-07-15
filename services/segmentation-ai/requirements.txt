@@ -1,0 +1,27 @@
+# creative-segmentation-ai 의존성
+# GPU 환경: torch/torchvision에 CUDA 버전 별도 설치 필요
+# CPU 환경: torch 기본 설치로 동작 (느리지만 PoC 수준 완료)
+
+flask==3.0.3
+Pillow==10.4.0
+numpy==1.26.4
+scikit-image==0.24.0
+
+# GroundingDINO (HuggingFace transformers 내장)
+transformers==4.44.2
+accelerate==0.33.0
+
+# PyTorch — GPU 환경은 https://pytorch.org/get-started/ 에서 CUDA 버전 선택
+# CPU만 필요하면 아래 주석 해제
+# torch==2.4.0
+# torchvision==0.19.0
+torch
+torchvision
+
+# SAM 2 (Meta)
+# CPU에서도 설치 가능, 초기 모델 다운로드 ~400MB
+sam-2==1.0
+
+# 추가 유틸
+requests==2.32.3
+gunicorn==22.0.0

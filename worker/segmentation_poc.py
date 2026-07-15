@@ -99,29 +99,84 @@ def _bbox_coarse(obj: dict, canvas_w: int, canvas_h: int, mask_role: str):
     return mask, source
 
 
-# ─── external AI stub ────────────────────────────────────────────────────────
+# ─── external AI integration ─────────────────────────────────────────────────
+
+def _try_external_segmentation(
+    artboard_img,
+    canvas_w: int,
+    canvas_h: int,
+    native_source: str,
+    native_bbox: dict | None,
+    job_id: str | None,
+    warnings: list[str],
+) -> tuple[dict | None, dict]:
+    """외부 segmentation 서비스 호출 + 최적 detection 선택.
+
+    반환: (best_detection | None, selector_result_dict)
+    실패 시: (None, {}) — warnings에 오류 추가, job 계속 진행.
+    """
+    try:
+        from external_segmentation_client import call_segment, is_enabled
+        from external_mask_selector import (
+            select_best_external_detection,
+            decide_mask_source,
+        )
+        from mask_quality import score_native_mask
+    except ImportError as e:
+        warnings.append(f"externalSegmentation_import_failed:{e}")
+        return None, {}
+
+    if not is_enabled():
+        return None, {}
+
+    if artboard_img is None:
+        warnings.append("externalSegmentation_skipped:no_artboard_img")
+        return None, {}
+
+    detections, ext_meta = call_segment(
+        artboard_img,
+        source_type="artboard",
+        target_roles=["product"],
+        job_id=job_id,
+    )
+
+    if not detections:
+        return None, ext_meta
+
+    best_det = select_best_external_detection(
+        detections,
+        role="product",
+        native_bbox=native_bbox,
+        canvas_w=canvas_w,
+        canvas_h=canvas_h,
+    )
+
+    native_score = score_native_mask(native_source, native_bbox or {}, canvas_w, canvas_h)
+    selector = decide_mask_source(
+        native_source=native_source,
+        native_score=native_score,
+        external_detection=best_det,
+        external_metadata=ext_meta,
+        job_id=job_id,
+    )
+
+    return best_det, {**ext_meta, **selector}
+
 
 def generate_mask_with_external_ai(
     image,
     prompt: str = "",
     api_key: str | None = None,
 ):
-    """외부 AI segmentation stub (SAM, Grounded-SAM 등 향후 연결 예정).
-
-    API key 없으면 None 반환 (silent skip).
-    key 있어도 현재는 NotImplemented 대신 providerUnavailable 경고 반환.
-    """
-    if not api_key:
-        return None
-    # Future: call external API and return mask
-    return None  # stub — return None, caller adds warning
+    """외부 AI segmentation (레거시 stub — 실제 연동은 _try_external_segmentation 사용)."""
+    return None
 
 
 # ─── main entry ──────────────────────────────────────────────────────────────
 
 def run_segmentation_poc(
     creative_object_set: dict,
-    artboard_img,           # PIL Image | None (사용하지 않지만 향후 확장 가능)
+    artboard_img,           # PIL Image | None
     canvas_w: int,
     canvas_h: int,
     output_dir: str | None = None,
@@ -222,6 +277,73 @@ def run_segmentation_poc(
             sum(quality_scores) / max(len(quality_scores), 1), 3
         )
 
+        # ── 외부 AI segmentation 시도 (product mask 보완) ───────────────────────
+        ext_meta: dict = {}
+        product_native_bbox = None
+        product_native_source = "object_bbox_coarse"
+        for m in masks:
+            if m.get("role") == "product":
+                product_native_bbox = m.get("bbox")
+                product_native_source = m.get("source", "object_bbox_coarse")
+                break
+
+        try:
+            best_det, ext_sel = _try_external_segmentation(
+                artboard_img=artboard_img,
+                canvas_w=canvas_w,
+                canvas_h=canvas_h,
+                native_source=product_native_source,
+                native_bbox=product_native_bbox,
+                job_id=job_id,
+                warnings=warnings,
+            )
+            ext_meta = ext_sel
+
+            # external mask 사용 결정이 내려진 경우 product mask 교체
+            if best_det and ext_sel.get("useExternal"):
+                from external_mask_selector import extract_mask_png_from_detection
+                ext_mask_img = extract_mask_png_from_detection(best_det)
+                if ext_mask_img is not None:
+                    ext_bbox = best_det.get("bbox", product_native_bbox or {})
+                    ext_conf = best_det.get("maskConfidence", 0.6)
+                    ext_mask_path = None
+                    if output_dir:
+                        try:
+                            os.makedirs(output_dir, exist_ok=True)
+                            ext_mask_path = os.path.join(output_dir, "result.external.product.00.mask.png")
+                            ext_mask_img.save(ext_mask_path)
+                        except Exception as e:
+                            warnings.append(f"extMaskSaveFailed:{e}")
+
+                    # 기존 product mask 제거 후 교체
+                    masks = [m for m in masks if m.get("role") != "product"]
+                    counter += 1
+                    ext_mask_id = f"mask_product_ext_{counter:03d}"
+                    from mask_utils import create_mask_dict as _create_mask_dict
+                    masks.append(_create_mask_dict(
+                        mask_id=ext_mask_id,
+                        object_id="external_ai",
+                        role="product",
+                        source="external_grounded_sam2",
+                        bbox=ext_bbox,
+                        canvas_w=canvas_w,
+                        canvas_h=canvas_h,
+                        confidence=ext_conf,
+                        mask_img=ext_mask_img,
+                        mask_path=ext_mask_path,
+                        quality={
+                            "overallScore": best_det.get("maskQualityScore", 0.0),
+                            "edgeSharpness": best_det.get("edgeSharpness", 0.0),
+                            "sourcePriority": ext_conf,
+                        },
+                    ))
+                    product_mask_id = ext_mask_id
+                    product_mask_selected = True
+                    print(f"{prefix} external mask 채택: score={ext_sel.get('externalMaskScore',0):.1f}")
+
+        except Exception as e:
+            warnings.append(f"externalSegmentation_error:{e}")
+
         meta = {
             "segmentationPocEnabled":  True,
             "segmentationProvider":    "psd_alpha+object_bbox_coarse",
@@ -231,10 +353,12 @@ def run_segmentation_poc(
             "maskQualityScore":        avg_quality,
             "maskFallbackUsed":        False,
             "maskWarnings":            warnings,
+            **ext_meta,
         }
         print(
             f"{prefix} done masks={len(masks)} "
-            f"product={product_mask_selected} quality={avg_quality:.3f}"
+            f"product={product_mask_selected} quality={avg_quality:.3f} "
+            f"externalUsed={ext_meta.get('externalSegmentationUsed', False)}"
         )
         return masks, meta
 

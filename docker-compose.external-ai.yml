@@ -1,0 +1,65 @@
+version: '3.8'
+
+# creative-segmentation-ai 외부 AI 서비스 전용 compose
+#
+# 사용법:
+#   docker compose -f docker-compose.yml -f docker-compose.external-ai.yml up -d creative-segmentation-ai
+#
+# 주의:
+#   - 운영 docker-compose.yml 에 포함하지 않음 (기본 실행 시 자동 시작 안 됨)
+#   - 운영 nginx 외부 포트에 노출 안 함 (internal network 전용)
+#   - GPU 환경은 deploy.resources.reservations.devices 주석 해제
+
+services:
+  creative-segmentation-ai:
+    build:
+      context: ./services/segmentation-ai
+      dockerfile: Dockerfile
+    container_name: creative-segmentation-ai
+    environment:
+      - CREATIVE_SEGMENTATION_DEVICE=auto
+      - CREATIVE_SEGMENTATION_MIN_CONFIDENCE=0.25
+      - CREATIVE_SEGMENTATION_MAX_IMAGE_SIDE=1280
+      - CREATIVE_SEGMENTATION_CACHE_ENABLED=true
+      - MODELS_DIR=/models
+      - PRELOAD_MODELS=false
+      - FLASK_ENV=production
+      - PORT=8090
+    volumes:
+      - segmentation-model-cache:/models
+    expose:
+      - "8090"
+    # 내부 네트워크 전용 — 운영 nginx 외부 포트에 노출 안 함
+    networks:
+      - creative-net
+    restart: unless-stopped
+    # GPU 환경 (NVIDIA): 아래 주석 해제
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Worker에 외부 AI 환경변수 추가 (override)
+  creative-worker:
+    environment:
+      - CREATIVE_EXTERNAL_SEGMENTATION_ENABLED=true
+      - CREATIVE_EXTERNAL_SEGMENTATION_COMPARE_ONLY=true
+      - CREATIVE_SEGMENTATION_PROVIDER=grounded-sam2
+      - CREATIVE_SEGMENTATION_URL=http://creative-segmentation-ai:8090
+      - CREATIVE_SEGMENTATION_TIMEOUT_SECONDS=120
+      - CREATIVE_SEGMENTATION_MIN_CONFIDENCE=0.25
+      - CREATIVE_SEGMENTATION_MASK_SCORE_THRESHOLD=70
+      - CREATIVE_SEGMENTATION_REPLACE_MARGIN=5
+      - CREATIVE_SEGMENTATION_CACHE_ENABLED=true
+
+volumes:
+  segmentation-model-cache:
+    name: creative-segmentation-model-cache
+
+networks:
+  creative-net:
+    external: true
+    name: creative-resizer_creative-net
