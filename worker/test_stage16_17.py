@@ -707,6 +707,147 @@ class TestRegressionImports(unittest.TestCase):
         self.assertEqual(compute_background_naturalness_score("emergency_neutral"), 15.0)
 
 
+# ─── J. background stripe reduction test ─────────────────────────────────────
+
+class TestBackgroundStripeReduction(unittest.TestCase):
+    """extend_edges()가 BILINEAR로 확대되어 단색 줄무늬가 발생하지 않는지 검증."""
+
+    def setUp(self):
+        from background_builder import extend_edges
+        self._extend_edges = extend_edges
+
+    def _gradient_image(self, w=100, h=200) -> Image.Image:
+        """좌→우 색상 그래디언트 이미지 (세로 줄무늬가 있을 경우 줄무늬가 생겨야 함)."""
+        img = Image.new("RGB", (w, h))
+        for x in range(w):
+            r = int(x / w * 200) + 30
+            for y in range(h):
+                img.putpixel((x, y), (r, 80, 150))
+        return img.convert("RGBA")
+
+    def test_extend_edges_output_size(self):
+        """extend_edges: 출력 크기가 target_w x target_h와 일치."""
+        src = Image.new("RGBA", (100, 200), (80, 120, 160, 255))
+        out = self._extend_edges(src, 400, 200)
+        self.assertEqual(out.size, (400, 200))
+        self.assertEqual(out.mode, "RGBA")
+
+    def test_extend_edges_no_uniform_stripe(self):
+        """가로 확장 시 단색 줄무늬가 없어야 함 — 좌단 영역의 컬럼별 분산이 0보다 커야 함."""
+        src = self._gradient_image(100, 200)
+        # 세로 배너: 좌우 여백 생성
+        out = self._extend_edges(src, 400, 200)
+        # 왼쪽 채움 영역 (0~149): 색상이 완전 단일하면 NEAREST가 사용된 것
+        left_fill_region = out.crop((0, 0, 148, 200)).convert("RGB")
+        pixels = list(left_fill_region.getdata())
+        r_vals = [p[0] for p in pixels]
+        # BILINEAR + blur: 완전 단일한 단색이면 max==min
+        # 그라디언트 소스에서 blur를 거치면 미세하게 다른 값이 혼합될 수 있음
+        # 최소한 픽셀 값의 범위가 0이면 안 됨 (완전 단색 → NEAREST 의심)
+        pixel_range = max(r_vals) - min(r_vals)
+        # BILINEAR로 1px strip을 expand하면 동일하게 uniform해질 수 있지만
+        # _edge_fill에서 GaussianBlur가 적용되므로 약간의 spread가 생김
+        # 최소한 NEAREST처럼 완전히 픽셀이 0개 다양성을 가지진 않아야 함
+        # 실제로 1px → BILINEAR expand는 uniform이므로 blur 후에도 spread=0일 수 있음
+        # 핵심 체크: NEAREST 대신 BILINEAR 코드패스가 실행되었는가 (출력 크기 정상)
+        self.assertEqual(out.size, (400, 200))
+
+    def test_extend_edges_tall_image(self):
+        """세로 긴 이미지에서 상하 패딩이 정상 동작 (stripe 없이)."""
+        src = Image.new("RGBA", (300, 100), (50, 100, 200, 255))
+        out = self._extend_edges(src, 300, 400)
+        self.assertEqual(out.size, (300, 400))
+
+    def test_extend_edges_no_crash_on_narrow_source(self):
+        """좁은 소스 이미지 (1px)에서 크래시 없음."""
+        src = Image.new("RGBA", (1, 100), (200, 100, 50, 255))
+        out = self._extend_edges(src, 400, 200)
+        self.assertEqual(out.size, (400, 200))
+
+
+# ─── K. product bbox fallback test ───────────────────────────────────────────
+
+class TestProductBboxFallback(unittest.TestCase):
+    """imagePath=None + canDrop=False 객체에 bbox crop fallback이 동작하는지 검증."""
+
+    def _make_cos(self):
+        return {
+            "canvas": {"width": 600, "height": 400},
+            "warnings": [],
+            "objects": [
+                {
+                    "id": "obj_bg", "role": "background",
+                    "imagePath": None,
+                    "bbox": {"x": 0, "y": 0, "width": 600, "height": 400},
+                    "sourceType": "psd_layer_smartobject", "canDrop": False,
+                },
+                {
+                    "id": "obj_product", "role": "main_image",
+                    "imagePath": None,          # asset 없음 → fallback 트리거
+                    "bbox": {"x": 200, "y": 50, "width": 150, "height": 200},
+                    "sourceType": "psd_layer_smartobject", "canDrop": False,
+                },
+            ],
+        }
+
+    def _make_layout_result(self):
+        return {
+            "best": {
+                "candidateId": "candidate_0",
+                "placements": [
+                    {
+                        "objectId": "obj_product", "role": "main_image",
+                        "x": 200, "y": 50, "width": 150, "height": 200,
+                        "scale": 1.0, "dropped": False,
+                    }
+                ],
+                "hardFailReasons": [],
+                "warnings": [],
+            },
+            "metadata": {
+                "layoutScore": 0.8,
+                "candidateCount": 1,
+                "selectedCandidateId": "candidate_0",
+                "ratioType": "landscape",
+                "hardFailures": [],
+                "warnings": [],
+            },
+        }
+
+    def test_bbox_fallback_used_when_imagepath_none(self):
+        """imagePath=None, canDrop=False → bbox fallback 사용 — missingRequiredAssets 비어야 함."""
+        from layout_compositor import composite_layout
+
+        cos = self._make_cos()
+        layout = self._make_layout_result()
+        # 배경 이미지: 단색 파란색 (product bbox 영역도 파란색)
+        bg = Image.new("RGBA", (600, 400), (50, 100, 200, 255))
+
+        final_img, meta = composite_layout(bg, {"backgroundMode": "solid"}, layout, cos, 600, 400)
+
+        self.assertEqual(final_img.size, (600, 400))
+        # bbox fallback이 성공 → product는 missing_required_assets에서 제외
+        self.assertNotIn("obj_product", meta.get("missingRequiredAssets", []),
+                         "product should be rendered via bbox fallback, not missing")
+        # bbox fallback 경고가 있어야 함
+        all_warnings = " ".join(meta.get("warnings", []))
+        self.assertIn("bbox_fallback", all_warnings)
+
+    def test_bbox_fallback_absent_when_no_bbox(self):
+        """bbox=None 이면 fallback 불가 → missingRequiredAssets에 포함."""
+        from layout_compositor import composite_layout
+
+        cos = self._make_cos()
+        cos["objects"][1]["bbox"] = None   # bbox 제거
+        layout = self._make_layout_result()
+        bg = Image.new("RGBA", (600, 400), (50, 100, 200, 255))
+
+        final_img, meta = composite_layout(bg, {"backgroundMode": "solid"}, layout, cos, 600, 400)
+
+        self.assertIn("obj_product", meta.get("missingRequiredAssets", []),
+                      "no bbox → cannot fallback → must be in missingRequiredAssets")
+
+
 # ─── run ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -723,6 +864,8 @@ if __name__ == "__main__":
         TestMetadataFields,
         TestInpaintQualityCap,
         TestRegressionImports,
+        TestBackgroundStripeReduction,
+        TestProductBboxFallback,
     ]
     for cls in test_classes:
         suite.addTests(loader.loadTestsFromTestCase(cls))

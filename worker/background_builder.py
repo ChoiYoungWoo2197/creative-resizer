@@ -185,6 +185,8 @@ def extend_edges(
     >>> out.mode
     'RGBA'
     """
+    from PIL import ImageFilter
+
     src_w, src_h = image.size
     if src_w <= 0 or src_h <= 0:
         return Image.new("RGBA", (target_w, target_h), (220, 220, 220, 255))
@@ -197,55 +199,69 @@ def extend_edges(
 
     px = (target_w - sw) // 2   # paste x offset
     py = (target_h - sh) // 2   # paste y offset
-    samp = max(1, min(6, sw // 8, sh // 8))  # edge 샘플 폭
+
+    # edge 샘플 폭: 최소 4px, 최대 min(sw,sh)의 12% 또는 60px
+    samp = max(4, min(60, sw // 8, sh // 8))
 
     canvas = Image.new("RGBA", (target_w, target_h))
 
+    def _edge_fill(strip: "Image.Image", fill_w: int, fill_h: int) -> "Image.Image":
+        """edge strip → target 크기로 BILINEAR 확대 + 경계 blur."""
+        filled = strip.resize((fill_w, fill_h), Image.BILINEAR)
+        # 경계 softening: 2px blur로 하드엣지 제거
+        if fill_w >= 4 and fill_h >= 4:
+            filled = filled.filter(ImageFilter.GaussianBlur(radius=1.5))
+        return filled
+
     # ── 좌우 채우기 ──────────────────────────────────────────────────────────
     if px > 0:
-        # left: scaled 왼쪽 edge 평균 → 1px 스트립 → 수평 복제
-        left_avg = scaled.crop((0, 0, samp, sh)).resize((1, sh), Image.LANCZOS)
-        canvas.paste(left_avg.resize((px, sh), Image.NEAREST), (0, py))
+        # left: scaled 왼쪽 samp px 스트립 → 1px로 평균 → fill_w로 BILINEAR 확대
+        left_strip = scaled.crop((0, 0, samp, sh)).resize((1, sh), Image.LANCZOS)
+        canvas.paste(_edge_fill(left_strip, px, sh), (0, py))
         # right
         right_x = px + sw
         right_w = target_w - right_x
         if right_w > 0:
-            right_avg = scaled.crop((sw - samp, 0, sw, sh)).resize((1, sh), Image.LANCZOS)
-            canvas.paste(right_avg.resize((right_w, sh), Image.NEAREST), (right_x, py))
+            right_strip = scaled.crop((sw - samp, 0, sw, sh)).resize((1, sh), Image.LANCZOS)
+            canvas.paste(_edge_fill(right_strip, right_w, sh), (right_x, py))
 
     # ── 상하 채우기 (코너 포함) ───────────────────────────────────────────────
     if py > 0:
-        top_avg = scaled.crop((0, 0, sw, samp)).resize((sw, 1), Image.LANCZOS)
-        top_center = top_avg.resize((sw, py), Image.NEAREST)
+        top_strip = scaled.crop((0, 0, sw, samp)).resize((sw, 1), Image.LANCZOS)
+        top_center = _edge_fill(top_strip, sw, py)
 
         top_fill = Image.new("RGBA", (target_w, py))
         top_fill.paste(top_center, (px, 0))
         if px > 0:
-            tl = scaled.getpixel((0, 0))
-            top_fill.paste(Image.new("RGBA", (px, py), tl), (0, 0))
+            tl_strip = scaled.crop((0, 0, samp, samp)).resize((1, 1), Image.LANCZOS)
+            tl_color = tl_strip.getpixel((0, 0))
+            top_fill.paste(Image.new("RGBA", (px, py), tl_color), (0, 0))
             right_x = px + sw
             right_w = target_w - right_x
             if right_w > 0:
-                tr = scaled.getpixel((sw - 1, 0))
-                top_fill.paste(Image.new("RGBA", (right_w, py), tr), (right_x, 0))
+                tr_strip = scaled.crop((sw - samp, 0, sw, samp)).resize((1, 1), Image.LANCZOS)
+                tr_color = tr_strip.getpixel((0, 0))
+                top_fill.paste(Image.new("RGBA", (right_w, py), tr_color), (right_x, 0))
         canvas.paste(top_fill, (0, 0))
 
     bot_y = py + sh
     bot_h = target_h - bot_y
     if bot_h > 0:
-        bot_avg = scaled.crop((0, sh - samp, sw, sh)).resize((sw, 1), Image.LANCZOS)
-        bot_center = bot_avg.resize((sw, bot_h), Image.NEAREST)
+        bot_strip = scaled.crop((0, sh - samp, sw, sh)).resize((sw, 1), Image.LANCZOS)
+        bot_center = _edge_fill(bot_strip, sw, bot_h)
 
         bot_fill = Image.new("RGBA", (target_w, bot_h))
         bot_fill.paste(bot_center, (px, 0))
         if px > 0:
-            bl = scaled.getpixel((0, sh - 1))
-            bot_fill.paste(Image.new("RGBA", (px, bot_h), bl), (0, 0))
+            bl_strip = scaled.crop((0, sh - samp, samp, sh)).resize((1, 1), Image.LANCZOS)
+            bl_color = bl_strip.getpixel((0, 0))
+            bot_fill.paste(Image.new("RGBA", (px, bot_h), bl_color), (0, 0))
             right_x = px + sw
             right_w = target_w - right_x
             if right_w > 0:
-                br = scaled.getpixel((sw - 1, sh - 1))
-                bot_fill.paste(Image.new("RGBA", (right_w, bot_h), br), (right_x, 0))
+                br_strip = scaled.crop((sw - samp, sh - samp, sw, sh)).resize((1, 1), Image.LANCZOS)
+                br_color = br_strip.getpixel((0, 0))
+                bot_fill.paste(Image.new("RGBA", (right_w, bot_h), br_color), (right_x, 0))
         canvas.paste(bot_fill, (0, bot_y))
 
     # ── 원본(scaled) 중앙 부착 ────────────────────────────────────────────────

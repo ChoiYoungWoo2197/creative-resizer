@@ -44,10 +44,13 @@ public class BannerCompareService {
     @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
-    @Value("${creative.openai.compare-model:gpt-4.1-mini}")
+    @Value("${creative.openai.compare-model:gpt-5-mini}")
     private String openAiModel;
 
-    @Value("${creative.openai.image-detail:low}")
+    @Value("${creative.openai.fallback-model:gpt-4.1-mini}")
+    private String openAiFallbackModel;
+
+    @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
@@ -361,27 +364,43 @@ public class BannerCompareService {
         message.put("role", "user");
         message.put("content", content);
 
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", openAiModel);
-        requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 2000);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        log.info("OpenAI Compare 요청: 이미지 {}장", imagePaths.size());
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+        String usedModel = openAiModel;
+        boolean fallbackUsed = false;
+        Map<String, Object> body;
+        log.info("OpenAI Compare 요청: 이미지 {}장 model={}", imagePaths.size(), usedModel);
+        try {
+            Map<String, Object> requestBody = new LinkedHashMap<>();
+            requestBody.put("model", usedModel);
+            requestBody.put("messages", List.of(message));
+            requestBody.put("max_tokens", 2000);
+            requestBody.put("response_format", Map.of("type", "json_object"));
+            ResponseEntity<Map> response = restTemplate.postForEntity(
+                    OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+            body = response.getBody();
+        } catch (Exception e) {
+            log.warn("OpenAI Compare 모델 {} 실패, fallback → {}: {}", usedModel, openAiFallbackModel, e.getMessage());
+            usedModel = openAiFallbackModel;
+            fallbackUsed = true;
+            Map<String, Object> requestBody = new LinkedHashMap<>();
+            requestBody.put("model", usedModel);
+            requestBody.put("messages", List.of(message));
+            requestBody.put("max_tokens", 2000);
+            requestBody.put("response_format", Map.of("type", "json_object"));
+            ResponseEntity<Map> response = restTemplate.postForEntity(
+                    OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
+            body = response.getBody();
+        }
 
-        Map<String, Object> body = response.getBody();
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String responseContent = (String) msgResp.get("content");
-        log.info("OpenAI Compare 응답: {}", responseContent);
+        log.info("OpenAI Compare 응답 (usedModel={} fallbackUsed={}): {}", usedModel, fallbackUsed, responseContent);
 
         return objectMapper.readValue(responseContent, Map.class);
     }

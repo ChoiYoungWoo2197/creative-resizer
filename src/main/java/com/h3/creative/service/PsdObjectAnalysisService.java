@@ -36,10 +36,14 @@ public class PsdObjectAnalysisService {
     @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
-    @Value("${creative.openai.object-model:gpt-5.4-mini}")
+    @Value("${creative.openai.object-model:gpt-5-mini}")
     private String openAiObjectModel;
 
-    private static final String FALLBACK_MODEL = "gpt-4.1-mini";
+    @Value("${creative.openai.fallback-model:gpt-4.1-mini}")
+    private String openAiFallbackModel;
+
+    @Value("${creative.openai.image-detail:high}")
+    private String openAiImageDetail;
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -124,7 +128,7 @@ public class PsdObjectAnalysisService {
 
         Map<String, Object> imageContent = new LinkedHashMap<>();
         imageContent.put("type", "image_url");
-        imageContent.put("image_url", Map.of("url", dataUrl, "detail", "high"));
+        imageContent.put("image_url", Map.of("url", dataUrl, "detail", openAiImageDetail));
 
         Map<String, Object> textContent = new LinkedHashMap<>();
         textContent.put("type", "text");
@@ -144,8 +148,8 @@ public class PsdObjectAnalysisService {
         try {
             body = callOpenAi(model, message, headers);
         } catch (Exception e) {
-            log.warn("OpenAI 객체 분석 모델 {} 실패, fallback → {}: {}", model, FALLBACK_MODEL, e.getMessage());
-            model = FALLBACK_MODEL;
+            log.warn("OpenAI 객체 분석 모델 {} 실패, fallback → {}: {}", model, openAiFallbackModel, e.getMessage());
+            model = openAiFallbackModel;
             body = callOpenAi(model, message, headers);
         }
 

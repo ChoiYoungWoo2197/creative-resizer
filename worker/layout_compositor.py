@@ -62,6 +62,43 @@ def _resample(img: Image.Image, target_w: int, target_h: int, scale: float) -> I
 
 # ─── placement 렌더 ───────────────────────────────────────────────────────────
 
+def _render_bbox_fallback(p: dict, obj: dict, canvas: "Image.Image") -> "Image.Image | None":
+    """imagePath 없는 required 객체: bbox 좌표로 canvas 영역 crop.
+
+    객체의 원본 bbox가 canvas에 해당 위치에 있다면 그 픽셀을 잘라 사용한다.
+    bbox가 없거나 canvas 범위 밖이면 None 반환.
+    """
+    bbox = obj.get("bbox")
+    if not bbox:
+        return None
+    try:
+        bx = int(bbox.get("x", 0))
+        by = int(bbox.get("y", 0))
+        bw = int(bbox.get("width", 0))
+        bh = int(bbox.get("height", 0))
+    except (TypeError, ValueError):
+        return None
+    if bw <= 0 or bh <= 0:
+        return None
+    cw, ch = canvas.size
+    # bbox가 canvas와 전혀 겹치지 않으면 스킵
+    if bx >= cw or by >= ch or bx + bw <= 0 or by + bh <= 0:
+        return None
+    # 교차 영역만 crop
+    cx1 = max(0, bx)
+    cy1 = max(0, by)
+    cx2 = min(cw, bx + bw)
+    cy2 = min(ch, by + bh)
+    try:
+        region = canvas.crop((cx1, cy1, cx2, cy2)).convert("RGBA")
+    except Exception:
+        return None
+    target_w = max(1, p["width"])
+    target_h = max(1, p["height"])
+    scale = float(p.get("scale", 1.0))
+    return _resample(region, target_w, target_h, scale)
+
+
 def _render_placement(p: dict, obj: dict) -> "Image.Image | None":
     """placement + object → 최종 크기로 렌더된 RGBA 이미지.
 
@@ -171,14 +208,22 @@ def composite_layout(
                 or bool(obj.get("canDrop", False))
                 or p.get("dropped", False)
             )
-            if is_optional:
-                dropped_objects.append(obj_id)
-                print(f"[{label}][Compositor] dropped optional {role}({obj_id}) - asset missing")
-            else:
-                missing_required_assets.append(obj_id)
-                warnings.append(f"required asset missing: {role}({obj_id})")
-                print(f"[{label}][Compositor] WARN required asset missing: {role}({obj_id})")
-            continue
+            if not is_optional:
+                # required asset 누락 → bbox crop fallback 시도
+                rendered = _render_bbox_fallback(p, obj, canvas)
+                if rendered is not None:
+                    warnings.append(f"bbox_fallback used for {role}({obj_id})")
+                    print(f"[{label}][Compositor] bbox_fallback used for {role}({obj_id})")
+
+            if rendered is None:
+                if is_optional:
+                    dropped_objects.append(obj_id)
+                    print(f"[{label}][Compositor] dropped optional {role}({obj_id}) - asset missing")
+                else:
+                    missing_required_assets.append(obj_id)
+                    warnings.append(f"required asset missing: {role}({obj_id})")
+                    print(f"[{label}][Compositor] WARN required asset missing: {role}({obj_id})")
+                continue
 
         # 캔버스 경계 확인
         px = max(0, p["x"])

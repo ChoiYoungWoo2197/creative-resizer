@@ -33,13 +33,14 @@ public class BannerAnalysisService {
     @Value("${creative.openai.api-key:}")
     private String openAiApiKey;
 
-    @Value("${creative.openai.resize-model:gpt-5.4-mini}")
-    private String openAiResizeModel;
+    @Value("${creative.openai.analysis-model:gpt-5-mini}")
+    private String openAiAnalysisModel;
 
-    @Value("${creative.openai.image-detail:low}")
+    @Value("${creative.openai.fallback-model:gpt-4.1-mini}")
+    private String openAiFallbackModel;
+
+    @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
-
-    private static final String FALLBACK_MODEL = "gpt-4.1-mini";
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -338,17 +339,20 @@ public class BannerAnalysisService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        log.info("OpenAI Vision 분석 요청: file={} size={}bytes model={}", file.getOriginalFilename(), imageBytes.length, openAiResizeModel);
+        String requestedModel = openAiAnalysisModel;
+        log.info("OpenAI Vision 분석 요청: file={} size={}bytes model={}", file.getOriginalFilename(), imageBytes.length, requestedModel);
 
         // 기본 모델 시도 → 실패 시 fallback
-        String usedModel = openAiResizeModel;
+        String usedModel = requestedModel;
+        boolean fallbackUsed = false;
         Map<String, Object> body;
         try {
-            body = callOpenAiResize(usedModel, message, headers);
+            body = callOpenAiAnalysis(usedModel, message, headers);
         } catch (Exception e) {
-            log.warn("OpenAI 리사이즈 분석 모델 {} 실패, fallback → {}: {}", usedModel, FALLBACK_MODEL, e.getMessage());
-            usedModel = FALLBACK_MODEL;
-            body = callOpenAiResize(usedModel, message, headers);
+            log.warn("OpenAI 분석 모델 {} 실패, fallback → {}: {}", usedModel, openAiFallbackModel, e.getMessage());
+            usedModel = openAiFallbackModel;
+            fallbackUsed = true;
+            body = callOpenAiAnalysis(usedModel, message, headers);
         }
 
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
@@ -358,7 +362,8 @@ public class BannerAnalysisService {
 
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String content = (String) msgResp.get("content");
-        log.info("OpenAI 응답 (model={}): {}", usedModel, content);
+        log.info("OpenAI 응답 (requestedModel={} usedModel={} fallbackUsed={}): {}",
+                requestedModel, usedModel, fallbackUsed, content);
 
         Map<String, Object> result = objectMapper.readValue(content, Map.class);
 
@@ -421,7 +426,7 @@ public class BannerAnalysisService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> callOpenAiResize(String model, Map<String, Object> message, HttpHeaders headers) {
+    private Map<String, Object> callOpenAiAnalysis(String model, Map<String, Object> message, HttpHeaders headers) {
         Map<String, Object> requestBody = new LinkedHashMap<>();
         requestBody.put("model", model);
         requestBody.put("messages", List.of(message));
