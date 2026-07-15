@@ -15,12 +15,9 @@ import com.h3.creative.worker.WorkerClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,7 +35,7 @@ public class BannerCompareService {
     private final BannerCompareMongoService compareMongoService;
     private final BannerAnalysisMongoService analysisMongoService;
     private final WorkerClient workerClient;
-    private final RestTemplate restTemplate;
+    private final OpenAiChatClient openAiChatClient;
     private final ObjectMapper objectMapper;
 
     @Value("${creative.openai.api-key:}")
@@ -52,8 +49,6 @@ public class BannerCompareService {
 
     @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
-
-    private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
     private static final String COMPARE_PROMPT_BASE = """
             다음 이미지들을 순서대로 분석해줘:
@@ -368,39 +363,24 @@ public class BannerCompareService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        String usedModel = openAiModel;
-        boolean fallbackUsed = false;
-        Map<String, Object> body;
-        log.info("OpenAI Compare 요청: 이미지 {}장 model={}", imagePaths.size(), usedModel);
-        try {
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-            requestBody.put("model", usedModel);
-            requestBody.put("messages", List.of(message));
-            requestBody.put("max_tokens", 2000);
-            requestBody.put("response_format", Map.of("type", "json_object"));
-            ResponseEntity<Map> response = restTemplate.postForEntity(
-                    OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
-            body = response.getBody();
-        } catch (Exception e) {
-            log.warn("OpenAI Compare 모델 {} 실패, fallback → {}: {}", usedModel, openAiFallbackModel, e.getMessage());
-            usedModel = openAiFallbackModel;
-            fallbackUsed = true;
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-            requestBody.put("model", usedModel);
-            requestBody.put("messages", List.of(message));
-            requestBody.put("max_tokens", 2000);
-            requestBody.put("response_format", Map.of("type", "json_object"));
-            ResponseEntity<Map> response = restTemplate.postForEntity(
-                    OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
-            body = response.getBody();
-        }
+        log.info("OpenAI Compare 요청: 이미지 {}장 openAiRequestedModel={}", imagePaths.size(), openAiModel);
+        OpenAiCallResult callResult = openAiChatClient.call(
+                openAiModel, openAiFallbackModel, headers, message, 2000,
+                Map.of("response_format", Map.of("type", "json_object")));
 
+        log.info("OpenAI Compare 완료: openAiRequestedModel={} openAiUsedModel={} openAiFallbackUsed={} " +
+                 "openAiFallbackReason={} openAiTokenParameter={} openAiTokenLimit={}",
+                callResult.getRequestedModel(), callResult.getUsedModel(), callResult.isFallbackUsed(),
+                callResult.getFallbackReason(), callResult.getTokenParameter(), callResult.getTokenLimit());
+
+        Map<String, Object> body = callResult.getBody();
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String responseContent = (String) msgResp.get("content");
-        log.info("OpenAI Compare 응답 (usedModel={} fallbackUsed={}): {}", usedModel, fallbackUsed, responseContent);
+        log.info("OpenAI Compare 응답 (usedModel={} fallbackUsed={}): {}",
+                callResult.getUsedModel(), callResult.isFallbackUsed(), responseContent);
 
         return objectMapper.readValue(responseContent, Map.class);
     }

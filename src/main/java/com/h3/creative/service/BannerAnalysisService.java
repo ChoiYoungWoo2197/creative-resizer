@@ -6,12 +6,9 @@ import com.h3.creative.mongo.BannerAnalysisMongoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -26,7 +23,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class BannerAnalysisService {
 
-    private final RestTemplate restTemplate;
+    private final OpenAiChatClient openAiChatClient;
     private final BannerAnalysisMongoService mongoService;
     private final ObjectMapper objectMapper;
 
@@ -41,8 +38,6 @@ public class BannerAnalysisService {
 
     @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
-
-    private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
     private static final String PROMPT = """
             이 광고 배너 소재 이미지를 리사이징 관점에서 분석해줘.
@@ -339,22 +334,19 @@ public class BannerAnalysisService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        String requestedModel = openAiAnalysisModel;
-        log.info("OpenAI Vision 분석 요청: file={} size={}bytes model={}", file.getOriginalFilename(), imageBytes.length, requestedModel);
+        log.info("OpenAI Vision 분석 요청: file={} size={}bytes openAiRequestedModel={}",
+                file.getOriginalFilename(), imageBytes.length, openAiAnalysisModel);
 
-        // 기본 모델 시도 → 실패 시 fallback
-        String usedModel = requestedModel;
-        boolean fallbackUsed = false;
-        Map<String, Object> body;
-        try {
-            body = callOpenAiAnalysis(usedModel, message, headers);
-        } catch (Exception e) {
-            log.warn("OpenAI 분석 모델 {} 실패, fallback → {}: {}", usedModel, openAiFallbackModel, e.getMessage());
-            usedModel = openAiFallbackModel;
-            fallbackUsed = true;
-            body = callOpenAiAnalysis(usedModel, message, headers);
-        }
+        OpenAiCallResult callResult = openAiChatClient.call(
+                openAiAnalysisModel, openAiFallbackModel, headers, message, 2000,
+                Map.of("response_format", Map.of("type", "json_object")));
 
+        log.info("OpenAI 분석 완료: openAiRequestedModel={} openAiUsedModel={} openAiFallbackUsed={} " +
+                 "openAiFallbackReason={} openAiTokenParameter={} openAiTokenLimit={}",
+                callResult.getRequestedModel(), callResult.getUsedModel(), callResult.isFallbackUsed(),
+                callResult.getFallbackReason(), callResult.getTokenParameter(), callResult.getTokenLimit());
+
+        Map<String, Object> body = callResult.getBody();
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
@@ -362,8 +354,7 @@ public class BannerAnalysisService {
 
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String content = (String) msgResp.get("content");
-        log.info("OpenAI 응답 (requestedModel={} usedModel={} fallbackUsed={}): {}",
-                requestedModel, usedModel, fallbackUsed, content);
+        log.info("OpenAI Vision 응답 raw: {}", content);
 
         Map<String, Object> result = objectMapper.readValue(content, Map.class);
 
@@ -425,15 +416,4 @@ public class BannerAnalysisService {
         return mongoService.save(analysis);
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> callOpenAiAnalysis(String model, Map<String, Object> message, HttpHeaders headers) {
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 2000);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
-        return response.getBody();
-    }
 }

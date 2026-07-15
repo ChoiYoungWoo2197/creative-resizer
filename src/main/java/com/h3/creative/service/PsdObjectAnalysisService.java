@@ -7,12 +7,9 @@ import com.h3.creative.worker.WorkerClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
@@ -25,7 +22,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class PsdObjectAnalysisService {
 
-    private final RestTemplate restTemplate;
+    private final OpenAiChatClient openAiChatClient;
     private final WorkerClient workerClient;
     private final PsdObjectAnalysisMongoService mongoService;
     private final ObjectMapper objectMapper;
@@ -44,8 +41,6 @@ public class PsdObjectAnalysisService {
 
     @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
-
-    private static final String OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
     private static final Set<String> VALID_ROLES =
             Set.of("background", "title", "body_text", "main_image", "cta", "logo", "badge", "decoration", "unknown");
@@ -142,17 +137,18 @@ public class PsdObjectAnalysisService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(openAiApiKey);
 
-        // 기본 모델 시도 → 실패 시 fallback
-        String model = openAiObjectModel;
-        Map<String, Object> body = null;
-        try {
-            body = callOpenAi(model, message, headers);
-        } catch (Exception e) {
-            log.warn("OpenAI 객체 분석 모델 {} 실패, fallback → {}: {}", model, openAiFallbackModel, e.getMessage());
-            model = openAiFallbackModel;
-            body = callOpenAi(model, message, headers);
-        }
+        log.info("OpenAI 객체 분석 요청: openAiRequestedModel={}", openAiObjectModel);
+        OpenAiCallResult callResult = openAiChatClient.call(
+                openAiObjectModel, openAiFallbackModel, headers, message, 2500,
+                Map.of("response_format", Map.of("type", "json_object")));
 
+        log.info("OpenAI 객체 분석 성공: openAiRequestedModel={} openAiUsedModel={} openAiFallbackUsed={} " +
+                 "openAiFallbackReason={} openAiTokenParameter={} openAiTokenLimit={}",
+                callResult.getRequestedModel(), callResult.getUsedModel(), callResult.isFallbackUsed(),
+                callResult.getFallbackReason(), callResult.getTokenParameter(), callResult.getTokenLimit());
+        log.info("OpenAI 객체 분석 성공 model={}", callResult.getUsedModel());
+
+        Map<String, Object> body = callResult.getBody();
         if (body == null) throw new IllegalStateException("OpenAI 응답이 비어있습니다.");
 
         List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
@@ -160,24 +156,12 @@ public class PsdObjectAnalysisService {
 
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String content = (String) msgResp.get("content");
-        log.info("OpenAI 객체 맵 응답 (model={}): {}", model, content);
+        log.info("OpenAI 객체 맵 응답 raw: {}", content);
 
         Map<String, Object> result = objectMapper.readValue(content, Map.class);
         Object objects = result.get("objects");
         if (!(objects instanceof List)) return List.of();
         return (List<Map<String, Object>>) objects;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> callOpenAi(String model, Map<String, Object> message, HttpHeaders headers) {
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("messages", List.of(message));
-        requestBody.put("max_tokens", 2500);
-        requestBody.put("response_format", Map.of("type", "json_object"));
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                OPENAI_URL, new HttpEntity<>(requestBody, headers), Map.class);
-        return response.getBody();
     }
 
     private static String normalizeAiRole(String rawRole) {
