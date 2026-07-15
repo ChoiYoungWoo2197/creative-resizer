@@ -1417,7 +1417,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                         obj_reflow_succeeded and
                         any(r in ("main_image", "person") for r in comp_meta_out.get("renderedRoles", [])) and
                         any(
-                            o.get("matchStatus") == "caseb_product_isolated"
+                            o.get("matchStatus") == "caseb_product_isolated" and o.get("imagePath")
                             for o in (creative_object_set or {}).get("objects", [])
                             if o.get("role") in ("main_image", "person")
                         )
