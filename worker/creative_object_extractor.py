@@ -86,6 +86,25 @@ ROLE_KEYWORDS: dict[str, list[str]] = {
                    "deco", "shape", "dot", "line", "icon"],
 }
 
+# ── 의미 분리 가드: product 증거 판별용 키워드 ─────────────────────────────────
+# isProductEvidence=False 를 강제하는 레이어명 키워드 (사람·장식·행사·씬)
+_NON_PRODUCT_LAYER_KEYWORDS: frozenset[str] = frozenset({
+    "person", "people", "human", "hand", "model", "face",
+    "사람", "손", "모델", "얼굴",
+    "wedding", "웨딩", "event", "행사", "scene", "씬", "ceremony",
+    "fair", "expo", "박람회", "lifestyle",
+    "decoration", "ornament", "deco", "장식",
+})
+
+# isProductEvidence=True 를 뒷받침하는 레이어명 키워드 (실물 제품)
+_PRODUCT_LAYER_KEYWORDS: frozenset[str] = frozenset({
+    "product", "제품", "상품", "tube", "튜브", "bottle", "병",
+    "jar", "용기", "box", "pack", "case",
+    "cosmetic", "화장품", "serum", "세럼", "cream", "크림",
+    "lotion", "로션", "essence", "에센스", "toner", "balm",
+    "ampoule", "skincare",
+})
+
 # 역할별 레이아웃 제약 규칙
 ROLE_PROPERTIES: dict[str, dict] = {
     "background": dict(importance="priority", canCrop=True,  canDrop=False,
@@ -131,6 +150,35 @@ REQUIRED_ROLES: frozenset[str] = frozenset({"cta", "headline", "logo", "main_ima
 
 
 # ─── pure functions (unit-testable) ──────────────────────────────────────────
+
+def _is_product_evidence(role: str, match_status: str, name_lower: str) -> bool:
+    """해당 object가 제품(product) 존재의 증거인지 판단.
+
+    productExpected 계산에만 사용. main_image여도 사람·장식·행사 레이어면 False.
+
+    >>> _is_product_evidence("main_image", "caseb_product_isolated", "cosmetic-tube-photoroom")
+    True
+    >>> _is_product_evidence("main_image", "caseb_product_isolated", "person-photoroom")
+    False
+    >>> _is_product_evidence("main_image", "caseb_area_fallback", "레이어 1")
+    False
+    >>> _is_product_evidence("main_image", "layer_name_only", "small-product-tube")
+    True
+    >>> _is_product_evidence("background", "layer_name_only", "제품배경")
+    False
+    """
+    if role != "main_image":
+        return False
+    if any(kw in name_lower for kw in _NON_PRODUCT_LAYER_KEYWORDS):
+        return False
+    if match_status in ("caseb_area_fallback", "caseb_area_fallback_scene",
+                        "caseb_group_composite"):
+        return False
+    return (
+        match_status == "caseb_product_isolated" or
+        any(kw in name_lower for kw in _PRODUCT_LAYER_KEYWORDS)
+    )
+
 
 def normalize_role(raw_role: str, layer_name: str = "") -> str:
     """AI raw role 또는 레이어명으로부터 정규화된 역할 반환.
@@ -611,20 +659,23 @@ def build_creative_object_set(
             combined_conf = round(score * 0.6 + ai_confidence * 0.4, 3) if score > 0 else round(ai_confidence * 0.5, 3)
 
             props = ROLE_PROPERTIES.get(role, ROLE_PROPERTIES["unknown"])
+            _layer_name_ai = (layer.get("name", "") if layer else "").lower()
+            _prod_ev_ai = _is_product_evidence(role, status, _layer_name_ai)
             creative_objects.append(_make_object(
-                obj_id      = obj_id,
-                role        = role,
-                source_type = source_type,
-                layer_ids   = [layer["id"]] if layer else [],
-                img_path    = img_path,
-                bbox        = abs_bbox,
-                z_index     = _compute_zindex(layer, role),
-                importance  = ai_obj.get("importance") or props["importance"],
-                confidence  = combined_conf,
-                props       = props,
-                quality_risk= quality_risk,
-                match_score = round(score, 3),
-                match_status= status,
+                obj_id              = obj_id,
+                role                = role,
+                source_type         = source_type,
+                layer_ids           = [layer["id"]] if layer else [],
+                img_path            = img_path,
+                bbox                = abs_bbox,
+                z_index             = _compute_zindex(layer, role),
+                importance          = ai_obj.get("importance") or props["importance"],
+                confidence          = combined_conf,
+                props               = props,
+                quality_risk        = quality_risk,
+                match_score         = round(score, 3),
+                match_status        = status,
+                is_product_evidence = _prod_ev_ai,
             ))
 
     # ── 케이스 B: PSD 레이어만 (AI 없음) ────────────────────────────────────
@@ -670,20 +721,24 @@ def build_creative_object_set(
 
             # matchStatus 및 confidence 결정
             if "photoroom" in name_lower and role == "main_image":
-                # 소형 Photoroom(캔버스 2.5% 미만)은 로고/뱃지로 강등 — 제품이 아님
+                # 소형 Photoroom(캔버스 2.5% 미만) 처리:
+                #   - product 키워드 없음 → 로고/워터마크 강등
+                #   - product 키워드 있음 → 소형 제품으로 유지 (logo 강등 안 함)
                 _bbox = layer.get("bbox", {})
                 _bbox_area = _bbox.get("width", 0) * _bbox.get("height", 0)
                 _canvas_area = (
                     (layer.get("canvasWidth") or canvas_w) *
                     (layer.get("canvasHeight") or canvas_h)
                 ) or 1
-                if _bbox_area / _canvas_area < 0.025:
+                _area_ratio = _bbox_area / _canvas_area
+                _ph_has_product_kw = any(kw in name_lower for kw in _PRODUCT_LAYER_KEYWORDS)
+                if _area_ratio < 0.025 and not _ph_has_product_kw:
                     role = "logo"
                     match_status = "caseb_photoroom_logo"
                     confidence = round(role_score * 0.5, 3)
                 else:
                     match_status = "caseb_product_isolated"  # 배경제거 제품 레이어
-                    confidence = round(role_score * 0.9, 3)
+                    confidence = round(role_score * (0.9 if _area_ratio >= 0.025 else 0.75), 3)
             elif is_group_composite:
                 match_status = "caseb_group_composite"   # 그룹 composite — 분리 품질 낮음
                 confidence = round(role_score * 0.5, 3)
@@ -695,20 +750,22 @@ def build_creative_object_set(
                 confidence = round(role_score * 0.8, 3)
 
             props = ROLE_PROPERTIES.get(role, ROLE_PROPERTIES["unknown"])
+            _prod_ev = _is_product_evidence(role, match_status, name_lower)
             creative_objects.append(_make_object(
-                obj_id       = obj_id,
-                role         = role,
-                source_type  = "psd_layer_group" if layer.get("type") == "group" else "psd_layer",
-                layer_ids    = [layer["id"]],
-                img_path     = img_path,
-                bbox         = layer.get("bbox", {}),
-                z_index      = _compute_zindex(layer, role),
-                importance   = props["importance"],
-                confidence   = confidence,
-                props        = props,
-                quality_risk = None,
-                match_score  = role_score,
-                match_status = match_status,
+                obj_id              = obj_id,
+                role                = role,
+                source_type         = "psd_layer_group" if layer.get("type") == "group" else "psd_layer",
+                layer_ids           = [layer["id"]],
+                img_path            = img_path,
+                bbox                = layer.get("bbox", {}),
+                z_index             = _compute_zindex(layer, role),
+                importance          = props["importance"],
+                confidence          = confidence,
+                props               = props,
+                quality_risk        = None,
+                match_score         = role_score,
+                match_status        = match_status,
+                is_product_evidence = _prod_ev,
             ))
 
         # 2단계: main_image가 없으면 가장 큰 미배치 레이어를 main_image로 승격
@@ -781,19 +838,20 @@ def build_creative_object_set(
 
                 props = ROLE_PROPERTIES.get(fb_role, ROLE_PROPERTIES["background"])
                 creative_objects.append(_make_object(
-                    obj_id       = obj_id,
-                    role         = fb_role,
-                    source_type  = "psd_layer_group" if best_layer.get("type") == "group" else "psd_layer",
-                    layer_ids    = [best_layer["id"]],
-                    img_path     = img_path,
-                    bbox         = best_layer.get("bbox", {}),
-                    z_index      = _compute_zindex(best_layer, fb_role),
-                    importance   = "required" if fb_role == "main_image" else "priority",
-                    confidence   = 0.4,
-                    props        = props,
-                    quality_risk = "high",
-                    match_score  = 0.0,
-                    match_status = fb_match_status,
+                    obj_id              = obj_id,
+                    role                = fb_role,
+                    source_type         = "psd_layer_group" if best_layer.get("type") == "group" else "psd_layer",
+                    layer_ids           = [best_layer["id"]],
+                    img_path            = img_path,
+                    bbox                = best_layer.get("bbox", {}),
+                    z_index             = _compute_zindex(best_layer, fb_role),
+                    importance          = "required" if fb_role == "main_image" else "priority",
+                    confidence          = 0.4,
+                    props               = props,
+                    quality_risk        = "high",
+                    match_score         = 0.0,
+                    match_status        = fb_match_status,
+                    is_product_evidence = False,  # area fallback은 product 증거 아님
                 ))
                 if fb_role == "main_image":
                     warnings.append(
@@ -847,20 +905,28 @@ def build_creative_object_set(
                     print(f"{prefix} bbox crop failed {obj_id}: {e}")
 
             props = ROLE_PROPERTIES.get(role, ROLE_PROPERTIES["unknown"])
+            # AI only: role=main_image + high confidence + no person keyword → product evidence
+            _ai_role_raw = ai_obj.get("role", "").lower()
+            _prod_ev_ai_only = (
+                role == "main_image" and
+                float(ai_obj.get("confidence") or 0) >= 0.7 and
+                not any(kw in _ai_role_raw for kw in ("person", "model", "human"))
+            )
             creative_objects.append(_make_object(
-                obj_id       = obj_id,
-                role         = role,
-                source_type  = "ai_bbox_crop",
-                layer_ids    = [],
-                img_path     = img_path,
-                bbox         = abs_bbox,
-                z_index      = 50,
-                importance   = ai_obj.get("importance") or props["importance"],
-                confidence   = round(float(ai_obj.get("confidence") or 0.5), 3),
-                props        = props,
-                quality_risk = "high",
-                match_score  = 0.0,
-                match_status = "ai_only",
+                obj_id              = obj_id,
+                role                = role,
+                source_type         = "ai_bbox_crop",
+                layer_ids           = [],
+                img_path            = img_path,
+                bbox                = abs_bbox,
+                z_index             = 50,
+                importance          = ai_obj.get("importance") or props["importance"],
+                confidence          = round(float(ai_obj.get("confidence") or 0.5), 3),
+                props               = props,
+                quality_risk        = "high",
+                match_score         = 0.0,
+                match_status        = "ai_only",
+                is_product_evidence = _prod_ev_ai_only,
             ))
 
     else:
@@ -906,6 +972,17 @@ def build_creative_object_set(
     # z-index 오름차순 정렬 (배경 → 전경)
     creative_objects.sort(key=lambda o: (o["zIndex"], o["role"]))
 
+    # ── CTA metadata (외부 AI 연결 전 SKIP 상태 기록용) ─────────────────────
+    _cta_objs      = [o for o in creative_objects if o.get("role") == "cta"]
+    _discount_objs = [o for o in creative_objects if o.get("role") == "discount"]
+    _cta_detected  = len(_cta_objs) > 0
+    _cta_meta = {
+        "ctaLayerDetected":        _cta_detected,
+        "ctaClassificationStatus": "detected" if _cta_detected else "skipped_no_keyword",
+        "ctaSkipReason":           None if _cta_detected else "no_cta_keyword_in_layer_name_ai_needed",
+        "discountLayerDetected":   len(_discount_objs) > 0,
+    }
+
     print(f"{prefix} 완료: objects={len(creative_objects)} warnings={len(warnings)}")
     for w in warnings:
         print(f"{prefix} WARN: {w}")
@@ -917,6 +994,7 @@ def build_creative_object_set(
         "roleSeparationQuality": _role_sep_quality,
         "separatedRoles":      sorted(_separated_roles),
         "compositeOnlyRoles":  sorted(_composite_only_roles),
+        "ctaMeta":             _cta_meta,
     }
 
 
@@ -925,6 +1003,7 @@ def _make_object(
     img_path: str | None, bbox: dict, z_index: int, importance: str,
     confidence: float, props: dict, quality_risk: str | None,
     match_score: float, match_status: str,
+    is_product_evidence: bool = False,
 ) -> dict:
     """CreativeObject dict 생성 헬퍼."""
     return {
@@ -947,4 +1026,5 @@ def _make_object(
         "qualityRisk":         quality_risk,
         "matchScore":          match_score,
         "matchStatus":         match_status,
+        "isProductEvidence":   is_product_evidence,
     }

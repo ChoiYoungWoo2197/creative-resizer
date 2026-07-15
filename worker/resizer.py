@@ -1394,10 +1394,10 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "usedObjectRoles": comp_meta_out.get("renderedRoles", []) if obj_reflow_succeeded else [],
                 "missingObjectRoles": comp_meta_out.get("missingRequiredAssets", []) if obj_reflow_succeeded else [o.get("role") for o in ai_objects],
                 "productExpected": (
-                    # caseb_area_fallback_scene(씬/배경형 레이어)은 제품 증거로 보지 않음
+                    # isProductEvidence=True: caseb_product_isolated 또는 product 키워드 보유 레이어
+                    # 사람·장식·행사·area_fallback은 product 증거 아님
                     any(
-                        o.get("role") in ("main_image", "person")
-                        and o.get("matchStatus") != "caseb_area_fallback_scene"
+                        o.get("isProductEvidence", False)
                         for o in (creative_object_set or {}).get("objects", [])
                     )
                 ) if obj_reflow_succeeded else bool(ai_objects),
@@ -1407,8 +1407,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 ),
                 "noProductScenarioDetected": (
                     obj_reflow_succeeded and not any(
-                        o.get("role") in ("main_image", "person")
-                        and o.get("matchStatus") != "caseb_area_fallback_scene"
+                        o.get("isProductEvidence", False)
                         for o in (creative_object_set or {}).get("objects", [])
                     )
                 ),
@@ -1443,6 +1442,10 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "compositeOnlyRoles": (
                     (creative_object_set or {}).get("compositeOnlyRoles", [])
                     if obj_reflow_succeeded else []
+                ),
+                "ctaMeta": (
+                    (creative_object_set or {}).get("ctaMeta", {})
+                    if obj_reflow_succeeded else {}
                 ),
                 "cropFallbackRoles": [],
                 "lowConfidenceRoles": [],

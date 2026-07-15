@@ -1030,6 +1030,89 @@ class TestCaseBAreaFallback(unittest.TestCase):
         self.assertEqual(len(promoted), 0, "should not promote when main_image already found")
 
 
+# ─── productExpected semantic guard ──────────────────────────────────────────
+
+class TestProductExpectedSemanticGuard(unittest.TestCase):
+    """productExpected 의미 분리: 사람/장식/씬은 product 증거 아님."""
+
+    def _pe(self, role, match_status, name_lower):
+        from creative_object_extractor import _is_product_evidence
+        return _is_product_evidence(role, match_status, name_lower)
+
+    def test_case_a_person_photoroom_not_product(self):
+        """Case A: person-Photoroom 30% → isProductEvidence=False"""
+        self.assertFalse(self._pe("main_image", "caseb_product_isolated", "person-photoroom"))
+
+    def test_case_b_decoration_not_product(self):
+        """Case B: large-decoration → isProductEvidence=False"""
+        self.assertFalse(self._pe("main_image", "layer_name_only", "large-decoration"))
+
+    def test_case_c_cosmetic_tube_is_product(self):
+        """Case C: cosmetic-tube-Photoroom 4.8% → isProductEvidence=True"""
+        self.assertTrue(self._pe("main_image", "caseb_product_isolated", "cosmetic-tube-photoroom"))
+
+    def test_case_d_small_product_tube_is_product(self):
+        """Case D: small-product-tube (product 키워드) → isProductEvidence=True"""
+        self.assertTrue(self._pe("main_image", "layer_name_only", "small-product-tube"))
+
+    def test_area_fallback_not_product(self):
+        """area fallback main_image는 product 증거 아님."""
+        self.assertFalse(self._pe("main_image", "caseb_area_fallback", "레이어 1"))
+
+    def test_area_fallback_scene_not_product(self):
+        """area fallback scene → isProductEvidence=False"""
+        self.assertFalse(self._pe("main_image", "caseb_area_fallback_scene", "wedding-scene"))
+
+    def test_wedding_scene_not_product(self):
+        """웨딩 씬 레이어 → isProductEvidence=False"""
+        self.assertFalse(self._pe("main_image", "layer_name_only", "wedding-photo"))
+
+    def test_background_never_product(self):
+        """background role → isProductEvidence=False (역할 자체가 제품 아님)"""
+        self.assertFalse(self._pe("background", "layer_name_only", "product-background"))
+
+    def test_person_role_not_product(self):
+        """person role → isProductEvidence=False"""
+        self.assertFalse(self._pe("person", "caseb_product_isolated", "model-shot"))
+
+    def test_group_composite_not_product(self):
+        """caseb_group_composite → isProductEvidence=False"""
+        self.assertFalse(self._pe("main_image", "caseb_group_composite", "제품그룹"))
+
+
+class TestPhotoroomProductKeyword(unittest.TestCase):
+    """Photoroom < 2.5% 임계값 — product 키워드 있으면 logo 강등 제외."""
+
+    def test_og_no_product_keyword(self):
+        """facebook_og-Photoroom → product 키워드 없음 → logo 강등"""
+        from creative_object_extractor import _PRODUCT_LAYER_KEYWORDS
+        name = "facebook_og-photoroom"
+        has_product = any(kw in name for kw in _PRODUCT_LAYER_KEYWORDS)
+        self.assertFalse(has_product, "og 이름에 product 키워드 없어야 함")
+
+    def test_small_product_tube_has_keyword(self):
+        """small-product-tube-Photoroom → product+tube 키워드 → logo 강등 제외"""
+        from creative_object_extractor import _PRODUCT_LAYER_KEYWORDS
+        name = "small-product-tube-photoroom"
+        has_product = any(kw in name for kw in _PRODUCT_LAYER_KEYWORDS)
+        self.assertTrue(has_product, "product+tube 키워드 있어야 함")
+
+    def test_cosmetic_has_keyword(self):
+        """cosmetic-Photoroom → cosmetic 키워드 → logo 강등 제외"""
+        from creative_object_extractor import _PRODUCT_LAYER_KEYWORDS
+        name = "cosmetic-serum-photoroom"
+        has_product = any(kw in name for kw in _PRODUCT_LAYER_KEYWORDS)
+        self.assertTrue(has_product)
+
+    def test_non_product_keywords(self):
+        """person/decoration은 _NON_PRODUCT_LAYER_KEYWORDS에 포함"""
+        from creative_object_extractor import _NON_PRODUCT_LAYER_KEYWORDS
+        self.assertIn("person", _NON_PRODUCT_LAYER_KEYWORDS)
+        self.assertIn("wedding", _NON_PRODUCT_LAYER_KEYWORDS)
+        self.assertIn("decoration", _NON_PRODUCT_LAYER_KEYWORDS)
+        self.assertIn("event", _NON_PRODUCT_LAYER_KEYWORDS)
+
+
 # ─── run ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -1051,6 +1134,8 @@ if __name__ == "__main__":
         TestRoleAlias,
         TestArtboardBboxFallback,
         TestCaseBAreaFallback,
+        TestProductExpectedSemanticGuard,
+        TestPhotoroomProductKeyword,
     ]
     for cls in test_classes:
         suite.addTests(loader.loadTestsFromTestCase(cls))
