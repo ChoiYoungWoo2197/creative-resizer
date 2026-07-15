@@ -62,11 +62,17 @@ def _resample(img: Image.Image, target_w: int, target_h: int, scale: float) -> I
 
 # ─── placement 렌더 ───────────────────────────────────────────────────────────
 
-def _render_bbox_fallback(p: dict, obj: dict, canvas: "Image.Image") -> "Image.Image | None":
-    """imagePath 없는 required 객체: bbox 좌표로 canvas 영역 crop.
+def _render_bbox_fallback(
+    p: dict,
+    obj: dict,
+    canvas: "Image.Image",
+    artboard_img: "Image.Image | None" = None,
+    artboard_box: "dict | None" = None,
+) -> "Image.Image | None":
+    """imagePath 없는 required 객체: bbox 좌표로 픽셀 crop.
 
-    객체의 원본 bbox가 canvas에 해당 위치에 있다면 그 픽셀을 잘라 사용한다.
-    bbox가 없거나 canvas 범위 밖이면 None 반환.
+    artboard_img가 있으면 PSD 소스 좌표계로 아트보드 이미지에서 crop한다
+    (올바른 제품 픽셀 추출). 없으면 target canvas에서 crop (좌표 불일치 주의).
     """
     bbox = obj.get("bbox")
     if not bbox:
@@ -80,22 +86,40 @@ def _render_bbox_fallback(p: dict, obj: dict, canvas: "Image.Image") -> "Image.I
         return None
     if bw <= 0 or bh <= 0:
         return None
-    cw, ch = canvas.size
-    # bbox가 canvas와 전혀 겹치지 않으면 스킵
-    if bx >= cw or by >= ch or bx + bw <= 0 or by + bh <= 0:
-        return None
-    # 교차 영역만 crop
-    cx1 = max(0, bx)
-    cy1 = max(0, by)
-    cx2 = min(cw, bx + bw)
-    cy2 = min(ch, by + bh)
-    try:
-        region = canvas.crop((cx1, cy1, cx2, cy2)).convert("RGBA")
-    except Exception:
-        return None
+
     target_w = max(1, p["width"])
     target_h = max(1, p["height"])
     scale = float(p.get("scale", 1.0))
+
+    if artboard_img is not None:
+        # bbox는 canvas-absolute (artboard offset이 더해진 좌표)
+        # artboard_img는 artboard origin 기준 → offset 빼기
+        ax = int((artboard_box or {}).get("x", 0))
+        ay = int((artboard_box or {}).get("y", 0))
+        x1 = max(0, bx - ax)
+        y1 = max(0, by - ay)
+        x2 = min(artboard_img.width,  x1 + bw)
+        y2 = min(artboard_img.height, y1 + bh)
+        if x2 <= x1 or y2 <= y1:
+            return None
+        try:
+            region = artboard_img.crop((x1, y1, x2, y2)).convert("RGBA")
+        except Exception:
+            return None
+    else:
+        # fallback: canvas crop (좌표계 불일치지만 최후 수단)
+        cw, ch = canvas.size
+        if bx >= cw or by >= ch or bx + bw <= 0 or by + bh <= 0:
+            return None
+        cx1 = max(0, bx)
+        cy1 = max(0, by)
+        cx2 = min(cw, bx + bw)
+        cy2 = min(ch, by + bh)
+        try:
+            region = canvas.crop((cx1, cy1, cx2, cy2)).convert("RGBA")
+        except Exception:
+            return None
+
     return _resample(region, target_w, target_h, scale)
 
 
@@ -146,6 +170,8 @@ def composite_layout(
     dst_h: int,
     output_dir: "str | None" = None,
     job_id: "str | None" = None,
+    artboard_img: "Image.Image | None" = None,
+    artboard_box: "dict | None" = None,
 ) -> tuple:
     """background + layout_compiler 결과 → (final_rgba_image, metadata_dict).
 
@@ -209,11 +235,12 @@ def composite_layout(
                 or p.get("dropped", False)
             )
             if not is_optional:
-                # required asset 누락 → bbox crop fallback 시도
-                rendered = _render_bbox_fallback(p, obj, canvas)
+                # required asset 누락 → artboard_img 기반 bbox crop fallback 시도
+                rendered = _render_bbox_fallback(p, obj, canvas, artboard_img, artboard_box)
                 if rendered is not None:
-                    warnings.append(f"bbox_fallback used for {role}({obj_id})")
-                    print(f"[{label}][Compositor] bbox_fallback used for {role}({obj_id})")
+                    src = "artboard_img" if artboard_img else "canvas"
+                    warnings.append(f"bbox_fallback({src}) used for {role}({obj_id})")
+                    print(f"[{label}][Compositor] bbox_fallback({src}) used for {role}({obj_id})")
 
             if rendered is None:
                 if is_optional:

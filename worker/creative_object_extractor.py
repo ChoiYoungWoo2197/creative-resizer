@@ -22,35 +22,44 @@ import shutil
 
 # AI 모델 raw role → 정규화 역할
 AI_ROLE_MAP: dict[str, str] = {
-    "background": "background",
-    "main_image": "main_image",
-    "image":      "main_image",
-    "product":    "main_image",
-    "person":     "person",
-    "model":      "person",
-    "headline":   "headline",
-    "title":      "headline",
-    "header":     "headline",
-    "body_text":  "body_text",
-    "body":       "body_text",
-    "text":       "body_text",
-    "copy":       "body_text",
-    "description":"body_text",
-    "price":      "price",
-    "pricing":    "price",
-    "discount":   "discount",
-    "sale":       "discount",
-    "coupon":     "discount",
-    "cta":        "cta",
-    "button":     "cta",
-    "logo":       "logo",
-    "brand":      "logo",
-    "badge":      "badge",
-    "tag":        "badge",
-    "decoration": "decoration",
-    "deco":       "decoration",
-    "ornament":   "decoration",
-    "unknown":    "unknown",
+    "background":     "background",
+    "main_image":     "main_image",
+    "image":          "main_image",
+    "product":        "main_image",
+    "product_image":  "main_image",  # AI sometimes returns non-standard roles
+    "visual":         "main_image",  # "visual" is common AI hallucination
+    "visual_element": "main_image",
+    "key_visual":     "main_image",
+    "keyvisual":      "main_image",
+    "hero":           "main_image",
+    "person":         "person",
+    "model":          "person",
+    "headline":       "headline",
+    "title":          "headline",
+    "header":         "headline",
+    "main_copy":      "headline",
+    "body_text":      "body_text",
+    "body":           "body_text",
+    "text":           "body_text",
+    "copy":           "body_text",
+    "description":    "body_text",
+    "sub_text":       "body_text",
+    "price":          "price",
+    "pricing":        "price",
+    "discount":       "discount",
+    "sale":           "discount",
+    "coupon":         "discount",
+    "cta":            "cta",
+    "button":         "cta",
+    "btn":            "cta",
+    "logo":           "logo",
+    "brand":          "logo",
+    "badge":          "badge",
+    "tag":            "badge",
+    "decoration":     "decoration",
+    "deco":           "decoration",
+    "ornament":       "decoration",
+    "unknown":        "unknown",
 }
 
 # 레이어 이름 키워드 → 역할 (길고 구체적인 키워드를 앞에 배치)
@@ -617,10 +626,13 @@ def build_creative_object_set(
     # ── 케이스 B: PSD 레이어만 (AI 없음) ────────────────────────────────────
     elif layers and not ai_objects:
         print(f"{prefix} AI 분석 없음 - 레이어명 키워드로 역할 추론")
+        # 1단계: 키워드 매칭
+        _caseb_layers_by_role: dict[str, list] = {}
         for layer in layers:
             role, role_score = classify_layer_role(layer.get("name", ""))
             if role == "unknown" and role_score < 0.3:
                 continue
+            _caseb_layers_by_role.setdefault(role, []).append((layer, role_score))
             obj_counter[role] = obj_counter.get(role, 0) + 1
             obj_id = f"obj_{role}_{obj_counter[role]}"
 
@@ -649,6 +661,95 @@ def build_creative_object_set(
                 match_score  = role_score,
                 match_status = "layer_name_only",
             ))
+
+        # 2단계: main_image가 없으면 가장 큰 미배치 레이어를 main_image로 승격
+        found_roles = {obj["role"] for obj in creative_objects}
+        if "main_image" not in found_roles and "person" not in found_roles:
+            # 이미 creative_objects에 배치된 레이어 ID 수집
+            _placed_layer_ids: set = set()
+            for _obj in creative_objects:
+                _placed_layer_ids.update(_obj.get("layerIds") or [])
+            # 배치되지 않은 레이어 중 가장 큰 것 선택 (배경·텍스트 역할 제외)
+            _img_skip_roles = {"background", "headline", "body_text", "price", "discount", "cta"}
+            _candidate_layers = []
+            for layer in layers:
+                if layer.get("id") in _placed_layer_ids:
+                    continue
+                role, _ = classify_layer_role(layer.get("name", ""))
+                if role in _img_skip_roles:
+                    continue
+                bbox = layer.get("bbox") or {}
+                area = bbox.get("width", 0) * bbox.get("height", 0)
+                if area > 0:
+                    _candidate_layers.append((area, layer))
+
+            if _candidate_layers:
+                _candidate_layers.sort(key=lambda t: -t[0])
+                best_layer = _candidate_layers[0][1]
+
+                # 씬/배경형 레이어 감지 — main_image 승격 제외, background로 처리
+                # (productExpected에 기여하지 않아야 하는 행사·웨딩·배경 사진 레이어)
+                _SCENE_NAME_KEYWORDS = [
+                    "생성형채우기", "generative", "wedding", "웨딩",
+                    "행사", "현장", "lifestyle", "event",
+                ]
+                _PRODUCT_NAME_KEYWORDS = [
+                    "product", "제품", "상품", "tube", "cream", "jar", "bottle",
+                    "pack", "cosmetic", "balm", "serum", "용기", "튜브", "병",
+                    "화장품", "key_visual", "keyvisual", "main_img",
+                ]
+                _best_name_norm = best_layer.get("name", "").lower().replace(" ", "")
+                _is_scene = any(kw.replace(" ", "") in _best_name_norm for kw in _SCENE_NAME_KEYWORDS)
+                _has_product = any(kw in _best_name_norm for kw in _PRODUCT_NAME_KEYWORDS)
+                fb_role = "main_image" if (not _is_scene or _has_product) else "background"
+                fb_match_status = (
+                    "caseb_area_fallback" if fb_role == "main_image"
+                    else "caseb_area_fallback_scene"
+                )
+
+                obj_counter[fb_role] = obj_counter.get(fb_role, 0) + 1
+                obj_id = f"obj_{fb_role}_{obj_counter[fb_role]}"
+
+                img_path = None
+                if best_layer.get("previewPath") and os.path.exists(best_layer["previewPath"]):
+                    try:
+                        dest = os.path.join(assets_dir, f"{obj_id}.png")
+                        shutil.copy2(best_layer["previewPath"], dest)
+                        img_path = dest
+                    except Exception:
+                        pass
+
+                props = ROLE_PROPERTIES.get(fb_role, ROLE_PROPERTIES["background"])
+                creative_objects.append(_make_object(
+                    obj_id       = obj_id,
+                    role         = fb_role,
+                    source_type  = "psd_layer_group" if best_layer.get("type") == "group" else "psd_layer",
+                    layer_ids    = [best_layer["id"]],
+                    img_path     = img_path,
+                    bbox         = best_layer.get("bbox", {}),
+                    z_index      = _compute_zindex(best_layer, fb_role),
+                    importance   = "required" if fb_role == "main_image" else "priority",
+                    confidence   = 0.4,
+                    props        = props,
+                    quality_risk = "high",
+                    match_score  = 0.0,
+                    match_status = fb_match_status,
+                ))
+                if fb_role == "main_image":
+                    warnings.append(
+                        f"main_image 없음: 가장 큰 레이어 '{best_layer.get('name', '?')}' (area={_candidate_layers[0][0]}px²) "
+                        f"를 main_image로 승격 (qualityRisk=high)"
+                    )
+                    print(f"{prefix} Case B main_image fallback: layer='{best_layer.get('name')}'")
+                else:
+                    warnings.append(
+                        f"main_image 없음: 가장 큰 레이어 '{best_layer.get('name', '?')}' (area={_candidate_layers[0][0]}px²) "
+                        f"가 씬/배경형으로 감지됨 → background 처리 (noProductScenario)"
+                    )
+                    print(
+                        f"{prefix} Case B area fallback SCENE: layer='{best_layer.get('name')}' "
+                        f"→ background (not main_image). noProductScenario=True"
+                    )
 
     # ── 케이스 C: AI만 있음 (PSD 레이어 없음) ────────────────────────────────
     elif ai_objects and not layers:

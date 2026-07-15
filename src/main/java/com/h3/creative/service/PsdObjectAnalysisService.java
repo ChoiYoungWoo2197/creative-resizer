@@ -180,12 +180,31 @@ public class PsdObjectAnalysisService {
         return response.getBody();
     }
 
+    private static String normalizeAiRole(String rawRole) {
+        if (rawRole == null) return "unknown";
+        switch (rawRole.toLowerCase().trim()) {
+            case "visual": case "visual_element": case "product": case "product_image":
+            case "image": case "key_visual": case "keyvisual": case "hero":
+                return "main_image";
+            case "headline": case "header": case "main_copy":
+                return "title";
+            case "sub_text": case "body": case "copy": case "description":
+                return "body_text";
+            case "btn": case "button":
+                return "cta";
+            case "brand":
+                return "logo";
+            default:
+                return rawRole;
+        }
+    }
+
     private List<PsdObjectAnalysis.ObjectResult> parseObjectResults(List<Map<String, Object>> raw) {
         List<PsdObjectAnalysis.ObjectResult> results = new ArrayList<>();
         for (Map<String, Object> m : raw) {
             PsdObjectAnalysis.ObjectResult r = new PsdObjectAnalysis.ObjectResult();
             r.setId((String) m.getOrDefault("id", ""));
-            String role = (String) m.getOrDefault("role", "unknown");
+            String role = normalizeAiRole((String) m.getOrDefault("role", "unknown"));
             r.setRole(VALID_ROLES.contains(role) ? role : "unknown");
             r.setLabel((String) m.getOrDefault("label", ""));
             String importance = (String) m.getOrDefault("importance", "optional");

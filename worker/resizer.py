@@ -1274,12 +1274,26 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                     # 3. z-order object asset compositing
                     final_img, comp_meta_out = composite_layout(
                         bg_img, bg_meta_out, layout_result,
-                        creative_object_set, w, h, output_dir, job_id
+                        creative_object_set, w, h, output_dir, job_id,
+                        artboard_img=artboard_img,
+                        artboard_box=artboard_box,
                     )
 
-                    if comp_meta_out.get("missingRequiredAssets"):
-                        raise ValueError(
-                            f"required asset missing: {comp_meta_out['missingRequiredAssets']}"
+                    _missing = comp_meta_out.get("missingRequiredAssets", [])
+                    _rendered = comp_meta_out.get("renderedRoles", [])
+                    if _missing:
+                        # product/로고가 누락됐더라도 텍스트가 렌더됐으면 부분 결과 허용
+                        # 아무것도 렌더되지 않은 경우에만 smart-fit fallback
+                        if not _rendered:
+                            raise ValueError(
+                                f"required assets missing and nothing rendered: {_missing}"
+                            )
+                        print(
+                            f"[{job_id or 'job'}][ObjectReflow] WARN partial result "
+                            f"spec={name}: missing={_missing} rendered={_rendered}"
+                        )
+                        comp_meta_out.setdefault("warnings", []).append(
+                            f"partialResult: missing={_missing}"
                         )
 
                     debug_ref_img = final_img  # RGBA reference (before RGB conversion)
@@ -1379,6 +1393,45 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 ),
                 "usedObjectRoles": comp_meta_out.get("renderedRoles", []) if obj_reflow_succeeded else [],
                 "missingObjectRoles": comp_meta_out.get("missingRequiredAssets", []) if obj_reflow_succeeded else [o.get("role") for o in ai_objects],
+                "productExpected": (
+                    # caseb_area_fallback_scene(씬/배경형 레이어)은 제품 증거로 보지 않음
+                    any(
+                        o.get("role") in ("main_image", "person")
+                        and o.get("matchStatus") != "caseb_area_fallback_scene"
+                        for o in (creative_object_set or {}).get("objects", [])
+                    )
+                ) if obj_reflow_succeeded else bool(ai_objects),
+                "productRendered": (
+                    any(r in ("main_image", "person") for r in comp_meta_out.get("renderedRoles", []))
+                    if obj_reflow_succeeded else False
+                ),
+                "noProductScenarioDetected": (
+                    obj_reflow_succeeded and not any(
+                        o.get("role") in ("main_image", "person")
+                        and o.get("matchStatus") != "caseb_area_fallback_scene"
+                        for o in (creative_object_set or {}).get("objects", [])
+                    )
+                ),
+                "productRenderQuality": (
+                    "partial" if (
+                        obj_reflow_succeeded and
+                        any(r in ("main_image", "person") for r in comp_meta_out.get("renderedRoles", [])) and
+                        any(
+                            o.get("matchStatus") == "caseb_area_fallback"
+                            for o in (creative_object_set or {}).get("objects", [])
+                            if o.get("role") in ("main_image", "person")
+                        )
+                    ) else "pass" if (
+                        obj_reflow_succeeded and
+                        any(r in ("main_image", "person") for r in comp_meta_out.get("renderedRoles", []))
+                    ) else "fail"
+                ),
+                "compositeFallbackUsed": (
+                    obj_reflow_succeeded and any(
+                        o.get("matchStatus") in ("caseb_area_fallback", "caseb_area_fallback_scene")
+                        for o in (creative_object_set or {}).get("objects", [])
+                    )
+                ),
                 "cropFallbackRoles": [],
                 "lowConfidenceRoles": [],
                 "objectSafeZonePass": obj_sz_passed,

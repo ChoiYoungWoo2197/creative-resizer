@@ -848,6 +848,188 @@ class TestProductBboxFallback(unittest.TestCase):
                       "no bbox → cannot fallback → must be in missingRequiredAssets")
 
 
+# ─── L. Role alias tests ─────────────────────────────────────────────────────
+
+class TestRoleAlias(unittest.TestCase):
+    """normalize_role이 AI 이상 역할(visual, product_image 등)을 main_image로 매핑하는지 검증."""
+
+    def setUp(self):
+        from creative_object_extractor import normalize_role, AI_ROLE_MAP
+        self._normalize = normalize_role
+        self._map = AI_ROLE_MAP
+
+    def test_visual_maps_to_main_image(self):
+        self.assertEqual(self._normalize("visual"), "main_image")
+
+    def test_product_image_maps_to_main_image(self):
+        self.assertEqual(self._normalize("product_image"), "main_image")
+
+    def test_key_visual_maps_to_main_image(self):
+        self.assertEqual(self._normalize("key_visual"), "main_image")
+
+    def test_hero_maps_to_main_image(self):
+        self.assertEqual(self._normalize("hero"), "main_image")
+
+    def test_title_maps_to_headline(self):
+        self.assertEqual(self._normalize("title"), "headline")
+
+    def test_btn_maps_to_cta(self):
+        self.assertEqual(self._normalize("btn"), "cta")
+
+    def test_sub_text_maps_to_body_text(self):
+        self.assertEqual(self._normalize("sub_text"), "body_text")
+
+
+# ─── M. Artboard-img bbox fallback test ─────────────────────────────────────
+
+class TestArtboardBboxFallback(unittest.TestCase):
+    """artboard_img 전달 시 compositor가 소스 좌표계에서 제품 픽셀을 추출하는지 검증."""
+
+    def _make_layout_result(self, obj_id="obj_product"):
+        return {
+            "best": {
+                "candidateId": "cand_0",
+                "placements": [
+                    {"objectId": obj_id, "role": "main_image",
+                     "x": 10, "y": 10, "width": 100, "height": 120,
+                     "scale": 1.0, "dropped": False}
+                ],
+                "hardFailReasons": [], "warnings": [],
+            },
+            "metadata": {
+                "layoutScore": 0.85, "candidateCount": 1,
+                "selectedCandidateId": "cand_0", "ratioType": "landscape",
+                "hardFailures": [], "warnings": [],
+            },
+        }
+
+    def test_artboard_img_fallback_uses_correct_pixels(self):
+        """artboard_img 제공 시 bbox 영역에서 올바른 픽셀을 crop해 배치한다."""
+        from layout_compositor import composite_layout
+
+        # artboard_img: 녹색 (0, 180, 0) — tube 위치에 녹색
+        artboard_img = Image.new("RGBA", (1200, 628), (0, 180, 0, 255))
+        artboard_box = {"x": 0, "y": 0, "width": 1200, "height": 628}
+        # bbox (50, 30, 200, 200) = 아트보드 내 제품 위치
+        cos = {
+            "canvas": {"width": 1200, "height": 628},
+            "warnings": [],
+            "objects": [
+                {
+                    "id": "obj_product", "role": "main_image",
+                    "imagePath": None,
+                    "bbox": {"x": 50, "y": 30, "width": 200, "height": 200},
+                    "sourceType": "ai_bbox_crop", "canDrop": False,
+                },
+            ],
+        }
+        bg = Image.new("RGBA", (1200, 628), (30, 30, 200, 255))  # 파란 배경
+        layout = self._make_layout_result()
+
+        final_img, meta = composite_layout(
+            bg, {"backgroundMode": "solid"}, layout, cos, 1200, 628,
+            artboard_img=artboard_img, artboard_box=artboard_box,
+        )
+        self.assertEqual(final_img.size, (1200, 628))
+        # bbox fallback이 성공 → missingRequiredAssets 비어야 함
+        self.assertNotIn("obj_product", meta.get("missingRequiredAssets", []))
+        # fallback 경고에 'artboard_img' 명시돼야 함
+        all_warnings = " ".join(meta.get("warnings", []))
+        self.assertIn("artboard_img", all_warnings)
+        # 배치된 위치(10,10~110,130)가 녹색(artboard 색)으로 채워졌는지 확인
+        placed_region = final_img.crop((10, 10, 110, 30))
+        pixels = list(placed_region.getdata())
+        # 녹색 채널이 파란 배경(30)보다 훨씬 높아야 함
+        g_avg = sum(p[1] for p in pixels) / len(pixels)
+        self.assertGreater(g_avg, 100, "artboard_img green pixels should dominate placed region")
+
+    def test_artboard_img_fallback_fails_when_bbox_oob(self):
+        """bbox가 artboard_img 범위 밖이면 fallback None → missingRequiredAssets에 포함."""
+        from layout_compositor import composite_layout
+
+        artboard_img = Image.new("RGBA", (200, 200), (0, 180, 0, 255))
+        artboard_box = {"x": 0, "y": 0, "width": 200, "height": 200}
+        cos = {
+            "canvas": {"width": 1200, "height": 628},
+            "warnings": [],
+            "objects": [
+                {
+                    "id": "obj_product", "role": "main_image",
+                    "imagePath": None,
+                    "bbox": {"x": 5000, "y": 5000, "width": 10, "height": 10},  # 완전 밖
+                    "sourceType": "ai_bbox_crop", "canDrop": False,
+                },
+            ],
+        }
+        bg = Image.new("RGBA", (1200, 628), (30, 30, 200, 255))
+        layout = self._make_layout_result()
+
+        _, meta = composite_layout(
+            bg, {"backgroundMode": "solid"}, layout, cos, 1200, 628,
+            artboard_img=artboard_img, artboard_box=artboard_box,
+        )
+        self.assertIn("obj_product", meta.get("missingRequiredAssets", []),
+                      "out-of-bounds bbox should fail fallback → missingRequiredAssets")
+
+
+# ─── N. Case B area fallback test ─────────────────────────────────────────────
+
+class TestCaseBAreaFallback(unittest.TestCase):
+    """AI 분석 없이 레이어 키워드로 main_image 미검출 시 가장 큰 레이어를 승격하는지 검증."""
+
+    def test_largest_layer_promoted_when_no_main_image(self):
+        """main_image 키워드 없는 레이어에서 가장 큰 레이어가 main_image로 승격."""
+        from creative_object_extractor import build_creative_object_set
+        import tempfile, os
+
+        layers = [
+            {"id": "l1", "name": "헤드라인 카피",
+             "bbox": {"x": 10, "y": 10, "width": 300, "height": 40},
+             "depth": 1, "type": "text"},
+            {"id": "l2", "name": "서브카피 텍스트",
+             "bbox": {"x": 10, "y": 60, "width": 250, "height": 30},
+             "depth": 1, "type": "text"},
+            {"id": "l3", "name": "PsdElement_999",   # 어떤 키워드도 매칭 안 됨 → unknown (score<0.3)
+             "bbox": {"x": 600, "y": 0, "width": 500, "height": 628},
+             "depth": 2, "type": "layer"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cos = build_creative_object_set(
+                "fake.psd", layers, None,  # ai_analysis=None → Case B
+                os.path.join(tmp, "assets"),
+                artboard_img=None, artboard_box=None, job_id="test",
+            )
+        roles = {o["role"] for o in cos["objects"]}
+        self.assertIn("main_image", roles, "largest layer should be promoted to main_image")
+        main_obj = next(o for o in cos["objects"] if o["role"] == "main_image")
+        self.assertEqual(main_obj["matchStatus"], "caseb_area_fallback")
+        self.assertEqual(main_obj["qualityRisk"], "high")
+
+    def test_no_promotion_when_main_image_exists(self):
+        """main_image 키워드 레이어가 이미 있으면 추가 승격 없음."""
+        from creative_object_extractor import build_creative_object_set
+        import tempfile, os
+
+        layers = [
+            {"id": "l1", "name": "제품이미지",
+             "bbox": {"x": 0, "y": 0, "width": 400, "height": 400},
+             "depth": 1, "type": "layer"},
+            {"id": "l2", "name": "unknown_big",
+             "bbox": {"x": 0, "y": 0, "width": 600, "height": 600},
+             "depth": 2, "type": "layer"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cos = build_creative_object_set(
+                "fake.psd", layers, None,
+                os.path.join(tmp, "assets"),
+                artboard_img=None, artboard_box=None, job_id="test",
+            )
+        main_objs = [o for o in cos["objects"] if o["role"] == "main_image"]
+        # caseb_area_fallback 승격된 것 없어야 함
+        promoted = [o for o in main_objs if o.get("matchStatus") == "caseb_area_fallback"]
+        self.assertEqual(len(promoted), 0, "should not promote when main_image already found")
+
+
 # ─── run ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -866,6 +1048,9 @@ if __name__ == "__main__":
         TestRegressionImports,
         TestBackgroundStripeReduction,
         TestProductBboxFallback,
+        TestRoleAlias,
+        TestArtboardBboxFallback,
+        TestCaseBAreaFallback,
     ]
     for cls in test_classes:
         suite.addTests(loader.loadTestsFromTestCase(cls))
