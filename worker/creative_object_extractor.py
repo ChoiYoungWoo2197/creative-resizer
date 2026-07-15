@@ -64,7 +64,10 @@ AI_ROLE_MAP: dict[str, str] = {
 
 # 레이어 이름 키워드 → 역할 (길고 구체적인 키워드를 앞에 배치)
 ROLE_KEYWORDS: dict[str, list[str]] = {
-    "background": ["backdrop", "background", "배경이미지", "배경", "base", "back", "bkg", "bg"],
+    "background": ["backdrop", "background", "배경이미지", "배경",
+                   "생성형채우기", "생성형", "채우기",       # Generative Fill (AI background)
+                   "그레이디언트", "gradient",              # gradient fill layers
+                   "base", "back", "bkg", "bg"],
     "cta":        ["바로가기", "더알아보기", "자세히보기", "자세히", "구매하기", "신청하기",
                    "button", "cta", "더보기", "구매", "신청", "클릭", "btn", "more"],
     "headline":   ["메인카피", "main_copy", "maincopy", "headline", "타이틀", "제목",
@@ -73,7 +76,8 @@ ROLE_KEYWORDS: dict[str, list[str]] = {
     "logo":       ["logo", "로고", "brand", "ci", "bi"],
     "price":      ["price", "가격", "금액"],
     "discount":   ["discount", "coupon", "benefit", "쿠폰", "혜택", "할인", "event", "sale"],
-    "main_image": ["key_visual", "keyvisual", "key visual", "제품이미지", "main_img",
+    "main_image": ["photoroom",                            # 배경제거 제품 이미지 (최우선)
+                   "key_visual", "keyvisual", "key visual", "제품이미지", "main_img",
                    "product", "photo", "image", "인물", "model", "hero", "메인", "제품",
                    "main", "kv", "img"],
     "person":     ["person", "model", "인물", "사람"],
@@ -626,12 +630,31 @@ def build_creative_object_set(
     # ── 케이스 B: PSD 레이어만 (AI 없음) ────────────────────────────────────
     elif layers and not ai_objects:
         print(f"{prefix} AI 분석 없음 - 레이어명 키워드로 역할 추론")
-        # 1단계: 키워드 매칭
+        # 1단계: 키워드 매칭 + 텍스트 레이어 강제 분류
         _caseb_layers_by_role: dict[str, list] = {}
         for layer in layers:
-            role, role_score = classify_layer_role(layer.get("name", ""))
+            is_text = layer.get("isTextLayer", False)
+            is_group_composite = layer.get("isGroupComposite", False)
+            layer_name = layer.get("name", "")
+            name_lower = layer_name.lower()
+
+            role, role_score = classify_layer_role(layer_name)
+
+            # TYPE 레이어 — 키워드 없어도 위치 기반으로 headline/body_text 강제 분류
+            if is_text and role == "unknown":
+                bbox = layer.get("bbox", {})
+                cy = bbox.get("y", 0) + bbox.get("height", 0) / 2
+                ch_local = layer.get("canvasHeight", canvas_h) or canvas_h
+                role = "headline" if cy < ch_local * 0.4 else "body_text"
+                role_score = 0.6
+
+            # 역할 불명 그룹 composite → area fallback 단계에서 처리
+            if role == "unknown" and is_group_composite:
+                continue
+
             if role == "unknown" and role_score < 0.3:
                 continue
+
             _caseb_layers_by_role.setdefault(role, []).append((layer, role_score))
             obj_counter[role] = obj_counter.get(role, 0) + 1
             obj_id = f"obj_{role}_{obj_counter[role]}"
@@ -645,6 +668,32 @@ def build_creative_object_set(
                 except Exception:
                     pass
 
+            # matchStatus 및 confidence 결정
+            if "photoroom" in name_lower and role == "main_image":
+                # 소형 Photoroom(캔버스 2.5% 미만)은 로고/뱃지로 강등 — 제품이 아님
+                _bbox = layer.get("bbox", {})
+                _bbox_area = _bbox.get("width", 0) * _bbox.get("height", 0)
+                _canvas_area = (
+                    (layer.get("canvasWidth") or canvas_w) *
+                    (layer.get("canvasHeight") or canvas_h)
+                ) or 1
+                if _bbox_area / _canvas_area < 0.025:
+                    role = "logo"
+                    match_status = "caseb_photoroom_logo"
+                    confidence = round(role_score * 0.5, 3)
+                else:
+                    match_status = "caseb_product_isolated"  # 배경제거 제품 레이어
+                    confidence = round(role_score * 0.9, 3)
+            elif is_group_composite:
+                match_status = "caseb_group_composite"   # 그룹 composite — 분리 품질 낮음
+                confidence = round(role_score * 0.5, 3)
+            elif is_text:
+                match_status = "caseb_text_layer"        # 텍스트 레이어
+                confidence = round(role_score * 0.75, 3)
+            else:
+                match_status = "layer_name_only"
+                confidence = round(role_score * 0.8, 3)
+
             props = ROLE_PROPERTIES.get(role, ROLE_PROPERTIES["unknown"])
             creative_objects.append(_make_object(
                 obj_id       = obj_id,
@@ -655,11 +704,11 @@ def build_creative_object_set(
                 bbox         = layer.get("bbox", {}),
                 z_index      = _compute_zindex(layer, role),
                 importance   = props["importance"],
-                confidence   = round(role_score * 0.8, 3),
+                confidence   = confidence,
                 props        = props,
                 quality_risk = None,
                 match_score  = role_score,
-                match_status = "layer_name_only",
+                match_status = match_status,
             ))
 
         # 2단계: main_image가 없으면 가장 큰 미배치 레이어를 main_image로 승격
@@ -701,7 +750,18 @@ def build_creative_object_set(
                 _best_name_norm = best_layer.get("name", "").lower().replace(" ", "")
                 _is_scene = any(kw.replace(" ", "") in _best_name_norm for kw in _SCENE_NAME_KEYWORDS)
                 _has_product = any(kw in _best_name_norm for kw in _PRODUCT_NAME_KEYWORDS)
-                fb_role = "main_image" if (not _is_scene or _has_product) else "background"
+
+                # 캔버스 80% 이상 덮는 레이어 → 배경 (풀캔버스 배경 사진)
+                _best_bbox = best_layer.get("bbox") or {}
+                _best_area = _best_bbox.get("width", 0) * _best_bbox.get("height", 0)
+                _canvas_area_fb = canvas_w * canvas_h or 1
+                _is_full_canvas = (_best_area / _canvas_area_fb >= 0.80)
+
+                fb_role = (
+                    "main_image"
+                    if (not _is_scene or _has_product) and not _is_full_canvas
+                    else "background"
+                )
                 fb_match_status = (
                     "caseb_area_fallback" if fb_role == "main_image"
                     else "caseb_area_fallback_scene"
@@ -812,6 +872,37 @@ def build_creative_object_set(
         if req not in found_roles:
             warnings.append(f"필수 역할 '{req}'를 감지하지 못했습니다.")
 
+    # ── roleSeparationQuality 계산 ────────────────────────────────────────────
+    # composite / area-fallback에 의존하지 않고 독립 레이어로 추출된 역할 집합
+    _COMPOSITE_STATUSES = {"caseb_group_composite", "caseb_area_fallback", "caseb_area_fallback_scene"}
+    _separated_roles: set[str] = {
+        obj["role"] for obj in creative_objects
+        if obj.get("matchStatus") not in _COMPOSITE_STATUSES
+    }
+    _composite_only_roles: set[str] = {
+        obj["role"] for obj in creative_objects
+        if obj.get("matchStatus") in _COMPOSITE_STATUSES
+    } - _separated_roles  # composite만 있고 독립 추출이 없는 역할
+
+    _has_visual_sep = bool(_separated_roles & {"main_image", "person"})
+    _has_text_sep   = bool(_separated_roles & {"headline", "body_text", "cta", "price", "discount"})
+
+    if _has_visual_sep and _has_text_sep:
+        _role_sep_quality = "pass"
+    elif creative_objects and not _separated_roles:
+        _role_sep_quality = "partial"   # 모두 composite fallback
+    elif _has_visual_sep or _has_text_sep:
+        _role_sep_quality = "partial"   # 시각 또는 텍스트 중 하나만 독립 추출
+    elif not creative_objects:
+        _role_sep_quality = "fail"
+    else:
+        _role_sep_quality = "partial"
+
+    print(
+        f"{prefix} roleSeparationQuality={_role_sep_quality} "
+        f"separated={_separated_roles} compositeOnly={_composite_only_roles}"
+    )
+
     # z-index 오름차순 정렬 (배경 → 전경)
     creative_objects.sort(key=lambda o: (o["zIndex"], o["role"]))
 
@@ -820,9 +911,12 @@ def build_creative_object_set(
         print(f"{prefix} WARN: {w}")
 
     return {
-        "canvas":   {"width": canvas_w, "height": canvas_h},
-        "objects":  creative_objects,
-        "warnings": warnings,
+        "canvas":              {"width": canvas_w, "height": canvas_h},
+        "objects":             creative_objects,
+        "warnings":            warnings,
+        "roleSeparationQuality": _role_sep_quality,
+        "separatedRoles":      sorted(_separated_roles),
+        "compositeOnlyRoles":  sorted(_composite_only_roles),
     }
 
 

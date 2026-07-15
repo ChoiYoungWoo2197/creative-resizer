@@ -1096,7 +1096,7 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         canvas_h = int((object_analysis or {}).get("canvasHeight") or 0)
 
         if not ai_objects:
-            print(f"[{job_id or 'job'}][ObjectReflow] AI 분석 없음 — artboard smart-fit fallback 예정")
+            print(f"[{job_id or 'job'}][ObjectReflow] AI 분석 없음 - artboard smart-fit fallback 예정")
 
         creative_object_set = None
         try:
@@ -1413,15 +1413,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                     )
                 ),
                 "productRenderQuality": (
-                    "partial" if (
+                    "pass" if (
                         obj_reflow_succeeded and
                         any(r in ("main_image", "person") for r in comp_meta_out.get("renderedRoles", [])) and
                         any(
-                            o.get("matchStatus") == "caseb_area_fallback"
+                            o.get("matchStatus") == "caseb_product_isolated"
                             for o in (creative_object_set or {}).get("objects", [])
                             if o.get("role") in ("main_image", "person")
                         )
-                    ) else "pass" if (
+                    ) else "partial" if (
                         obj_reflow_succeeded and
                         any(r in ("main_image", "person") for r in comp_meta_out.get("renderedRoles", []))
                     ) else "fail"
@@ -1431,6 +1431,18 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                         o.get("matchStatus") in ("caseb_area_fallback", "caseb_area_fallback_scene")
                         for o in (creative_object_set or {}).get("objects", [])
                     )
+                ),
+                "roleSeparationQuality": (
+                    (creative_object_set or {}).get("roleSeparationQuality", "fail")
+                    if obj_reflow_succeeded else "fail"
+                ),
+                "separatedRoles": (
+                    (creative_object_set or {}).get("separatedRoles", [])
+                    if obj_reflow_succeeded else []
+                ),
+                "compositeOnlyRoles": (
+                    (creative_object_set or {}).get("compositeOnlyRoles", [])
+                    if obj_reflow_succeeded else []
                 ),
                 "cropFallbackRoles": [],
                 "lowConfidenceRoles": [],

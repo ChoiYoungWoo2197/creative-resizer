@@ -4,6 +4,9 @@ visible layer 순회 → bbox / opacity / depth / preview PNG 추출.
 import os
 import re
 
+# 그룹 composite 시 개별 추출을 보장할 layer kind (covered_ids에서 제외)
+_INDIVIDUAL_EXTRACT_TYPES = {"type", "smartobject"}
+
 
 def _detect_layer_type(layer) -> str:
     try:
@@ -26,6 +29,39 @@ def _collect_descendant_ids(layer) -> set:
     except Exception:
         pass
     return ids
+
+
+def _collect_descendant_ids_except_types(layer, exclude_types: set) -> set:
+    """그룹 자손 id() 집합 반환. exclude_types에 해당하는 kind는 제외 (개별 추출 보장).
+
+    예: exclude_types={"type", "smartobject"} → 텍스트/스마트오브젝트 레이어는
+    상위 그룹이 composite 성공해도 covered_ids에 등록하지 않음.
+    """
+    ids = set()
+    try:
+        for child in layer:
+            child_type = _detect_layer_type(child)
+            if child_type not in exclude_types:
+                ids.add(id(child))
+            ids.update(_collect_descendant_ids_except_types(child, exclude_types))
+    except Exception:
+        pass
+    return ids
+
+
+def _get_text_content(layer) -> str:
+    """TYPE 레이어에서 텍스트 내용 추출 (engine_data 경유)."""
+    try:
+        ed = layer.engine_data
+        txt = (
+            ed.get("EngineDict", {})
+              .get("Editor", {})
+              .get("Text", {})
+              .get("Txt ", "")
+        )
+        return txt.replace("\r", " ").replace("\n", " ").strip()[:200] if txt else ""
+    except Exception:
+        return ""
 
 
 def parse_psd_layers(psd, job_dir: str) -> list:
@@ -77,6 +113,7 @@ def parse_psd_layers(psd, job_dir: str) -> list:
                 opacity = 100
 
             layer_type = _detect_layer_type(layer)
+            is_text = (layer_type == "type")
 
             # preview PNG 저장
             preview_path = None
@@ -89,23 +126,30 @@ def parse_psd_layers(psd, job_dir: str) -> list:
             except Exception as e:
                 print(f"[LayerParser] preview failed {name}: {e}")
 
+            is_group_composite = (layer_type == "group" and preview_path is not None)
+
             items.append({
-                "id":           layer_id,
-                "name":         name,
-                "type":         layer_type,
-                "visible":      True,
-                "opacity":      opacity,
-                "depth":        depth,
-                "bbox":         {"x": lx, "y": ly, "width": lw, "height": lh},
-                "previewPath":  preview_path,
-                "canvasWidth":  canvas_w,
-                "canvasHeight": canvas_h,
-                "_layer_obj":   layer,   # compositor 전용 (직렬화 제외)
+                "id":              layer_id,
+                "name":            name,
+                "type":            layer_type,
+                "visible":         True,
+                "opacity":         opacity,
+                "depth":           depth,
+                "bbox":            {"x": lx, "y": ly, "width": lw, "height": lh},
+                "previewPath":     preview_path,
+                "canvasWidth":     canvas_w,
+                "canvasHeight":    canvas_h,
+                "isTextLayer":     is_text,
+                "isGroupComposite": is_group_composite,
+                "textContent":     _get_text_content(layer) if is_text else None,
+                "_layer_obj":      layer,   # compositor 전용 (직렬화 제외)
             })
 
-            # 그룹이 preview 렌더에 성공했으면 모든 자손을 covered로 등록
-            if layer_type == "group" and preview_path is not None:
-                covered_ids.update(_collect_descendant_ids(layer))
+            # 그룹이 composite 성공하면 pixel/group 자손은 covered, text/smartobject는 개별 추출
+            if is_group_composite:
+                covered_ids.update(
+                    _collect_descendant_ids_except_types(layer, _INDIVIDUAL_EXTRACT_TYPES)
+                )
 
         except Exception as e:
             print(f"[LayerParser] skip idx={idx}: {e}")

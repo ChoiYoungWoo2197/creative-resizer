@@ -90,7 +90,38 @@ class GoldenPsd01YadaCosmetics(unittest.TestCase):
             f"missingObjectRoles={r.get('missingObjectRoles')}"
         )
 
-    def test_04_output_file_valid(self):
+    def test_04_product_render_quality(self):
+        """Photoroom 개별 레이어 추출 시 productRenderQuality=pass여야 함.
+
+        psd_layer_parser가 text/smartobject를 covered_ids에서 제외하면
+        -Photoroom 레이어가 독립 추출 → caseb_product_isolated → pass.
+        scikit-image 미설치 또는 composite 실패 시 partial 허용.
+        """
+        r = self._r()
+        quality = r.get("productRenderQuality", "fail")
+        if not r.get("productRendered"):
+            self.skipTest("productRendered=False — productRenderQuality 판정 불가")
+        self.assertIn(
+            quality, ("pass", "partial"),
+            f"productRenderQuality={quality} — fail은 허용하지 않음"
+        )
+
+    def test_05_role_separation_quality(self):
+        """Photoroom 제품 레이어 + 텍스트 레이어 개별 추출 → roleSeparationQuality=pass.
+
+        scikit-image 설치 시 내부 그룹 composite → partial 허용.
+        """
+        r = self._r()
+        quality = r.get("roleSeparationQuality", "fail")
+        if not r.get("objectReflowSucceeded"):
+            self.skipTest("object-reflow 실패 — roleSeparationQuality 판정 불가")
+        self.assertIn(
+            quality, ("pass", "partial"),
+            f"roleSeparationQuality={quality} — "
+            f"separatedRoles={r.get('separatedRoles')} compositeOnly={r.get('compositeOnlyRoles')}"
+        )
+
+    def test_06_output_file_valid(self):
         """출력 PNG 파일이 올바른 크기(1200x628)로 생성됐는지."""
         r = self._r()
         self.assertTrue(r.get("valid"), f"파일 크기 불일치: {r.get('validationMessage')}")
@@ -164,7 +195,22 @@ class GoldenPsd02EsteerivSmallBanner(unittest.TestCase):
                 f"AI 분석 모드에서 재검증 필요."
             )
 
-    def test_05_output_file_valid(self):
+    def test_05_role_separation_quality(self):
+        """Photoroom 제품 레이어 + 텍스트 레이어 개별 추출 → roleSeparationQuality pass/partial.
+
+        에스테리브는 300x250 작은 배너 — 개별 레이어 추출 후 pass 기대.
+        """
+        r = self._r()
+        if not r.get("objectReflowSucceeded"):
+            self.skipTest("object-reflow 실패 — roleSeparationQuality 판정 불가")
+        quality = r.get("roleSeparationQuality", "fail")
+        self.assertIn(
+            quality, ("pass", "partial"),
+            f"roleSeparationQuality={quality} — "
+            f"separatedRoles={r.get('separatedRoles')}"
+        )
+
+    def test_06_output_file_valid(self):
         r = self._r()
         self.assertTrue(r.get("valid"), f"파일 크기 불일치: {r.get('validationMessage')}")
 
