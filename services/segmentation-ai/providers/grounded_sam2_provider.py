@@ -37,6 +37,23 @@ SAM2_CONFIG = os.environ.get(
 
 CPU_MAX_SIDE = 640    # CPU 환경 기본 최대 한 변 길이
 
+# SAM2 config 절대경로 (Windows/Linux 공통 — 설치된 패키지 기준)
+def _resolve_sam2_config() -> str:
+    """sam2 패키지 설치 경로 기준으로 config YAML 절대경로 반환."""
+    try:
+        import sam2 as _s2
+        pkg = os.path.dirname(_s2.__file__)
+        abs_path = os.path.join(pkg, "configs", "sam2.1", "sam2.1_hiera_t.yaml")
+        if os.path.exists(abs_path):
+            return abs_path
+    except Exception:
+        pass
+    # fallback: hydra search path (패키지 내부 relative)
+    return SAM2_CONFIG
+
+
+SAM2_CONFIG_RESOLVED = _resolve_sam2_config()
+
 
 class GroundedSam2Provider:
     """GroundingDINO + SAM 2 통합 provider.
@@ -54,6 +71,12 @@ class GroundedSam2Provider:
         self._sam2_available = False
         self._loaded = False
         self._load_error: str | None = None
+        # 메타데이터
+        self._gdino_model_id: str = GDINO_MODEL_ID
+        self._gdino_revision: str = "unknown"
+        self._sam2_checkpoint: str = SAM2_CHECKPOINT
+        self._sam2_config: str = SAM2_CONFIG_RESOLVED
+        self._model_load_ms: int = 0
 
     # ── public interface ─────────────────────────────────────────────────────
 
@@ -72,6 +95,26 @@ class GroundedSam2Provider:
     @property
     def load_error(self) -> str | None:
         return self._load_error
+
+    @property
+    def real_inference_available(self) -> bool:
+        """실제 GDINO + SAM2 추론 가능 여부 (bbox fallback 아님)."""
+        return self._loaded and self._sam2_available
+
+    def get_metadata(self) -> dict:
+        """health 엔드포인트용 메타데이터."""
+        return {
+            "groundingDinoModelId":   self._gdino_model_id,
+            "groundingDinoRevision":  self._gdino_revision,
+            "sam2ModelId":            "sam2.1_hiera_tiny",
+            "sam2CheckpointPath":     self._sam2_checkpoint,
+            "sam2ConfigPath":         self._sam2_config,
+            "externalModelMode":      "real" if self._sam2_available else "bbox_fallback",
+            "externalModelRealInference": self.real_inference_available,
+            "bboxFallbackEnabled":    True,
+            "modelCachePath":         MODELS_DIR,
+            "modelLoadMs":            self._model_load_ms,
+        }
 
     def load_models(self) -> None:
         """GDINO + SAM 2 로드. SAM 2 불가 시 bbox mask fallback."""
@@ -94,6 +137,7 @@ class GroundedSam2Provider:
 
         self._loaded = True
         elapsed_ms = int((time.time() - t0) * 1000)
+        self._model_load_ms = elapsed_ms
         log.info(
             "모델 로드 완료: device=%s gdino=OK sam2=%s elapsed_ms=%d",
             dev, "OK" if self._sam2_available else "FALLBACK", elapsed_ms,
@@ -215,6 +259,12 @@ class GroundedSam2Provider:
         dev = torch.device(device)
         self._gdino_model = self._gdino_model.to(dev)
         self._gdino_model.eval()
+        # revision 기록
+        try:
+            cfg = self._gdino_model.config
+            self._gdino_revision = getattr(cfg, "_commit_hash", "unknown")
+        except Exception:
+            pass
         log.info("GroundingDINO 로드 완료")
 
     def _load_sam2(self, device: str) -> None:
@@ -229,8 +279,9 @@ class GroundedSam2Provider:
             log.info("SAM 2 체크포인트 다운로드 중...")
             _download_sam2_checkpoint(SAM2_CHECKPOINT)
 
-        log.info("SAM 2 로드 중: %s device=%s", SAM2_CHECKPOINT, device)
-        sam2_model = build_sam2(SAM2_CONFIG, SAM2_CHECKPOINT, device=device)
+        log.info("SAM 2 로드 중: checkpoint=%s config=%s device=%s",
+                 SAM2_CHECKPOINT, SAM2_CONFIG_RESOLVED, device)
+        sam2_model = build_sam2(SAM2_CONFIG_RESOLVED, SAM2_CHECKPOINT, device=device)
         self._sam2_predictor = SAM2ImagePredictor(sam2_model)
         self._sam2_available = True
         log.info("SAM 2 로드 완료")

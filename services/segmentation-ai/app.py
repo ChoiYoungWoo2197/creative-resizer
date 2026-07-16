@@ -54,6 +54,7 @@ if _PRELOAD:
 def health():
     provider = model_loader.get_provider()
     err = model_loader.get_load_error()
+    meta = provider.get_metadata() if provider else {}
 
     resp = HealthResponse(
         status="ok" if provider is not None else ("error" if err else "loading"),
@@ -61,6 +62,11 @@ def health():
         device=provider.device if provider else "unknown",
         models_loaded=provider is not None and provider.models_loaded,
         model_load_error=err or "",
+        real_inference_available=meta.get("externalModelRealInference", False),
+        grounding_dino_model_id=meta.get("groundingDinoModelId", ""),
+        sam2_model_id=meta.get("sam2ModelId", ""),
+        bbox_fallback_enabled=meta.get("bboxFallbackEnabled", True),
+        model_cache_path=meta.get("modelCachePath", ""),
     )
     status_code = 200 if resp.status == "ok" else 503
     return jsonify(resp.to_dict()), status_code
@@ -168,11 +174,11 @@ def segment():
             mask_area_ratio=d.get("maskAreaRatio", 0.0),
             edge_sharpness=quality["edgeSharpness"],
             fragment_count=d.get("fragmentCount", 1),
+            mask_quality_score=quality["overallMaskScore"],
+            leak_risk=quality["leakRisk"],
+            hard_fail=quality.get("hardFail", False),
+            mask_source=d.get("maskSource", "real_sam2"),
         )
-        # mask score 추가 (응답에 포함)
-        det_dict = det.to_dict()
-        det_dict["maskQualityScore"] = quality["overallMaskScore"]
-        det_dict["leakRisk"] = quality["leakRisk"]
         detections.append(det)
 
     processing_ms = int((time.time() - t0) * 1000)

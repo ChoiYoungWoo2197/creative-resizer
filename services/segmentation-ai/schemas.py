@@ -54,19 +54,28 @@ class DetectionResult:
     mask_area_ratio: float = 0.0
     edge_sharpness: float = 0.0
     fragment_count: int = 1
+    mask_quality_score: float = 0.0
+    leak_risk: float = 0.0
+    hard_fail: bool = False
+    # bbox fallback vs real SAM2 구분
+    mask_source: str = "real_sam2"
 
     def to_dict(self) -> dict:
         return {
-            "detectionId":        self.detection_id,
-            "role":               self.role,
-            "prompt":             self.prompt,
-            "bbox":               self.bbox.to_dict(),
+            "detectionId":         self.detection_id,
+            "role":                self.role,
+            "prompt":              self.prompt,
+            "bbox":                self.bbox.to_dict(),
             "detectionConfidence": round(self.detection_confidence, 4),
-            "maskConfidence":     round(self.mask_confidence, 4),
-            "maskPngBase64":      self.mask_png_base64,
-            "maskAreaRatio":      round(self.mask_area_ratio, 4),
-            "edgeSharpness":      round(self.edge_sharpness, 4),
-            "fragmentCount":      self.fragment_count,
+            "maskConfidence":      round(self.mask_confidence, 4),
+            "maskPngBase64":       self.mask_png_base64,
+            "maskAreaRatio":       round(self.mask_area_ratio, 4),
+            "edgeSharpness":       round(self.edge_sharpness, 4),
+            "fragmentCount":       self.fragment_count,
+            "maskQualityScore":    round(self.mask_quality_score, 2),
+            "leakRisk":            round(self.leak_risk, 4),
+            "hardFail":            self.hard_fail,
+            "maskSource":          self.mask_source,
         }
 
 
@@ -97,13 +106,23 @@ class HealthResponse:
     device: str = ""
     models_loaded: bool = False
     model_load_error: str = ""
+    real_inference_available: bool = False
+    grounding_dino_model_id: str = ""
+    sam2_model_id: str = ""
+    bbox_fallback_enabled: bool = True
+    model_cache_path: str = ""
 
     def to_dict(self) -> dict:
         d = {
-            "status":       self.status,
-            "provider":     self.provider,
-            "device":       self.device,
-            "modelsLoaded": self.models_loaded,
+            "status":                  self.status,
+            "provider":                self.provider,
+            "device":                  self.device,
+            "modelsLoaded":            self.models_loaded,
+            "realInferenceAvailable":  self.real_inference_available,
+            "groundingDinoModelId":    self.grounding_dino_model_id,
+            "sam2ModelId":             self.sam2_model_id,
+            "bboxFallbackEnabled":     self.bbox_fallback_enabled,
+            "modelCachePath":          self.model_cache_path,
         }
         if self.model_load_error:
             d["modelLoadError"] = self.model_load_error
