@@ -3,13 +3,13 @@
 
 # GPU 환경: FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 # CPU 환경 (기본):
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # 빌드 의존성
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 libgl1-mesa-glx \
+    libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 패키지 설치 (CPU 모드; GPU는 torch CUDA 버전으로 교체)
