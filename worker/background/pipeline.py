@@ -1,0 +1,257 @@
+"""Stage 19 Background Pipeline orchestrator.
+
+Coordinates A→B→C→D→E stages:
+  A: Local Background Repair (local_inpaint)
+  B: External AI Inpaint     (external_provider)
+  C: Background Outpaint     (outpaint)
+  D: Shadow Harmonization    (harmonizer)
+  E: Background Quality Gate (quality_gate)
+
+Default feature flags:
+  BACKGROUND_PIPELINE_ENABLED=false
+  BACKGROUND_PIPELINE_COMPARE_ONLY=true
+
+All operations fall back to native result on any error.
+"""
+from __future__ import annotations
+
+import time
+from PIL import Image
+
+from .schemas import (
+    BackgroundRequest,
+    BackgroundOptions,
+    BackgroundResult,
+    BackgroundCandidate,
+    MaskBuildResult,
+)
+from .mask_builder import build_masks
+from .local_inpaint import (
+    generate_local_candidates,
+    should_use_local,
+    should_promote_to_external,
+)
+from .external_provider import (
+    FakeBackgroundProvider,
+    ProviderFactory,
+    run_external_inpaint,
+)
+from .outpaint import generate_outpaint_candidates
+from .harmonizer import generate_shadow_candidates
+from .quality_gate import select_best_candidate, build_quality_metrics
+from .artifact_writer import write_artifacts
+
+
+class BackgroundPipeline:
+    """Stage 19 Background Pipeline.
+
+    Usage:
+        pipeline = BackgroundPipeline()
+        result = pipeline.process(request)
+    """
+
+    def __init__(self, output_dir: str = "/tmp/stage19-artifacts") -> None:
+        self._output_dir = output_dir
+
+    def process(self, request: BackgroundRequest) -> BackgroundResult:
+        """Run full pipeline and return BackgroundResult.
+
+        On any unhandled exception, returns native fallback result.
+        Never raises — callers must check result.success.
+        """
+        t0 = time.time()
+        opts = request.options
+        result = BackgroundResult(
+            background_compare_only=opts.compare_only,
+            background_application_mode=(
+                "compare_only" if opts.compare_only else "apply"
+            ),
+            background_application_blocked_reason=(
+                "compare_only_enabled" if opts.compare_only else ""
+            ),
+        )
+
+        if not opts.enabled:
+            result.fallback_used = True
+            result.fallback_reason = "pipeline_disabled"
+            result.verdict = "PARTIAL"
+            result.result_image = request.source_image
+            result.elapsed_ms = int((time.time() - t0) * 1000)
+            return result
+
+        try:
+            return self._run(request, result, t0)
+        except Exception as exc:
+            result.fallback_used = True
+            result.fallback_reason = f"pipeline_error:{exc}"
+            result.verdict = "FAIL"
+            result.success = False
+            result.result_image = request.source_image
+            result.warnings.append(f"pipeline_exception:{exc}")
+            result.elapsed_ms = int((time.time() - t0) * 1000)
+            return result
+
+    def _run(
+        self,
+        request: BackgroundRequest,
+        result: BackgroundResult,
+        t0: float,
+    ) -> BackgroundResult:
+        opts = request.options
+        source = request.source_image
+        tgt_w = request.target_width or source.width
+        tgt_h = request.target_height or source.height
+        warnings: list[str] = []
+        all_candidates: list[BackgroundCandidate] = []
+
+        # ── Step 1: Mask Build ─────────────────────────────────────────────────
+        mask_result = build_masks(
+            canvas_w=source.width,
+            canvas_h=source.height,
+            protected_objects=request.protected_objects,
+            external_removal_mask=request.removal_mask,
+            target_w=tgt_w,
+            target_h=tgt_h,
+        )
+        warnings.extend(mask_result.warnings)
+        result.metrics.update({
+            "removalMaskAreaRatio":   mask_result.removal_mask_area_ratio,
+            "protectedMaskAreaRatio": mask_result.protected_mask_area_ratio,
+            "outpaintMaskAreaRatio":  mask_result.outpaint_mask_area_ratio,
+            "maskDilationPx":         mask_result.mask_dilation_px,
+            "maskFeatherPx":          mask_result.mask_feather_px,
+        })
+
+        # ── Step 2A: Local Inpaint ─────────────────────────────────────────────
+        local_candidates: list[BackgroundCandidate] = []
+        if opts.allow_local_inpaint and mask_result.removal_mask is not None:
+            area = mask_result.removal_mask_area_ratio
+            if should_use_local(area):
+                result.local_inpaint_attempted = True
+                local_candidates = generate_local_candidates(
+                    source,
+                    mask_result.removal_mask,
+                    max_candidates=min(opts.max_candidates, 4),
+                )
+                all_candidates.extend(local_candidates)
+            elif should_promote_to_external(area):
+                warnings.append(f"localInpaintSkipped:areaTooLarge({area:.3f})")
+
+        # ── Step 2B: External Inpaint ──────────────────────────────────────────
+        if opts.allow_external_inpaint and mask_result.removal_mask is not None:
+            result.external_inpaint_attempted = True
+            provider = ProviderFactory.create(
+                enable_external=True,
+                use_fake_for_test=False,
+            )
+            ext_c = run_external_inpaint(
+                source_image=source,
+                removal_mask=mask_result.removal_mask,
+                provider=provider,
+                compare_only=opts.compare_only,
+                generation_blocked_mask=mask_result.generation_blocked_mask,
+            )
+            all_candidates.append(ext_c)
+
+        # ── Step 3C: Outpaint ──────────────────────────────────────────────────
+        outpaint_candidates: list[BackgroundCandidate] = []
+        if opts.allow_outpaint and (tgt_w != source.width or tgt_h != source.height):
+            result.outpaint_attempted = True
+            outpaint_candidates = generate_outpaint_candidates(
+                source, tgt_w, tgt_h, max_candidates=2,
+            )
+            all_candidates.extend(outpaint_candidates)
+
+        # ── Step 4D: Shadow / Harmonization ───────────────────────────────────
+        shadow_candidates: list[BackgroundCandidate] = []
+        if opts.allow_shadow:
+            # Apply shadow on top of the source (or best candidate so far)
+            product_bbox = {}
+            for obj in request.protected_objects:
+                if obj.get("role") == "product":
+                    product_bbox = obj.get("bbox", {})
+                    break
+            shadow_candidates = generate_shadow_candidates(
+                background=source,
+                product_bbox=product_bbox,
+                product_mask=mask_result.product_mask,
+                allow_shadow=True,
+            )
+            all_candidates.extend(shadow_candidates)
+            if any(c.shadow_applied for c in shadow_candidates):
+                result.shadow_applied = True
+
+        # ── Step 5E: Quality Gate ──────────────────────────────────────────────
+        best, reject_summary = select_best_candidate(
+            all_candidates,
+            source_image=source,
+            protected_mask=mask_result.protected_mask,
+        )
+
+        # ── Build result ───────────────────────────────────────────────────────
+        result.candidates = all_candidates
+        result.metrics.update(build_quality_metrics(all_candidates, best))
+        result.warnings = warnings
+
+        if best is not None:
+            result.best_evaluated_background_source = f"{best.provider}:{best.method}"
+            result.best_evaluated_background_score  = best.score
+            result.selected_candidate_id            = best.candidate_id
+            result.selected_background_source       = f"{best.provider}:{best.method}"
+            result.external_background_eligible     = any(
+                c.provider not in ("local", "native") for c in all_candidates
+            )
+            # inpaint/outpaint accepted flags
+            if best.candidate_id.startswith("local_"):
+                result.local_inpaint_accepted = True
+            elif best.candidate_id.startswith("external_"):
+                result.external_inpaint_accepted = True
+            elif best.candidate_id.startswith("outpaint_"):
+                result.outpaint_accepted = True
+
+            if opts.compare_only:
+                result.applied_background_source = "native"
+                result.result_image = source
+            else:
+                result.applied_background_source = result.selected_background_source
+                result.result_image = best.image or source
+
+            result.fallback_used = False
+            result.fallback_reason = ""
+            result.success = True
+            result.verdict = "PASS"
+        else:
+            # all candidates failed → native fallback
+            result.fallback_used = True
+            result.fallback_reason = reject_summary or "all_candidates_rejected"
+            result.applied_background_source = "native"
+            result.result_image = source
+            result.best_evaluated_background_source = "native"
+            result.best_evaluated_background_score  = 0.0
+            result.success = False
+            result.verdict = "PARTIAL"
+            warnings.append(f"nativeFallback:{result.fallback_reason}")
+
+        # ── Artifacts ─────────────────────────────────────────────────────────
+        artifact_paths = write_artifacts(
+            output_dir=self._output_dir,
+            artifact_level=opts.artifact_level,
+            source_image=source,
+            masks={
+                "protected_mask":          mask_result.protected_mask,
+                "removal_mask":            mask_result.removal_mask,
+                "outpaint_mask":           mask_result.outpaint_mask,
+                "generation_allowed_mask": mask_result.generation_allowed_mask,
+                "generation_blocked_mask": mask_result.generation_blocked_mask,
+                "product_mask":            mask_result.product_mask,
+            },
+            candidates=all_candidates,
+            selected_candidate=best,
+            metrics=result.metrics,
+            warnings=result.warnings,
+            request_id=request.request_id,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+        result.artifacts = artifact_paths
+        result.elapsed_ms = int((time.time() - t0) * 1000)
+        return result

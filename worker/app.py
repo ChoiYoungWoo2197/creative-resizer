@@ -183,6 +183,113 @@ def match_layers():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Stage 19 Background Pipeline endpoints ───────────────────────────────────
+
+@app.route("/v1/background/health", methods=["GET"])
+def background_health():
+    """Stage 19 background pipeline health check."""
+    import os
+    enabled = os.environ.get("BACKGROUND_PIPELINE_ENABLED", "false").lower() == "true"
+    return jsonify({
+        "status": "ok",
+        "backgroundPipelineEnabled": enabled,
+        "compareOnly": os.environ.get("BACKGROUND_PIPELINE_COMPARE_ONLY", "true").lower() == "true",
+        "localInpaintEnabled": os.environ.get("BACKGROUND_LOCAL_INPAINT_ENABLED", "true").lower() == "true",
+        "externalInpaintEnabled": os.environ.get("BACKGROUND_EXTERNAL_INPAINT_ENABLED", "false").lower() == "true",
+        "outpaintEnabled": os.environ.get("BACKGROUND_OUTPAINT_ENABLED", "false").lower() == "true",
+        "shadowEnabled": os.environ.get("BACKGROUND_SHADOW_ENABLED", "false").lower() == "true",
+    })
+
+
+@app.route("/v1/background/process", methods=["POST"])
+def background_process():
+    """Stage 19 full background pipeline: inpaint + outpaint + shadow + quality gate."""
+    import base64 as _b64
+    from PIL import Image as _PILImage
+    from background import BackgroundPipeline
+    from background.schemas import BackgroundRequest, BackgroundOptions
+
+    data = request.json or {}
+
+    # decode source image
+    source_b64 = data.get("sourceImageBase64")
+    if not source_b64:
+        return jsonify({"error": "sourceImageBase64 required"}), 400
+    try:
+        import io as _io
+        img_bytes = _b64.b64decode(source_b64)
+        source_image = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
+    except Exception as e:
+        return jsonify({"error": f"sourceImage decode failed: {e}"}), 400
+
+    opts = BackgroundOptions.from_env()
+    # allow per-request overrides
+    req_opts = data.get("options", {})
+    if "enabled" in req_opts:
+        opts.enabled = bool(req_opts["enabled"])
+    if "compareOnly" in req_opts:
+        opts.compare_only = bool(req_opts["compareOnly"])
+    if "allowLocalInpaint" in req_opts:
+        opts.allow_local_inpaint = bool(req_opts["allowLocalInpaint"])
+    if "allowOutpaint" in req_opts:
+        opts.allow_outpaint = bool(req_opts["allowOutpaint"])
+    if "allowShadow" in req_opts:
+        opts.allow_shadow = bool(req_opts["allowShadow"])
+    if "artifactLevel" in req_opts:
+        opts.artifact_level = str(req_opts["artifactLevel"])
+
+    bg_req = BackgroundRequest(
+        source_image=source_image,
+        target_width=int(data.get("targetWidth", source_image.width)),
+        target_height=int(data.get("targetHeight", source_image.height)),
+        protected_objects=data.get("protectedObjects", []),
+        layout_candidate=data.get("layoutCandidate", {}),
+        safe_zone=data.get("safeZone", {}),
+        options=opts,
+        request_id=data.get("requestId", ""),
+    )
+
+    job_out = os.path.join(OUTPUT_DIR, "stage19", data.get("requestId", "default"))
+    pipeline = BackgroundPipeline(output_dir=job_out)
+    try:
+        result = pipeline.process(bg_req)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # encode result image
+    result_b64 = None
+    if result.result_image is not None:
+        try:
+            buf = _io.BytesIO()
+            result.result_image.convert("RGB").save(buf, format="PNG")
+            result_b64 = _b64.b64encode(buf.getvalue()).decode()
+        except Exception:
+            pass
+
+    return jsonify({
+        "status": "ok" if result.success else "partial",
+        "verdict": result.verdict,
+        "selectedCandidateId": result.selected_candidate_id,
+        "selectedBackgroundSource": result.selected_background_source,
+        "appliedBackgroundSource": result.applied_background_source,
+        "backgroundCompareOnly": result.background_compare_only,
+        "bestEvaluatedBackgroundSource": result.best_evaluated_background_source,
+        "bestEvaluatedBackgroundScore": result.best_evaluated_background_score,
+        "fallbackUsed": result.fallback_used,
+        "fallbackReason": result.fallback_reason,
+        "localInpaintAttempted": result.local_inpaint_attempted,
+        "localInpaintAccepted": result.local_inpaint_accepted,
+        "externalInpaintAttempted": result.external_inpaint_attempted,
+        "outpaintAttempted": result.outpaint_attempted,
+        "shadowApplied": result.shadow_applied,
+        "metrics": result.metrics,
+        "warnings": result.warnings,
+        "artifacts": result.artifacts,
+        "elapsedMs": result.elapsed_ms,
+        "resultImageBase64": result_b64,
+    })
+
+
 def _make_zip(job_id: str, files: list[str]) -> str:
     os.makedirs(ZIP_DIR, exist_ok=True)
     zip_path = os.path.join(ZIP_DIR, f"{job_id}.zip")
