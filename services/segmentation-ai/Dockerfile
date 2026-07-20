@@ -40,20 +40,15 @@ RUN if [ "${TORCH_VARIANT}" = "cpu" ]; then \
 COPY requirements-cpu.txt .
 RUN pip install -r requirements-cpu.txt
 
-# ── 3단계: SAM2 설치 — Meta 공식 GitHub v1.1 태그 고정 ──────────────────────
-# PyPI 'sam2' 패키지는 Meta 공식과 다를 수 있음 (build_sam2 Hydra 자동초기화 누락).
-# GitHub tarball 설치: git 불필요, SAM2_BUILD_CUDA=0, --no-deps (CPU torch 보호).
-# 태그 고정: v1.1 = SAM2.1 공식 릴리스 (facebookresearch/sam2@v1.1).
-# SHA 확인: curl -s https://api.github.com/repos/facebookresearch/sam2/git/refs/tags/v1.1
-RUN SAM2_BUILD_CUDA=0 pip install --no-deps \
-    "https://github.com/facebookresearch/sam2/archive/refs/tags/v1.1.tar.gz" && \
+# ── 3단계: SAM2 설치 — PyPI 공식 패키지 ──────────────────────────────────────
+# build_sam2()의 Hydra 자동초기화 여부와 무관하게,
+# ensure_sam2_hydra_initialized()가 build_sam2() 호출 전 반드시 초기화 수행.
+RUN SAM2_BUILD_CUDA=0 pip install --no-deps sam2 && \
     python3 -c "import sam2, inspect, sys; \
 from sam2.build_sam import build_sam2; \
 has = 'initialize_config_module' in inspect.getsource(build_sam2); \
-print('=== SAM2 audit ===', file=sys.stderr); \
 print('sam2.__file__: ' + sam2.__file__, file=sys.stderr); \
-print('build_sam2_has_hydra_init: ' + str(has), file=sys.stderr); \
-print('=== SAM2 audit done ===', file=sys.stderr)"
+print('build_sam2_has_hydra_init: ' + str(has), file=sys.stderr)"
 
 # ── 4단계: 나머지 의존성 설치 (torch/torchvision/sam2 제외) ─────────────────
 COPY requirements.txt .
