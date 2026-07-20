@@ -11,6 +11,13 @@ Stage 18.1 변경:
   - flattenMethod / scoreBreakdown 보고서 포함
   - psd-tools 정보 기록
 
+Stage 18.3 변경:
+  - flattenMeta → flatten-metadata.json artifact 저장
+  - flattenedPngBase64 → flattened-input.png artifact 저장
+  - bestEvaluatedMaskSource / appliedMaskSource 마스크 소스 분리 보고
+  - score-comparison.json: 베이스라인(806e168) 대비 현재 점수
+  - rawEdgeMetric / normalizedEdgeMetric / edgeMetricClamped 읽기
+
 사용법:
   python3 scripts/verify_stage18_server.py \
     --segment-json /path/to/segmentation.json \
@@ -41,6 +48,17 @@ MASK_SCORE_THRESHOLD = 70.0
 BBOX_FALLBACK_WARNINGS = {"sam2_unavailable_bbox_mask_used"}
 REAL_SAM2_SOURCES = {"real_sam2", ""}
 BBOX_FALLBACK_SOURCES = {"external_bbox_fallback", "bbox_fallback"}
+
+# Stage 18.3: score-comparison.json 베이스라인 (Stage 18.1 커밋 806e168)
+BASELINE_SCORE_INFO = {
+    "commitSha":       "806e168",
+    "stageName":       "Stage 18.1",
+    "externalMaskScore": 65.62,
+    "flattenMethod":   "pillow_psd_fallback",
+    "edgeSharpness":   0.197,
+    "productCompleteness": "partial",
+    "handLeakRisk":    0.0,
+}
 
 ROLE_COLORS = {
     "product": (0, 200, 0),
@@ -84,6 +102,10 @@ def main() -> int:
     detections: list[dict] = seg_data.get("detections", [])
     warnings:   list[str]  = seg_data.get("warnings", [])
     flatten_method: str    = seg_data.get("flattenMethod", "unknown")
+    flatten_meta:   dict   = seg_data.get("flattenMeta", {})
+
+    # ── Stage 18.3: flatten artifact 저장 ─────────────────────────────────────
+    _save_flatten_artifacts(seg_data, args.output_dir)
 
     product_dets = [d for d in detections if d.get("role") == "product"]
     hand_dets    = [d for d in detections if d.get("role") == "hand"]
@@ -116,15 +138,20 @@ def main() -> int:
             key=lambda d: d.get("maskQualityScore", 0.0),
         )
 
-    ext_mask_score:   float = best_product.get("maskQualityScore", 0.0)   if best_product else 0.0
-    mask_source:      str   = best_product.get("maskSource", "N/A")        if best_product else "N/A"
-    edge_sharpness:   float = best_product.get("edgeSharpness", 0.0)       if best_product else 0.0
-    fragment_count:   int   = best_product.get("fragmentCount", 0)          if best_product else 0
-    mask_area_ratio:  float = best_product.get("maskAreaRatio", 0.0)        if best_product else 0.0
-    detection_conf:   float = best_product.get("detectionConfidence", 0.0)  if best_product else 0.0
-    mask_conf:        float = best_product.get("maskConfidence", 0.0)       if best_product else 0.0
-    hand_subtract:    bool  = bool(best_product.get("handSubtractApplied", False)) if best_product else False
-    score_breakdown:  dict  = best_product.get("scoreBreakdown", {})        if best_product else {}
+    ext_mask_score:    float = best_product.get("maskQualityScore", 0.0)    if best_product else 0.0
+    mask_source:       str   = best_product.get("maskSource", "N/A")         if best_product else "N/A"
+    edge_sharpness:    float = best_product.get("edgeSharpness", 0.0)        if best_product else 0.0
+    fragment_count:    int   = best_product.get("fragmentCount", 0)           if best_product else 0
+    mask_area_ratio:   float = best_product.get("maskAreaRatio", 0.0)         if best_product else 0.0
+    detection_conf:    float = best_product.get("detectionConfidence", 0.0)   if best_product else 0.0
+    mask_conf:         float = best_product.get("maskConfidence", 0.0)        if best_product else 0.0
+    hand_subtract:     bool  = bool(best_product.get("handSubtractApplied", False)) if best_product else False
+    score_breakdown:   dict  = best_product.get("scoreBreakdown", {})         if best_product else {}
+    # Stage 18.3: edge metric 클램핑 진단
+    raw_edge_metric:        float = best_product.get("rawEdgeMetric", 0.0)         if best_product else 0.0
+    normalized_edge_metric: float = best_product.get("normalizedEdgeMetric", 0.0)  if best_product else 0.0
+    edge_metric_clamped:    bool  = bool(best_product.get("edgeMetricClamped", False)) if best_product else False
+    edge_clamp_reason:      str   = best_product.get("edgeClampReason") or ""      if best_product else ""
 
     # ── Leak risk 계산 ─────────────────────────────────────────────────────────
     # 픽셀 overlap 우선 (Stage 18.1 provider가 handOverlapRatio 계산)
@@ -142,11 +169,26 @@ def main() -> int:
     # ── Product completeness ───────────────────────────────────────────────────
     product_completeness = _score_completeness(ext_mask_score)
 
-    # ── selectedMaskSource (compareOnly=true → native 항상 우선) ───────────────
-    if not bbox_fallback_used and ext_mask_score >= MASK_SCORE_THRESHOLD:
-        selected_mask_source = "external_real_sam2_available"
+    # ── Stage 18.3: 마스크 소스 분리 (bestEvaluated vs applied) ──────────────────
+    # bestEvaluatedMaskSource: 품질 평가 결과 최고 점수 소스
+    if sam2_generated and ext_mask_score >= MASK_SCORE_THRESHOLD:
+        best_evaluated_mask_source = "external_real_sam2"
+    elif sam2_generated:
+        best_evaluated_mask_source = "external_real_sam2_low_score"
+    elif bbox_fallback_used:
+        best_evaluated_mask_source = "external_bbox_fallback"
     else:
-        selected_mask_source = "native_preferred"
+        best_evaluated_mask_source = "no_external"
+
+    external_mask_eligible = sam2_generated and not bbox_fallback_used and ext_mask_score >= MASK_SCORE_THRESHOLD
+
+    # appliedMaskSource: compareOnly=true이므로 external mask는 평가만, 실제 적용은 native
+    applied_mask_source = "native"
+    mask_application_mode = "compare_only"
+    application_blocked_reason = "compare_only_enabled"
+
+    # 하위 호환 필드
+    selected_mask_source = "external_real_sam2_available" if external_mask_eligible else "native_preferred"
 
     ext_mask_rejected_reason: str | None = None
     if not bbox_fallback_used and ext_mask_score < MASK_SCORE_THRESHOLD:
@@ -199,9 +241,22 @@ def main() -> int:
         "fragmentCount":              fragment_count,
         "maskAreaRatio":              round(mask_area_ratio, 4),
         "maskConfidence":             round(mask_conf, 4),
+        # Stage 18.3: edge metric 클램핑 진단
+        "rawEdgeMetric":              round(raw_edge_metric, 2),
+        "normalizedEdgeMetric":       round(normalized_edge_metric, 4),
+        "edgeMetricClamped":          edge_metric_clamped,
+        "edgeClampReason":            edge_clamp_reason or None,
         # 점수 구성 (Stage 18.1)
         "scoreBreakdown":             score_breakdown,
-        # 선택 결과
+        # Stage 18.3: 마스크 소스 분리
+        "bestEvaluatedMaskSource":    best_evaluated_mask_source,
+        "bestEvaluatedMaskScore":     round(ext_mask_score, 2),
+        "externalMaskEligible":       external_mask_eligible,
+        "appliedMaskSource":          applied_mask_source,
+        "maskApplicationMode":        mask_application_mode,
+        "applicationBlockedReason":   application_blocked_reason,
+        "compareOnly":                True,
+        # 하위 호환
         "selectedMaskSource":         selected_mask_source,
         "externalMaskRejectedReason": ext_mask_rejected_reason,
         # 집계
@@ -220,10 +275,80 @@ def main() -> int:
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
 
+    # Stage 18.3: score-comparison.json 생성
+    _save_score_comparison(report, args.output_dir)
+
     # stdout 출력 (bash script가 읽음)
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
     return 0
+
+
+# ─── Stage 18.3 artifact 헬퍼 ───────────────────────────────────────────────────
+
+def _save_flatten_artifacts(seg_data: dict, output_dir: str) -> None:
+    """flattenMeta → flatten-metadata.json, flattenedPngBase64 → flattened-input.png."""
+    # flatten-metadata.json
+    flatten_meta = seg_data.get("flattenMeta")
+    if flatten_meta:
+        try:
+            meta_path = os.path.join(output_dir, "flatten-metadata.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(flatten_meta, f, indent=2, ensure_ascii=False)
+            print(f"[INFO] flatten-metadata.json 저장 완료", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] flatten-metadata.json 저장 실패: {e}", file=sys.stderr)
+
+    # flattened-input.png
+    png_b64 = seg_data.get("flattenedPngBase64", "")
+    if png_b64 and PIL_AVAILABLE:
+        try:
+            png_bytes = base64.b64decode(png_b64)
+            png_path  = os.path.join(output_dir, "flattened-input.png")
+            with open(png_path, "wb") as f:
+                f.write(png_bytes)
+            print(f"[INFO] flattened-input.png 저장 완료 ({len(png_bytes)} bytes)", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] flattened-input.png 저장 실패: {e}", file=sys.stderr)
+
+
+def _save_score_comparison(report: dict, output_dir: str) -> None:
+    """현재 점수와 베이스라인(Stage 18.1)을 비교한 score-comparison.json 저장."""
+    current = {
+        "externalMaskScore":     report.get("externalMaskScore", 0.0),
+        "flattenMethod":         report.get("flattenMethod", "unknown"),
+        "edgeSharpness":         report.get("edgeSharpness", 0.0),
+        "rawEdgeMetric":         report.get("rawEdgeMetric", 0.0),
+        "normalizedEdgeMetric":  report.get("normalizedEdgeMetric", 0.0),
+        "edgeMetricClamped":     report.get("edgeMetricClamped", False),
+        "productCompleteness":   report.get("productCompleteness", "N/A"),
+        "handLeakRisk":          report.get("handLeakRisk", 0.0),
+        "segmentationVerdict":   report.get("segmentationVerdict", "N/A"),
+    }
+    delta_score = current["externalMaskScore"] - BASELINE_SCORE_INFO["externalMaskScore"]
+    comparison = {
+        "baseline": BASELINE_SCORE_INFO,
+        "current":  current,
+        "delta": {
+            "externalMaskScore": round(delta_score, 2),
+            "flattenMethodChanged": current["flattenMethod"] != BASELINE_SCORE_INFO["flattenMethod"],
+            "edgeSharpnessChanged": current["edgeSharpness"] != BASELINE_SCORE_INFO["edgeSharpness"],
+            "productCompletenessImproved": (
+                current["productCompleteness"] == "pass"
+                and BASELINE_SCORE_INFO["productCompleteness"] != "pass"
+            ),
+        },
+    }
+    try:
+        path = os.path.join(output_dir, "score-comparison.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(comparison, f, indent=2, ensure_ascii=False)
+        print(
+            f"[INFO] score-comparison.json 저장 (delta_score={delta_score:+.2f})",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(f"[WARN] score-comparison.json 저장 실패: {e}", file=sys.stderr)
 
 
 # ─── 헬퍼 함수 ─────────────────────────────────────────────────────────────────

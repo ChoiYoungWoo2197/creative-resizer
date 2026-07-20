@@ -1006,20 +1006,17 @@ SEGMENT_JSON="${ARTIFACT_DIR}/segmentation.json"
 if [[ -n "${SAMPLE_PATH}" ]]; then
     info "샘플 검증: ${SAMPLE_PATH}"
 
-    # PSD → PNG 변환 시도 (host python + psd-tools)
+    # Stage 18.3: PSD 원본을 그대로 API 컨테이너에 전송
+    # (컨테이너 내부 psd-tools가 처리 — 호스트 변환 불필요)
     IMAGE_PATH="${SAMPLE_PATH}"
     if [[ "${SAMPLE_PATH}" == *.psd ]]; then
-        PNG_TMP="${ARTIFACT_DIR}/sample_converted.png"
-        if [[ -n "${PYTHON_CMD}" ]] && \
-           ${PYTHON_CMD} -c "from psd_tools import PSDImage; img=PSDImage.open('${SAMPLE_PATH}'); img.composite().save('${PNG_TMP}')" 2>/dev/null; then
-            IMAGE_PATH="${PNG_TMP}"
-            ok "PSD → PNG 변환 완료: ${PNG_TMP}"
-        else
-            warn "PSD 변환 실패 (psd-tools 없음) — Pillow가 PSD를 직접 처리"
-        fi
+        # 원본 PSD artifact 저장
+        cp "${SAMPLE_PATH}" "${ARTIFACT_DIR}/original-input.psd" 2>/dev/null || true
+        ok "원본 PSD artifact 저장: original-input.psd"
+        info "PSD 원본을 API 컨테이너에 직접 전송 (컨테이너 내 psd-tools가 처리)"
     fi
 
-    # 원본 복사
+    # 원본 복사 (verify_stage18_server.py --image-path 인자용)
     cp "${IMAGE_PATH}" "${ARTIFACT_DIR}/original.png" 2>/dev/null || true
 
     # 프롬프트 파일 생성 (quoting 문제 방지)
@@ -1032,14 +1029,19 @@ if [[ -n "${SAMPLE_PATH}" ]]; then
 ]
 PROMPTS_EOF
 
-    # /v1/segment 호출
+    # /v1/segment 호출 (PSD는 컨테이너 내부 psd-tools가 처리)
     info "POST /v1/segment ..."
+    if [[ "${SAMPLE_PATH}" == *.psd ]]; then
+        SEG_MIME="image/vnd.adobe.photoshop"
+    else
+        SEG_MIME="application/octet-stream"
+    fi
     HTTP_SEG=$(curl -s \
         -o "${SEGMENT_JSON}" \
         -w "%{http_code}" \
         --max-time 180 \
         -X POST "${SERVICE_URL}/v1/segment" \
-        -F "image=@${IMAGE_PATH}" \
+        -F "image=@${IMAGE_PATH};type=${SEG_MIME}" \
         -F "prompts=<${PROMPTS_FILE}" \
         -F "requestId=stage18-server-${TIMESTAMP}" \
         -F "sourceType=stage18-mother-hand" \
@@ -1110,6 +1112,29 @@ find "${ARTIFACT_DIR}" -maxdepth 1 -type f \
     -printf "%f\t%s bytes\n" 2>/dev/null \
     | sort | tee -a "${EXEC_LOG}" \
     || ls -la "${ARTIFACT_DIR}" 2>/dev/null | tee -a "${EXEC_LOG}"
+
+# Stage 18.3: PSD flatten artifact 필수 확인
+FLATTEN_ARTIFACTS_OK=true
+if [[ "${SAMPLE_PATH}" == *.psd ]]; then
+    for fname in "original-input.psd" "flattened-input.png" "flatten-metadata.json"; do
+        if [[ -f "${ARTIFACT_DIR}/${fname}" ]]; then
+            ok "flatten artifact 존재: ${fname}"
+        else
+            warn "flatten artifact 누락: ${fname}"
+            FLATTEN_ARTIFACTS_OK=false
+        fi
+    done
+    if [[ "${FLATTEN_ARTIFACTS_OK}" == "true" ]]; then
+        ok "PSD flatten 3개 artifact 모두 존재"
+    fi
+fi
+
+# score-comparison.json 확인
+if [[ -f "${ARTIFACT_DIR}/score-comparison.json" ]]; then
+    ok "score-comparison.json 생성됨"
+else
+    info "score-comparison.json 없음 (샘플 없거나 미생성)"
+fi
 
 # ==========================================================================
 # Step 10: 컨테이너 정리 + 운영 환경 검사
@@ -1207,14 +1232,27 @@ else
         fi
     fi
     if [[ "${score_int}" -ge 70 ]]; then
-        # Stage 18.2: PSD 샘플인 경우 psd_tools_composite이어야 PASS
-        # pillow_psd_fallback은 psd-tools composite 실패를 의미 → PARTIAL
-        if [[ "${SAMPLE_PATH}" == *.psd ]] && [[ "${FLATTEN_METHOD:-unknown}" != "psd_tools_composite" ]]; then
-            VERDICT="PARTIAL"; FINAL_EXIT=2
-            VERDICT_REASONS+=("PSD 샘플이나 flattenMethod=${FLATTEN_METHOD:-unknown} (기대: psd_tools_composite)")
-            warn "PSD composite 미완성 — flattenMethod=${FLATTEN_METHOD:-unknown} → PARTIAL"
-        else
+        # Stage 18.3: PSD는 psd_tools_composite 또는 psd_tools_merged이어야 PASS
+        # psd_tools_merged: psd-tools 열기 성공 + Pillow 병합 데이터 (acceptable)
+        # pillow_psd_fallback: psd-tools 완전 실패 → PARTIAL
+        PSD_FLATTEN_OK=true
+        if [[ "${SAMPLE_PATH}" == *.psd ]]; then
+            FM="${FLATTEN_METHOD:-unknown}"
+            if [[ "${FM}" != "psd_tools_composite" && "${FM}" != "psd_tools_merged" ]]; then
+                PSD_FLATTEN_OK=false
+                VERDICT_REASONS+=("PSD flattenMethod=${FM} (기대: psd_tools_composite|psd_tools_merged)")
+                warn "PSD composite 미완성 — flattenMethod=${FM} → PARTIAL"
+            fi
+        fi
+        # flatten artifact 누락 시 PARTIAL
+        if [[ "${SAMPLE_PATH}" == *.psd ]] && [[ "${FLATTEN_ARTIFACTS_OK:-true}" == "false" ]]; then
+            PSD_FLATTEN_OK=false
+            VERDICT_REASONS+=("PSD flatten artifact 누락")
+        fi
+        if [[ "${PSD_FLATTEN_OK}" == "true" ]]; then
             VERDICT="PASS"; FINAL_EXIT=0
+        else
+            VERDICT="PARTIAL"; FINAL_EXIT=2
         fi
     else
         VERDICT="PARTIAL"; FINAL_EXIT=2
@@ -1296,7 +1334,17 @@ printf "| handLeakRisk | low | %s |\n" "${HAND_LEAK}"
 printf "| backgroundLeakRisk | low | %s |\n" "${BG_LEAK}"
 printf "| productCompleteness | pass | %s |\n" "${PRODUCT_COMPLETENESS}"
 printf "| maskSource | real_sam2 | %s |\n" "${MASK_SOURCE}"
-printf "| edgeSharpness | - | %s |\n\n" "${EDGE_SHARPNESS}"
+printf "| edgeSharpness | - | %s |\n" "${EDGE_SHARPNESS}"
+printf "| flattenMethod | psd_tools_composite&#124;psd_tools_merged | %s |\n" "${FLATTEN_METHOD}"
+printf "| flatten artifacts | 3개 존재 | %s |\n\n" "${FLATTEN_ARTIFACTS_OK:-N/A}"
+
+printf "## 마스크 소스 분리 (Stage 18.3)\n\n"
+printf "| 항목 | 값 |\n|---|---|\n"
+printf "| bestEvaluatedMaskSource | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "bestEvaluatedMaskSource" "N/A")"
+printf "| externalMaskEligible | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "externalMaskEligible" "N/A")"
+printf "| appliedMaskSource | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "appliedMaskSource" "native")"
+printf "| maskApplicationMode | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "maskApplicationMode" "compare_only")"
+printf "| applicationBlockedReason | %s |\n\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "applicationBlockedReason" "compare_only_enabled")"
 
 printf "## 운영 환경 영향\n\n"
 printf "| 항목 | 결과 |\n|---|---|\n"

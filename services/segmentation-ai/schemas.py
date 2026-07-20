@@ -9,6 +9,10 @@ Stage 18.1 변경:
 Stage 18.2 변경:
   - DetectionResult: edgePixelCount / rawBoundaryGradient / lowContrastEdgeRatio / completenessMetrics 추가
   - SegmentationResponse: flattenMeta 추가
+
+Stage 18.3 변경:
+  - DetectionResult: rawEdgeMetric / normalizedEdgeMetric / edgeMetricClamped / edgeClampReason 추가
+  - SegmentationResponse: flattenedPngBase64 추가 (PSD 입력 시 flatten 결과 이미지)
 """
 
 from __future__ import annotations
@@ -76,6 +80,11 @@ class DetectionResult:
     raw_boundary_gradient: float = 0.0
     low_contrast_edge_ratio: float = 0.0
     completeness_metrics: dict = field(default_factory=dict)
+    # Stage 18.3: edge metric 클램핑 진단
+    raw_edge_metric: float = 0.0
+    normalized_edge_metric: float = 0.0
+    edge_metric_clamped: bool = False
+    edge_clamp_reason: str = ""
 
     def to_dict(self) -> dict:
         d = {
@@ -99,7 +108,12 @@ class DetectionResult:
             "edgePixelCount":         self.edge_pixel_count,
             "rawBoundaryGradient":    round(self.raw_boundary_gradient, 2),
             "lowContrastEdgeRatio":   round(self.low_contrast_edge_ratio, 4),
+            "rawEdgeMetric":          round(self.raw_edge_metric, 2),
+            "normalizedEdgeMetric":   round(self.normalized_edge_metric, 4),
+            "edgeMetricClamped":      self.edge_metric_clamped,
         }
+        if self.edge_clamp_reason:
+            d["edgeClampReason"] = self.edge_clamp_reason
         if self.score_breakdown:
             d["scoreBreakdown"] = self.score_breakdown
         if self.completeness_metrics:
@@ -117,6 +131,8 @@ class SegmentationResponse:
     warnings: list[str] = field(default_factory=list)
     flatten_method: str = "pillow"
     flatten_meta: dict = field(default_factory=dict)
+    # Stage 18.3: PSD 입력 시 flattened 이미지 base64 (artifact 생성용)
+    flattened_png_base64: str = ""
 
     def to_dict(self) -> dict:
         d = {
@@ -130,6 +146,8 @@ class SegmentationResponse:
         }
         if self.flatten_meta:
             d["flattenMeta"] = self.flatten_meta
+        if self.flattened_png_base64:
+            d["flattenedPngBase64"] = self.flattened_png_base64
         return d
 
 

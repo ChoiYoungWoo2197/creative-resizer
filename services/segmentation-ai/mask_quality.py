@@ -79,6 +79,8 @@ def score_external_mask(
     low_contrast_edge_ratio = 0.0
 
     completeness_metrics: dict = {}
+    normalized_edge: float = 0.0
+    edge_metric_clamped: bool = False
 
     if mask_pil is not None:
         try:
@@ -97,16 +99,18 @@ def score_external_mask(
             if edge_pixel_count >= EDGE_MIN_BOUNDARY_PIXELS:
                 bp_vals = edge_arr[boundary_mask]
                 raw_boundary_gradient = float(bp_vals.mean())
-                edge_sharpness = float(
-                    min(raw_boundary_gradient / EDGE_BOUNDARY_EXPECTED, 1.0)
-                )
-                # 저대비 경계 비율 (edge_arr[200-255] / total boundary)
+                normalized_edge = raw_boundary_gradient / EDGE_BOUNDARY_EXPECTED
+                edge_metric_clamped = normalized_edge > 1.0
+                edge_sharpness = float(min(normalized_edge, 1.0))
+                # 저대비 경계 비율 (edge_arr < 100 / total boundary)
                 low_contrast_edge_ratio = float(
                     (bp_vals < 100).sum() / max(len(bp_vals), 1)
                 )
             else:
-                edge_sharpness = 0.0
                 raw_boundary_gradient = 0.0
+                normalized_edge = 0.0
+                edge_metric_clamped = False
+                edge_sharpness = 0.0
                 low_contrast_edge_ratio = 1.0
 
             # Stage 18.2: completeness 계산
@@ -303,6 +307,11 @@ def score_external_mask(
         "edgePixelCount":          edge_pixel_count,
         "rawBoundaryGradient":     round(raw_boundary_gradient, 2),
         "lowContrastEdgeRatio":    round(low_contrast_edge_ratio, 4),
+        # Stage 18.3: edge metric 클램핑 진단
+        "rawEdgeMetric":           round(raw_boundary_gradient, 2),
+        "normalizedEdgeMetric":    round(raw_boundary_gradient / EDGE_BOUNDARY_EXPECTED, 4),
+        "edgeMetricClamped":       edge_metric_clamped,
+        "edgeClampReason":         "boundary_mean_exceeds_reference" if edge_metric_clamped else None,
         "scoreBreakdown":          score_breakdown,
         "completenessMetrics":     completeness_metrics,
     }
@@ -464,6 +473,10 @@ def _zero_result(
         "edgePixelCount":          0,
         "rawBoundaryGradient":     0.0,
         "lowContrastEdgeRatio":    1.0,
+        "rawEdgeMetric":           0.0,
+        "normalizedEdgeMetric":    0.0,
+        "edgeMetricClamped":       False,
+        "edgeClampReason":         None,
         "scoreBreakdown":          breakdown,
         "completenessMetrics":     {},
     }

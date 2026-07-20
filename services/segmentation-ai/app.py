@@ -17,9 +17,14 @@ Stage 18.2 변경:
   - _parse_image: apply_icc=False 2차 시도, flatten_meta dict 반환
   - flattenMethod: "psd_tools" → "psd_tools_composite"
   - SegmentationResponse에 flattenMeta 포함
+
+Stage 18.3 변경:
+  - _parse_image → psd_flatten.flatten_input() (force=True + psd_tools_merged 전략)
+  - PSD 입력 시 flattenedPngBase64 응답 포함 (verify script가 artifact 저장에 활용)
 """
 
 from __future__ import annotations
+import base64
 import os
 import io
 import json
@@ -32,6 +37,7 @@ from PIL import Image
 
 import model_loader
 import cache
+import psd_flatten
 from schemas import PromptSchema, SegmentationResponse, DetectionResult, BboxSchema, HealthResponse
 from mask_quality import score_external_mask
 
@@ -51,9 +57,6 @@ MASK_SCORE_THRESHOLD = float(os.environ.get("CREATIVE_SEGMENTATION_MASK_SCORE_TH
 
 _PRELOAD = os.environ.get("PRELOAD_MODELS", "false").lower() == "true"
 
-_PSD_MAGIC = b"8BPS"
-
-
 # ── startup ───────────────────────────────────────────────────────────────────
 
 if _PRELOAD:
@@ -61,86 +64,20 @@ if _PRELOAD:
     model_loader.preload()
 
 
-# ── PSD 파싱 ─────────────────────────────────────────────────────────────────
+# ── PSD flatten 유틸 ──────────────────────────────────────────────────────────
 
-def _parse_image(image_bytes: bytes) -> tuple[Image.Image, str, dict]:
-    """이미지 bytes → (PIL RGB, flatten_method, flatten_meta).
+_PSD_FLATTEN_METHODS = frozenset({
+    "psd_tools_composite",
+    "psd_tools_merged",
+    "pillow_psd_fallback",
+})
 
-    PSD:
-      1차: psd.composite() 기본값
-      2차: psd.composite(apply_icc=False)  ← ICC 프로필 오류 우회
-      3차: Pillow 직접 로드 (pillow_psd_fallback)
-    기타: Pillow 직접 로드 (pillow).
-    """
-    if image_bytes[:4] != _PSD_MAGIC:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        return img, "pillow", {}
 
-    meta: dict = {}
-
-    # psd-tools 설치 확인
-    try:
-        import importlib.metadata as _im
-        meta["psdToolsVersion"]   = _im.version("psd-tools")
-        meta["psdToolsInstalled"] = True
-    except Exception as _e:
-        meta["psdToolsInstalled"]      = False
-        meta["psdToolsVersion"]        = None
-        meta["psdToolsImportErrorType"] = type(_e).__name__
-
-    if meta.get("psdToolsInstalled"):
-        try:
-            from psd_tools import PSDImage
-            psd = PSDImage.open(io.BytesIO(image_bytes))
-            meta["psdLayerCount"] = len(list(psd))
-            meta["psdSize"]       = f"{psd.width}x{psd.height}"
-
-            # 1차: composite() 기본값
-            try:
-                composite = psd.composite()
-                if composite is None:
-                    raise ValueError("psd.composite() returned None")
-                meta["psdCompositeCreated"]   = True
-                meta["psdFlattenAttempt"]     = "default"
-                log.info(
-                    "PSD composite (psd-tools): size=%dx%d layers=%d",
-                    psd.width, psd.height, meta["psdLayerCount"],
-                )
-                return composite.convert("RGB"), "psd_tools_composite", meta
-            except Exception as _e1:
-                meta["psdFlattenErrorType"]    = type(_e1).__name__
-                meta["psdFlattenErrorMessage"] = str(_e1)[:300]
-                log.warning("psd.composite() 실패: %s", _e1)
-
-            # 2차: apply_icc=False (ICC 프로필 문제 우회)
-            try:
-                composite = psd.composite(apply_icc=False)
-                if composite is None:
-                    raise ValueError("psd.composite(apply_icc=False) returned None")
-                meta["psdCompositeCreated"] = True
-                meta["psdFlattenAttempt"]   = "apply_icc_false"
-                log.info(
-                    "PSD composite (apply_icc=False): size=%dx%d layers=%d",
-                    psd.width, psd.height, meta["psdLayerCount"],
-                )
-                return composite.convert("RGB"), "psd_tools_composite", meta
-            except Exception as _e2:
-                meta["psdFlattenError2Type"]    = type(_e2).__name__
-                meta["psdFlattenError2Message"] = str(_e2)[:300]
-                meta["psdCompositeCreated"]     = False
-                log.warning("psd.composite(apply_icc=False) 실패: %s", _e2)
-
-        except Exception as _e_open:
-            meta["psdToolsOpenError"] = str(_e_open)[:300]
-            log.warning("psd-tools open 실패 → Pillow fallback: %s", _e_open)
-
-    # 3차: Pillow fallback
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        meta.setdefault("psdCompositeCreated", False)
-        return img, "pillow_psd_fallback", meta
-    except Exception as _e_pil:
-        raise ValueError(f"PSD image_parse_failed: {_e_pil}") from _e_pil
+def _encode_flattened_png(pil_image: Image.Image) -> str:
+    """PIL 이미지를 PNG base64 문자열로 인코딩 (PSD artifact용)."""
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 # ── health ────────────────────────────────────────────────────────────────────
@@ -246,18 +183,30 @@ def segment():
     request_id = request.form.get("requestId") or str(uuid.uuid4())
     source_type = request.form.get("sourceType", "unknown")
 
-    # ── 이미지 파싱 (PSD 지원) ────────────────────────────────────────────────
+    # ── 이미지 파싱 (PSD 지원 — Stage 18.3: psd_flatten 모듈 경유) ──────────────
     if "image" not in request.files:
         return jsonify({"error": "image field required"}), 400
 
-    image_bytes = request.files["image"].read()
+    image_file  = request.files["image"]
+    image_bytes = image_file.read()
+    original_filename = image_file.filename or "input"
     try:
-        pil_image, flatten_method, flatten_meta = _parse_image(image_bytes)
+        pil_image, flatten_method, flatten_meta = psd_flatten.flatten_input(
+            image_bytes, original_filename
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-    if flatten_method != "pillow":
+    if flatten_method not in ("pillow_image", "pillow"):
         log.info("이미지 파싱 방식: %s size=%dx%d", flatten_method, pil_image.width, pil_image.height)
+
+    # PSD 입력이면 flattened PNG를 base64로 인코딩 (artifact 생성용)
+    flattened_png_base64 = ""
+    if flatten_method in _PSD_FLATTEN_METHODS:
+        try:
+            flattened_png_base64 = _encode_flattened_png(pil_image)
+        except Exception as _enc_e:
+            log.warning("flattenedPngBase64 인코딩 실패: %s", _enc_e)
 
     # ── prompts 파싱 ───────────────────────────────────────────────────────────
     prompts_raw = request.form.get("prompts", "[]")
@@ -319,7 +268,7 @@ def segment():
         log.exception("segment 실행 실패: %s", e)
         raw_detections, warnings = [], [f"segment_exception:{e}"]
 
-    if flatten_method not in ("pillow",):
+    if flatten_method not in ("pillow_image", "pillow"):
         warnings.append(f"flatten_method:{flatten_method}")
 
     # ── DetectionResult 변환 ──────────────────────────────────────────────────
@@ -371,6 +320,11 @@ def segment():
             raw_boundary_gradient   = quality.get("rawBoundaryGradient", 0.0),
             low_contrast_edge_ratio = quality.get("lowContrastEdgeRatio", 0.0),
             completeness_metrics    = quality.get("completenessMetrics", {}),
+            # Stage 18.3: edge metric 클램핑 진단
+            raw_edge_metric         = quality.get("rawEdgeMetric", 0.0),
+            normalized_edge_metric  = quality.get("normalizedEdgeMetric", 0.0),
+            edge_metric_clamped     = quality.get("edgeMetricClamped", False),
+            edge_clamp_reason       = quality.get("edgeClampReason") or "",
         )
         detections.append(det)
 
@@ -381,14 +335,15 @@ def segment():
     )
 
     resp   = SegmentationResponse(
-        request_id    = request_id,
-        provider      = provider.name,
-        device        = provider.device,
-        processing_ms = processing_ms,
-        detections    = detections,
-        warnings      = warnings,
-        flatten_method = flatten_method,
-        flatten_meta   = flatten_meta,
+        request_id           = request_id,
+        provider             = provider.name,
+        device               = provider.device,
+        processing_ms        = processing_ms,
+        detections           = detections,
+        warnings             = warnings,
+        flatten_method       = flatten_method,
+        flatten_meta         = flatten_meta,
+        flattened_png_base64 = flattened_png_base64,
     )
     result = resp.to_dict()
     cache.put(cache_key, result)
