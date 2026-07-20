@@ -111,19 +111,39 @@ class HealthResponse:
     sam2_model_id: str = ""
     bbox_fallback_enabled: bool = True
     model_cache_path: str = ""
+    # single-flight 진단
+    model_load_state: str = "NOT_STARTED"
+    model_load_attempt: int = 0
+    concurrent_load_prevented: int = 0
+    model_load_ms: int = 0
+    model_load_started_at: float | None = None
+    model_load_completed_at: float | None = None
+    # 캐시 상태
+    grounding_dino_cache_ready: bool = False
+    sam2_cache_ready: bool = False
 
     def to_dict(self) -> dict:
         d = {
-            "status":                  self.status,
-            "provider":                self.provider,
-            "device":                  self.device,
-            "modelsLoaded":            self.models_loaded,
-            "realInferenceAvailable":  self.real_inference_available,
-            "groundingDinoModelId":    self.grounding_dino_model_id,
-            "sam2ModelId":             self.sam2_model_id,
-            "bboxFallbackEnabled":     self.bbox_fallback_enabled,
-            "modelCachePath":          self.model_cache_path,
+            "status":                   self.status,
+            "provider":                 self.provider,
+            "device":                   self.device,
+            "modelsLoaded":             self.models_loaded,
+            "realInferenceAvailable":   self.real_inference_available,
+            "groundingDinoModelId":     self.grounding_dino_model_id,
+            "sam2ModelId":              self.sam2_model_id,
+            "bboxFallbackEnabled":      self.bbox_fallback_enabled,
+            "modelCachePath":           self.model_cache_path,
+            "modelLoadState":           self.model_load_state,
+            "modelLoadAttempt":         self.model_load_attempt,
+            "concurrentLoadPrevented":  self.concurrent_load_prevented,
+            "modelLoadMs":              self.model_load_ms,
+            "groundingDinoCacheReady":  self.grounding_dino_cache_ready,
+            "sam2CacheReady":           self.sam2_cache_ready,
         }
         if self.model_load_error:
             d["modelLoadError"] = self.model_load_error
+        if self.model_load_started_at:
+            d["modelLoadStartedAt"] = self.model_load_started_at
+        if self.model_load_completed_at:
+            d["modelLoadCompletedAt"] = self.model_load_completed_at
         return d

@@ -43,12 +43,12 @@ CONTAINER_NAME="creative-segmentation-stage18-${GIT_SHA}"
 TEST_PORT=48090                   # localhost:48090 — 외부 미노출
 SERVICE_URL="http://localhost:${TEST_PORT}"
 
-# 모델 캐시 — 운영 segmentation 서비스와 공유하지 않는 별도 경로
-MODEL_CACHE_DIR="${PROJECT_ROOT}/model-cache/stage18"
+# 모델 캐시 — 재실행 간 재사용되는 Named volume (삭제하지 않음)
+HF_CACHE_VOLUME="creative-stage18-hf-cache"
 
 SAMPLE_BASE="${PROJECT_ROOT}/test-assets/stage18"
 
-HEALTH_RETRY_MAX=120              # 120 × 5s = 10분 (초기 모델 다운로드 고려)
+HEALTH_RETRY_MAX=90               # 90 × 5s = 7.5분 (모델은 사전 다운로드 후 시작)
 HEALTH_RETRY_INTERVAL=5
 
 # 디스크 최소 여유 공간 (MB)
@@ -84,6 +84,11 @@ SAM2_PKG_VERSION="N/A"
 NVIDIA_PKG_COUNT="N/A"
 TORCH_CUDA_AVAIL="N/A"
 TORCH_VARIANT="cpu"
+# 모델 캐시 상태 (Step 4.7-4.9에서 설정)
+GDINO_CACHE_READY=false
+SAM2_CACHE_READY=false
+GDINO_DOWNLOAD_OK=false
+SAM2_DOWNLOAD_OK=false
 
 # ── 0-F: Cleanup trap ─────────────────────────────────────────────────────────
 cleanup() {
@@ -378,11 +383,155 @@ printf '  %-30s %-20s %s\n' "nvidia 패키지 수" "0" "${NVIDIA_PKG_COUNT}" | t
 printf '  %-30s %-20s %s\n' "cudaAvailable" "False" "${TORCH_CUDA_AVAIL}" | tee -a "${EXEC_LOG}"
 
 # ==========================================================================
+# Step 4.7: Named volume 생성 (재실행 시 재사용)
+# ==========================================================================
+section "Step 4.7: Named volume '${HF_CACHE_VOLUME}' 준비"
+
+if docker volume inspect "${HF_CACHE_VOLUME}" >/dev/null 2>&1; then
+    ok "Named volume 기존재: ${HF_CACHE_VOLUME}"
+else
+    docker volume create "${HF_CACHE_VOLUME}" >/dev/null
+    ok "Named volume 생성: ${HF_CACHE_VOLUME}"
+fi
+
+# ==========================================================================
+# Step 4.8: GDINO 모델 사전 다운로드
+# ==========================================================================
+section "Step 4.8: GroundingDINO 모델 사전 다운로드"
+
+GDINO_DOWNLOAD_LOG="${ARTIFACT_DIR}/gdino-download.log"
+info "GDINO 다운로드 시작 (IDEA-Research/grounding-dino-tiny, safetensors only)"
+info "캐시 볼륨: ${HF_CACHE_VOLUME} → /models/huggingface/hub"
+
+docker run --rm \
+    -v "${HF_CACHE_VOLUME}:/models" \
+    -e HF_HUB_DISABLE_XET=1 \
+    -e HF_HOME=/models/huggingface \
+    -e HF_HUB_CACHE=/models/huggingface/hub \
+    -e TRANSFORMERS_CACHE=/models/huggingface/transformers \
+    -e HF_HUB_DOWNLOAD_TIMEOUT=1200 \
+    -e HF_HUB_ETAG_TIMEOUT=60 \
+    -e HF_HUB_DISABLE_TELEMETRY=1 \
+    "${SEG_IMAGE}" \
+    python3 -c "
+import os, sys
+os.environ['HF_HUB_DISABLE_XET'] = '1'
+os.environ['HF_HOME'] = '/models/huggingface'
+os.environ['HF_HUB_CACHE'] = '/models/huggingface/hub'
+os.makedirs('/models/huggingface/hub', exist_ok=True)
+from huggingface_hub import snapshot_download
+print('GDINO snapshot_download 시작...', flush=True)
+path = snapshot_download(
+    repo_id='IDEA-Research/grounding-dino-tiny',
+    cache_dir='/models/huggingface/hub',
+    allow_patterns=['*.json', '*.txt', 'model.safetensors'],
+    ignore_patterns=['pytorch_model.bin', '*.msgpack', 'flax_model.msgpack'],
+)
+print('GDINO 다운로드 완료:', path, flush=True)
+" 2>&1 | tee "${GDINO_DOWNLOAD_LOG}" | tee -a "${EXEC_LOG}"
+
+GDINO_DOWNLOAD_OK=false
+if grep -q "GDINO 다운로드 완료" "${GDINO_DOWNLOAD_LOG}" 2>/dev/null; then
+    GDINO_DOWNLOAD_OK=true
+    ok "GDINO 사전 다운로드 성공"
+else
+    warn "GDINO 사전 다운로드 실패 또는 타임아웃 — 서비스 시작 시 재시도"
+    VERDICT_REASONS+=("GDINO 사전 다운로드 실패 — lazy load로 대체")
+fi
+
+# ==========================================================================
+# Step 4.9: SAM2 체크포인트 사전 다운로드
+# ==========================================================================
+section "Step 4.9: SAM2 체크포인트 사전 다운로드"
+
+SAM2_DOWNLOAD_LOG="${ARTIFACT_DIR}/sam2-download.log"
+SAM2_URL="https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt"
+info "SAM2 체크포인트 다운로드: ${SAM2_URL}"
+
+docker run --rm \
+    -v "${HF_CACHE_VOLUME}:/models" \
+    -e MODELS_DIR=/models \
+    "${SEG_IMAGE}" \
+    python3 -c "
+import os, time, urllib.request
+url = '${SAM2_URL}'
+out = '/models/sam2/sam2.1_hiera_tiny.pt'
+os.makedirs('/models/sam2', exist_ok=True)
+# 이미 있고 100MB 이상이면 스킵
+if os.path.exists(out) and os.path.getsize(out) > 100_000_000:
+    print('SAM2 체크포인트 이미 존재 (캐시 hit):', out, flush=True)
+    sys.exit(0)
+import sys
+for attempt in range(1, 4):
+    try:
+        print(f'SAM2 다운로드 시도 {attempt}/3...', flush=True)
+        tmp = out + '.tmp'
+        urllib.request.urlretrieve(url, tmp)
+        os.replace(tmp, out)
+        size_mb = os.path.getsize(out) / 1_048_576
+        print(f'SAM2 다운로드 완료: {out} ({size_mb:.1f}MB)', flush=True)
+        break
+    except Exception as e:
+        print(f'SAM2 다운로드 오류 (attempt={attempt}): {e}', flush=True)
+        if os.path.exists(out + '.tmp'):
+            os.remove(out + '.tmp')
+        if attempt < 3:
+            time.sleep(5 * attempt)
+else:
+    print('SAM2 다운로드 실패 3회', flush=True)
+    sys.exit(1)
+" 2>&1 | tee "${SAM2_DOWNLOAD_LOG}" | tee -a "${EXEC_LOG}"
+
+SAM2_DOWNLOAD_OK=false
+if grep -qE "(SAM2 다운로드 완료|이미 존재)" "${SAM2_DOWNLOAD_LOG}" 2>/dev/null; then
+    SAM2_DOWNLOAD_OK=true
+    ok "SAM2 체크포인트 준비 완료"
+else
+    warn "SAM2 체크포인트 다운로드 실패 — 서비스 시작 시 재시도"
+    VERDICT_REASONS+=("SAM2 다운로드 실패 — lazy load로 대체")
+fi
+
+# ==========================================================================
+# Step 4.95: 캐시 유효성 검증
+# ==========================================================================
+section "Step 4.95: 캐시 유효성 검증"
+
+CACHE_CHECK="${ARTIFACT_DIR}/cache-check.txt"
+docker run --rm \
+    -v "${HF_CACHE_VOLUME}:/models" \
+    "${SEG_IMAGE}" \
+    python3 -c "
+import os
+hub = '/models/huggingface/hub'
+sam2 = '/models/sam2/sam2.1_hiera_tiny.pt'
+# GDINO 캐시 확인
+gdino_ok = False
+repo_slug = 'IDEA-Research--grounding-dino-tiny'
+model_dir = os.path.join(hub, f'models--{repo_slug}')
+if os.path.isdir(model_dir):
+    for root, dirs, files in os.walk(model_dir):
+        if 'model.safetensors' in files:
+            gdino_ok = True
+            break
+print('groundingDinoCacheReady=', gdino_ok)
+# SAM2 캐시 확인
+sam2_ok = os.path.exists(sam2) and os.path.getsize(sam2) > 100_000_000
+sam2_size = os.path.getsize(sam2) / 1_048_576 if os.path.exists(sam2) else 0
+print('sam2CacheReady=', sam2_ok)
+print('sam2CheckpointSizeMb=', round(sam2_size, 1))
+" 2>&1 | tee "${CACHE_CHECK}" | tee -a "${EXEC_LOG}"
+
+GDINO_CACHE_READY=$(grep 'groundingDinoCacheReady=' "${CACHE_CHECK}" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' ' || echo "False")
+SAM2_CACHE_READY=$(grep 'sam2CacheReady=' "${CACHE_CHECK}" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' ' || echo "False")
+
+[[ "${GDINO_CACHE_READY}" == "True" ]] && ok "GDINO 캐시: 준비 완료" || warn "GDINO 캐시: 불완전 (서비스 시작 시 다운로드)"
+[[ "${SAM2_CACHE_READY}" == "True" ]] && ok "SAM2 캐시: 준비 완료" || warn "SAM2 캐시: 없음 (서비스 시작 시 다운로드)"
+
+# ==========================================================================
 # Step 5: 테스트 네트워크 + 컨테이너 시작
 # ==========================================================================
 section "Step 5: 테스트 네트워크·컨테이너 시작"
 
-mkdir -p "${MODEL_CACHE_DIR}"
 docker network create "${NETWORK_NAME}" >/dev/null 2>&1 && NETWORK_CREATED=true
 ok "테스트 네트워크: ${NETWORK_NAME}"
 
@@ -391,7 +540,7 @@ docker run -d \
     --name "${CONTAINER_NAME}" \
     --network "${NETWORK_NAME}" \
     -p "127.0.0.1:${TEST_PORT}:8090" \
-    -v "${MODEL_CACHE_DIR}:/models" \
+    -v "${HF_CACHE_VOLUME}:/models" \
     ${GPU_FLAGS} \
     -e PRELOAD_MODELS=true \
     -e CREATIVE_SEGMENTATION_DEVICE=auto \
@@ -400,6 +549,13 @@ docker run -d \
     -e CREATIVE_SEGMENTATION_MAX_IMAGE_SIDE=1280 \
     -e CREATIVE_SEGMENTATION_MIN_CONFIDENCE=0.25 \
     -e CREATIVE_SEGMENTATION_MASK_SCORE_THRESHOLD=70 \
+    -e HF_HUB_DISABLE_XET=1 \
+    -e HF_HOME=/models/huggingface \
+    -e HF_HUB_CACHE=/models/huggingface/hub \
+    -e TRANSFORMERS_CACHE=/models/huggingface/transformers \
+    -e HF_HUB_DOWNLOAD_TIMEOUT=1200 \
+    -e HF_HUB_ETAG_TIMEOUT=60 \
+    -e HF_HUB_DISABLE_TELEMETRY=1 \
     "${SEG_IMAGE}" \
     > /dev/null 2>&1
 CONTAINER_STARTED=true
@@ -414,37 +570,47 @@ HEALTH_JSON="${ARTIFACT_DIR}/health.json"
 HEALTH_OK=false
 LAST_STATUS="(pending)"
 
+_parse_health_status() {
+    local file="$1"
+    if [[ -n "${PYTHON_CMD}" ]]; then
+        ${PYTHON_CMD} -c "
+import json,sys
+try:
+    d=json.load(open('${file}'))
+    print(d.get('status','?'))
+except: print('parse_error')
+" 2>/dev/null || echo "?"
+    else
+        grep -o '"status":"[^"]*"' "${file}" 2>/dev/null | head -1 | cut -d'"' -f4 || echo "?"
+    fi
+}
+
 for i in $(seq 1 "${HEALTH_RETRY_MAX}"); do
     http_code=$(curl -s -o "${HEALTH_JSON}" -w "%{http_code}" \
         --max-time 8 \
         "${SERVICE_URL}/health" 2>/dev/null || echo "000")
 
-    if [[ "${http_code}" == "200" ]] && [[ -f "${HEALTH_JSON}" ]]; then
-        if [[ -n "${PYTHON_CMD}" ]]; then
-            LAST_STATUS=$(${PYTHON_CMD} -c "
-import json,sys
-try:
-    d=json.load(open('${HEALTH_JSON}'))
-    print(d.get('status','?'))
-except: print('parse_error')
-" 2>/dev/null || echo "?")
-        else
-            LAST_STATUS=$(grep -o '"status":"[^"]*"' "${HEALTH_JSON}" 2>/dev/null | head -1 | cut -d'"' -f4 || echo "?")
+    if [[ "${http_code}" == "200" ]]; then
+        # 200: READY
+        HEALTH_OK=true
+        ok "Health OK (시도 ${i}/${HEALTH_RETRY_MAX})"
+        break
+    elif [[ "${http_code}" == "503" ]] && [[ -f "${HEALTH_JSON}" ]]; then
+        LAST_STATUS=$(_parse_health_status "${HEALTH_JSON}")
+        if [[ "${LAST_STATUS}" == "error" ]]; then
+            # 모델 로드 실패 — 대기해도 바뀌지 않음
+            err "모델 로드 실패 (status=error) — 대기 중단"
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -30 | tee -a "${EXEC_LOG}" || true
+            VERDICT="FAIL"; FINAL_EXIT=1; exit 1
         fi
-
-        if [[ "${LAST_STATUS}" == "ok" ]]; then
-            HEALTH_OK=true
-            ok "Health OK (시도 ${i}/${HEALTH_RETRY_MAX})"
-            break
-        else
-            if (( i % 6 == 0 )); then
-                info "Health: status=${LAST_STATUS} — 모델 로딩 중 (${i}/${HEALTH_RETRY_MAX})"
-                docker logs "${CONTAINER_NAME}" 2>&1 | tail -3 | tee -a "${EXEC_LOG}" || true
-            fi
+        # status=loading 또는 not_started: 계속 대기
+        if (( i % 6 == 0 )); then
+            info "Health 503 status=${LAST_STATUS} — 모델 로딩 중 (${i}/${HEALTH_RETRY_MAX})"
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -3 | tee -a "${EXEC_LOG}" || true
         fi
     else
         if (( i % 6 == 0 )); then
-            info "HTTP ${http_code} (${i}/${HEALTH_RETRY_MAX})"
+            info "HTTP ${http_code} (${i}/${HEALTH_RETRY_MAX}) — 서비스 기동 대기"
         fi
     fi
     sleep "${HEALTH_RETRY_INTERVAL}"
@@ -742,6 +908,14 @@ printf "| sam2 버전 | any | %s |\n" "${SAM2_PKG_VERSION}"
 printf "| nvidia 패키지 수 | 0 | %s |\n" "${NVIDIA_PKG_COUNT}"
 printf "| cudaAvailable | False | %s |\n\n" "${TORCH_CUDA_AVAIL}"
 
+printf "## 모델 사전 다운로드\n\n"
+printf "| 항목 | 결과 |\n|---|---|\n"
+printf "| HF 캐시 볼륨 | %s |\n" "${HF_CACHE_VOLUME}"
+printf "| GDINO 다운로드 성공 | %s |\n" "${GDINO_DOWNLOAD_OK}"
+printf "| SAM2 다운로드 성공 | %s |\n" "${SAM2_DOWNLOAD_OK}"
+printf "| GDINO 캐시 준비 | %s |\n" "${GDINO_CACHE_READY}"
+printf "| SAM2 캐시 준비 | %s |\n\n" "${SAM2_CACHE_READY}"
+
 printf "## 모델 정보\n\n"
 printf "| field | actual |\n|---|---|\n"
 printf "| groundingDinoModelId | %s |\n" "${GDINO_MODEL_ID}"
@@ -826,6 +1000,9 @@ echo "  TORCH_VARIANT:              ${TORCH_VARIANT}"                          |
 echo "  torch 버전:                 ${TORCH_VERSION}"                          | tee -a "${EXEC_LOG}"
 echo "  nvidia 패키지 수:           ${NVIDIA_PKG_COUNT} (기대: 0)"             | tee -a "${EXEC_LOG}"
 echo "  cudaAvailable:              ${TORCH_CUDA_AVAIL} (기대: False)"         | tee -a "${EXEC_LOG}"
+echo "  HF 캐시 볼륨:               ${HF_CACHE_VOLUME}"                        | tee -a "${EXEC_LOG}"
+echo "  GDINO 캐시 준비:            ${GDINO_CACHE_READY}"                      | tee -a "${EXEC_LOG}"
+echo "  SAM2 캐시 준비:             ${SAM2_CACHE_READY}"                       | tee -a "${EXEC_LOG}"
 echo "  externalModelRealInference: ${REAL_INFERENCE}"                         | tee -a "${EXEC_LOG}"
 echo "  groundingDinoDetected:      ${GDINO_DETECTED}"                         | tee -a "${EXEC_LOG}"
 echo "  sam2MaskGenerated:          ${SAM2_GENERATED}"                         | tee -a "${EXEC_LOG}"

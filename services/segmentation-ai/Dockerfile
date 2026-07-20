@@ -60,6 +60,16 @@ ENV MODELS_DIR=/models
 # 서비스 시작 시 lazy load (첫 요청에 로드)
 ENV PRELOAD_MODELS=false
 
+# Hugging Face 캐시 설정
+# hf-xet 비활성화: 일부 네트워크에서 signed chunk URL 전송 중 연결 종료 발생
+ENV HF_HUB_DISABLE_XET=1
+ENV HF_HUB_DOWNLOAD_TIMEOUT=1200
+ENV HF_HUB_ETAG_TIMEOUT=60
+ENV HF_HUB_DISABLE_TELEMETRY=1
+ENV HF_HOME=/models/huggingface
+ENV HF_HUB_CACHE=/models/huggingface/hub
+ENV TRANSFORMERS_CACHE=/models/huggingface/transformers
+
 EXPOSE 8090
 
 CMD ["gunicorn", "--bind", "0.0.0.0:8090", "--workers", "1", \
