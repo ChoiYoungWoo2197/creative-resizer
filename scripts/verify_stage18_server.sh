@@ -325,21 +325,51 @@ fi
 section "Step 4.5: 설치 패키지 검증"
 
 PKG_LIST="${ARTIFACT_DIR}/pip-list.txt"
-docker run --rm "${SEG_IMAGE}" pip list > "${PKG_LIST}" 2>&1
 
-TORCH_VERSION=$(awk '/^[Tt]orch /{print $2}' "${PKG_LIST}" | head -1 || echo "N/A")
-TORCHVISION_VERSION=$(awk '/^[Tt]orch[Vv]ision /{print $2}' "${PKG_LIST}" | head -1 || echo "N/A")
-SAM2_PKG_VERSION=$(awk '/^sam2 /{print $2}' "${PKG_LIST}" | head -1 || echo "N/A")
-NVIDIA_PKG_COUNT=$(grep -Ei 'nvidia|cuda-toolkit|triton' "${PKG_LIST}" 2>/dev/null | wc -l | tr -d ' ')
+# pip list 실패 시 명확한 오류 출력 (set -e 영향 방어)
+if docker run --rm "${SEG_IMAGE}" pip list > "${PKG_LIST}" 2>&1; then
+    ok "pip 패키지 목록 조회 성공"
+else
+    err "pip 패키지 목록 조회 실패"
+    cat "${PKG_LIST}" | tee -a "${EXEC_LOG}"
+    VERDICT="FAIL"; FINAL_EXIT=1; exit 1
+fi
 
-info "torch 버전:      ${TORCH_VERSION}"
-info "torchvision 버전: ${TORCHVISION_VERSION}"
-info "sam2 버전:        ${SAM2_PKG_VERSION}"
+TORCH_VERSION=$(awk '/^[Tt]orch /{print $2}' "${PKG_LIST}" | head -1)
+TORCHVISION_VERSION=$(awk '/^[Tt]orch[Vv]ision /{print $2}' "${PKG_LIST}" | head -1)
+SAM2_PKG_VERSION=$(awk '/^sam2 /{print $2}' "${PKG_LIST}" | head -1)
+TORCH_VERSION="${TORCH_VERSION:-N/A}"
+TORCHVISION_VERSION="${TORCHVISION_VERSION:-N/A}"
+SAM2_PKG_VERSION="${SAM2_PKG_VERSION:-N/A}"
+
+# grep은 미일치 시 exit 1 반환 → set -Eeuo pipefail 환경에서 스크립트 중단됨.
+# awk 방식으로 교체: 미일치 시 0을 반환하며 항상 exit 0.
+NVIDIA_PKG_COUNT=$(
+    awk '
+        BEGIN { IGNORECASE = 1; count = 0 }
+        $1 ~ /^(nvidia-|cuda-toolkit$|triton$)/ { count++ }
+        END { print count }
+    ' "${PKG_LIST}"
+)
+NVIDIA_PKG_COUNT="${NVIDIA_PKG_COUNT:-0}"
+
+info "torch 버전:            ${TORCH_VERSION}"
+info "torchvision 버전:      ${TORCHVISION_VERSION}"
+info "sam2 버전:             ${SAM2_PKG_VERSION}"
 info "nvidia/cuda 패키지 수: ${NVIDIA_PKG_COUNT}"
+
+# 필수 패키지 존재 여부 확인
+if [[ "${TORCH_VERSION}" == "N/A" ]]; then
+    err "torch 패키지가 pip list에 없음"
+    VERDICT_REASONS+=("torch 패키지 없음")
+    VERDICT="FAIL"; FINAL_EXIT=1; exit 1
+fi
 
 if [[ "${NVIDIA_PKG_COUNT}" -gt 0 ]]; then
     err "GPU 패키지 발견 (${NVIDIA_PKG_COUNT}개) — CPU 이미지에 허용 안 됨:"
-    grep -Ei 'nvidia|cuda-toolkit|triton' "${PKG_LIST}" | tee -a "${EXEC_LOG}"
+    # 미일치 시 종료 방지를 위해 || true
+    awk 'BEGIN{IGNORECASE=1} $1~/^(nvidia-|cuda-toolkit$|triton$)/{print}' "${PKG_LIST}" \
+        | tee -a "${EXEC_LOG}" || true
     VERDICT_REASONS+=("GPU 패키지 ${NVIDIA_PKG_COUNT}개 발견 → CPU 빌드 실패")
     VERDICT="FAIL"; FINAL_EXIT=1; exit 1
 fi
