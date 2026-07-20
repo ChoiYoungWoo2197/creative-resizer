@@ -1,15 +1,15 @@
 """Grounded-SAM-2 provider.
 
-GroundingDINO (HuggingFace transformers) + SAM 2 (sam2 package, PyPI).
+GroundingDINO (HuggingFace transformers) + SAM 2 (Meta 공식 GitHub v1.1).
 
 Model cache:
   /models/huggingface/hub/      → GDINO (HF hub standard layout)
   /models/sam2/                 → SAM 2 checkpoint (.pt)
 
-SAM2 config candidates tried in order (build_sam2 내부 Hydra 설정에 따라):
-  1. "configs/sam2.1/sam2.1_hiera_t.yaml"   (sam2 README 권장)
-  2. "sam2.1/sam2.1_hiera_t.yaml"            (configs/ 가 root인 경우)
-  3. absolute path                            (fallback)
+Hydra 초기화:
+  build_sam2() 호출 전 반드시 ensure_sam2_hydra_initialized()를 먼저 호출.
+  프로세스 당 1회, thread-safe double-checked locking 패턴.
+  GlobalHydra clear() 직접 호출 금지 — 서비스 코드에서 Hydra 상태를 리셋하면 안 됨.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import os
 import io
 import base64
 import logging
+import threading
 import time
 import traceback as _tb
 
@@ -38,38 +39,63 @@ SAM2_CHECKPOINT = os.environ.get(
     "SAM2_CHECKPOINT",
     os.path.join(MODELS_DIR, "sam2", "sam2.1_hiera_tiny.pt"),
 )
+# SAM2.1 hiera-tiny 전용 config — Hydra initialize_config_module("sam2") 후 사용
+SAM2_CONFIG_NAME = os.environ.get(
+    "SAM2_CONFIG", "configs/sam2.1/sam2.1_hiera_t.yaml"
+)
 CPU_MAX_SIDE = 640
 
 
-def _resolve_sam2_config() -> tuple[list[str], str]:
-    """SAM2 build_sam2에 전달할 config 후보 목록과 절대 경로 반환.
+# ── Hydra 초기화 (thread-safe, 프로세스 당 1회) ──────────────────────────────
+
+_hydra_init_lock: threading.Lock = threading.Lock()
+_hydra_initialized: bool = False
+
+
+def ensure_sam2_hydra_initialized() -> bool:
+    """Hydra를 SAM2 config 모듈로 프로세스당 한 번만 초기화.
+
+    Thread-safe double-checked locking 패턴.
+    GlobalHydra clear() 직접 호출 금지 (Hydra 상태 리셋 불가).
 
     Returns:
-        (candidates, abs_path)
-        candidates: build_sam2 config_name 후보 (순서대로 시도)
-        abs_path:   패키지 내 실제 파일 경로 (로그/검증용)
+        True:  이 호출에서 초기화됨 (처음)
+        False: 이미 초기화되어 있었음 (생략)
+
+    Raises:
+        RuntimeError: import 실패 또는 initialize_config_module 예외
     """
-    env_cfg = os.environ.get("SAM2_CONFIG", "")
-    if env_cfg:
-        return [env_cfg], f"env_override:{env_cfg}"
+    global _hydra_initialized
 
-    abs_path = "(unknown)"
     try:
-        import sam2 as _s2
-        pkg = os.path.dirname(_s2.__file__)
-        abs_path = os.path.join(pkg, "configs", "sam2.1", "sam2.1_hiera_t.yaml")
-    except Exception:
-        pass
+        from hydra.core.global_hydra import GlobalHydra
+        from hydra import initialize_config_module
+    except ImportError as e:
+        raise RuntimeError(f"Hydra import 실패: {e}") from e
 
-    candidates = [
-        "configs/sam2.1/sam2.1_hiera_t.yaml",   # sam2 docs 권장
-        "sam2.1/sam2.1_hiera_t.yaml",            # configs/ 가 Hydra root일 때
-        "sam2.1_hiera_t",                         # suffix 없는 형태
-    ]
-    return candidates, abs_path
+    # 1차 확인 (lock 없음, 빠른 경로)
+    if GlobalHydra.instance().is_initialized():
+        return False
 
+    with _hydra_init_lock:
+        # 2차 확인 (lock 획득 후 double-check)
+        if GlobalHydra.instance().is_initialized():
+            return False
 
-_SAM2_CONFIG_CANDIDATES, _SAM2_CONFIG_ABS = _resolve_sam2_config()
+        log.info(
+            "Hydra 초기화 시작: config_module=sam2 version_base=1.2"
+        )
+        initialize_config_module(
+            config_module="sam2",
+            version_base="1.2",
+            job_name="creative_segmentation_sam2",
+        )
+        _hydra_initialized = True
+        log.info(
+            "Hydra 초기화 완료: is_initialized=%s",
+            GlobalHydra.instance().is_initialized(),
+        )
+        return True
 
 
 def _gdino_cache_ready() -> bool:
@@ -89,15 +115,6 @@ def _sam2_cache_ready() -> bool:
     return os.path.getsize(SAM2_CHECKPOINT) > 100_000_000
 
 
-def _clear_hydra() -> None:
-    """Hydra global state 초기화 — 동일 프로세스 내 2회 호출 대비."""
-    try:
-        from hydra.core.global_hydra import GlobalHydra
-        GlobalHydra.instance().clear()
-    except Exception:
-        pass
-
-
 # ── Provider 클래스 ──────────────────────────────────────────────────────────
 
 class GroundedSam2Provider:
@@ -113,8 +130,7 @@ class GroundedSam2Provider:
         self._gdino_model_id: str = GDINO_MODEL_ID
         self._gdino_revision: str = "unknown"
         self._sam2_checkpoint: str = SAM2_CHECKPOINT
-        self._sam2_config_candidates: list[str] = _SAM2_CONFIG_CANDIDATES
-        self._sam2_config_abs: str = _SAM2_CONFIG_ABS
+        self._sam2_config_name: str = SAM2_CONFIG_NAME
         self._model_load_ms: int = 0
         self._gdino_cache_hit: bool = False
 
@@ -129,6 +145,9 @@ class GroundedSam2Provider:
         self._sam2_error_type: str | None = None
         self._sam2_error_msg: str | None = None
         self._sam2_error_tb: str | None = None
+        # Hydra 초기화 상태
+        self._hydra_init_by_service: bool = False
+        self._hydra_init_error: str | None = None
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -168,14 +187,22 @@ class GroundedSam2Provider:
                 os.path.getsize(self._sam2_checkpoint)
                 if os.path.isfile(self._sam2_checkpoint) else 0
             ),
-            "sam2ConfigCandidates":      self._sam2_config_candidates,
+            "sam2ConfigName":            self._sam2_config_name,
             "sam2ConfigUsed":            self._sam2_config_used or "",
-            "sam2ConfigAbs":             self._sam2_config_abs,
             "sam2ImportOk":              self._sam2_import_ok,
             "sam2CheckpointReady":       self._sam2_checkpoint_ok,
             "sam2ModelReady":            self._sam2_model_ok,
             "sam2PredictorReady":        self._sam2_predictor_ok,
             "sam2RealInference":         self._sam2_predictor_ok,
+            # ── Hydra ──────────────────────────────────────────────────────
+            "hydraInitializedBefore":    not self._hydra_init_by_service,
+            "hydraInitializedByService": self._hydra_init_by_service,
+            "hydraConfigModule":         "sam2",
+            "hydraInitErrorType":        (
+                self._hydra_init_error.split(":")[0]
+                if self._hydra_init_error else ""
+            ),
+            "hydraInitErrorMessage":     self._hydra_init_error or "",
             # ── 오류 ───────────────────────────────────────────────────────
             "sam2LoadErrorType":         self._sam2_error_type or "",
             "sam2LoadErrorMessage":      self._sam2_error_msg or "",
@@ -369,20 +396,25 @@ class GroundedSam2Provider:
         log.info("GroundingDINO 로드 완료: device=%s cache_hit=%s", device, self._gdino_cache_hit)
 
     def _load_sam2(self, device: str) -> None:
-        """SAM2 초기화 — 예외 발생 시 원본 type/message/traceback 보존."""
+        """SAM2 초기화 — Hydra 명시적 초기화 후 build_sam2 단일 config 사용."""
 
-        # Step 1: import
-        log.info("SAM2 로드 시작: checkpoint=%s config_candidates=%s device=%s",
-                 self._sam2_checkpoint, self._sam2_config_candidates, device)
+        # Step 1: import + 패키지 진단
+        log.info("SAM2 로드 시작: checkpoint=%s config=%s device=%s",
+                 self._sam2_checkpoint, self._sam2_config_name, device)
         try:
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
-            import sam2 as _s2
+            import sam2 as _s2, glob, inspect
             pkg_dir = os.path.dirname(_s2.__file__)
             self._sam2_import_ok = True
             log.info("sam2 import 성공: package_dir=%s", pkg_dir)
-            # sam2 패키지 내 config 목록 출력 (디버그용)
-            import glob
+            # build_sam2 소스에서 Hydra 자동 초기화 코드 확인 (진단용)
+            try:
+                src = inspect.getsource(build_sam2)
+                has_auto = "initialize_config_module" in src
+                log.info("build_sam2 has_auto_hydra_init=%s", has_auto)
+            except Exception:
+                pass
             for cf in sorted(glob.glob(
                 os.path.join(pkg_dir, "**", "*.yaml"), recursive=True
             ))[:10]:
@@ -411,51 +443,51 @@ class GroundedSam2Provider:
             ckpt_size   = os.path.getsize(ckpt) if ckpt_exists else 0
             self._sam2_checkpoint_ok = ckpt_exists and ckpt_size > 100_000_000
 
-        log.info("SAM2 config_abs: %s", self._sam2_config_abs)
-
-        # Step 3: build_sam2 — 후보 config 순서대로 시도
-        sam2_model = None
-        last_exc: Exception | None = None
-        for cfg in self._sam2_config_candidates:
-            _clear_hydra()
-            try:
-                log.info("SAM2 build_sam2 시도: config=%s checkpoint=%s device=%s",
-                         cfg, ckpt, device)
-                sam2_model = build_sam2(cfg, ckpt, device=device)
-                self._sam2_model_ok    = True
-                self._sam2_config_used = cfg
-                log.info("SAM2 build_sam2 성공: config=%s", cfg)
-                break
-            except Exception as exc:
-                last_exc = exc
-                tb_str   = _tb.format_exc()
-                self._sam2_error_type = type(exc).__name__
-                self._sam2_error_msg  = str(exc)
-                self._sam2_error_tb   = tb_str
-                log.warning(
-                    "SAM2 build_sam2 실패 (config=%s): %s: %s\n%s",
-                    cfg, type(exc).__name__, exc, tb_str,
-                )
-
-        if sam2_model is None:
-            msg = (
-                f"SAM2 build_sam2 {len(self._sam2_config_candidates)}개 config 모두 실패: "
-                f"last={self._sam2_error_type}: {self._sam2_error_msg}"
-            )
-            raise RuntimeError(msg) from last_exc
-
-        # Step 4: predictor 생성
+        # Step 3: Hydra 명시적 초기화 (GlobalHydra.clear() 호출 금지)
+        log.info("SAM2 Hydra 초기화: config_module=sam2 version_base=1.2")
         try:
-            self._sam2_predictor   = SAM2ImagePredictor(sam2_model)
-            self._sam2_predictor_ok = True
-            self._sam2_available   = True
-            log.info("SAM2 predictor 생성 완료: config_used=%s", self._sam2_config_used)
+            self._hydra_init_by_service = ensure_sam2_hydra_initialized()
+            log.info(
+                "Hydra 초기화 상태: initialized_by_service=%s",
+                self._hydra_init_by_service,
+            )
+        except RuntimeError as e:
+            self._hydra_init_error = str(e)
+            self._sam2_error_type  = "HydraInitError"
+            self._sam2_error_msg   = str(e)
+            self._sam2_error_tb    = _tb.format_exc()
+            log.error("Hydra 초기화 실패:\n%s", self._sam2_error_tb)
+            raise
+
+        # Step 4: build_sam2 — 단일 config
+        cfg = self._sam2_config_name
+        log.info("SAM2 build_sam2: config=%s checkpoint=%s device=%s", cfg, ckpt, device)
+        try:
+            sam2_model = build_sam2(cfg, ckpt, device=device)
+            self._sam2_model_ok    = True
+            self._sam2_config_used = cfg
+            log.info("SAM2 build_sam2 성공: config=%s", cfg)
         except Exception as exc:
-            tb_str = _tb.format_exc()
             self._sam2_error_type = type(exc).__name__
             self._sam2_error_msg  = str(exc)
-            self._sam2_error_tb   = tb_str
-            log.error("SAM2 predictor 생성 실패:\n%s", tb_str)
+            self._sam2_error_tb   = _tb.format_exc()
+            log.error(
+                "SAM2 build_sam2 실패 (config=%s):\n%s",
+                cfg, self._sam2_error_tb,
+            )
+            raise RuntimeError(f"SAM2 build_sam2 실패: {exc}") from exc
+
+        # Step 5: predictor 생성
+        try:
+            self._sam2_predictor    = SAM2ImagePredictor(sam2_model)
+            self._sam2_predictor_ok = True
+            self._sam2_available    = True
+            log.info("SAM2 predictor 생성 완료: config_used=%s", self._sam2_config_used)
+        except Exception as exc:
+            self._sam2_error_type = type(exc).__name__
+            self._sam2_error_msg  = str(exc)
+            self._sam2_error_tb   = _tb.format_exc()
+            log.error("SAM2 predictor 생성 실패:\n%s", self._sam2_error_tb)
             raise RuntimeError(f"sam2_predictor_failed: {exc}") from exc
 
     def _run_gdino(self, image, text: str, threshold: float) -> tuple:
@@ -490,6 +522,7 @@ class GroundedSam2Provider:
 
     def _run_sam2(self, image, box_xyxy: list) -> tuple:
         import numpy as np
+        import torch
         # set_image: numpy RGB 배열로 전달
         if hasattr(image, "mode"):
             img_np = np.array(image.convert("RGB"))
@@ -498,9 +531,10 @@ class GroundedSam2Provider:
         self._sam2_predictor.set_image(img_np)
         # box: shape (4,) — 단일 박스
         box_np = np.array(box_xyxy, dtype=np.float32)
-        masks, scores, _ = self._sam2_predictor.predict(
-            box=box_np, multimask_output=False
-        )
+        with torch.inference_mode():
+            masks, scores, _ = self._sam2_predictor.predict(
+                box=box_np, multimask_output=False
+            )
         if masks is None or len(masks) == 0:
             return _bbox_to_mask(image, box_xyxy)[0], 0.5, 1
 

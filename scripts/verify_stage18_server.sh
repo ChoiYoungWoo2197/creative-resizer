@@ -424,176 +424,6 @@ printf '  %-30s %-20s %s\n' "nvidia 패키지 수" "0" "${NVIDIA_PKG_COUNT}" | t
 printf '  %-30s %-20s %s\n' "cudaAvailable" "False" "${TORCH_CUDA_AVAIL}" | tee -a "${EXEC_LOG}"
 
 # ==========================================================================
-# Step 4.6: SAM2 실제 초기화 smoke test
-# ==========================================================================
-section "Step 4.6: SAM2 초기화 smoke test (config 탐색 + predictor + mask)"
-
-SAM2_INIT_LOG="${ARTIFACT_DIR}/sam2-init-check.txt"
-SAM2_INIT_TB="${ARTIFACT_DIR}/sam2-init-traceback.txt"
-
-# Python 스크립트를 artifact dir에 작성 후 컨테이너에 마운트
-SAM2_INIT_SCRIPT="${ARTIFACT_DIR}/sam2_init_check.py"
-cat > "${SAM2_INIT_SCRIPT}" <<'SAM2PY'
-#!/usr/bin/env python3
-"""SAM2 초기화 smoke test — verify_stage18_server.sh Step 4.6."""
-import os, sys, traceback as _tb, glob
-
-ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR", "/artifacts")
-CKPT = os.environ.get("SAM2_CHECKPOINT", "/models/sam2/sam2.1_hiera_tiny.pt")
-TB_FILE = os.path.join(ARTIFACT_DIR, "sam2-init-traceback.txt")
-os.makedirs(ARTIFACT_DIR, exist_ok=True)
-
-def log(key, value):
-    print(f"{key}={value}", flush=True)
-
-def clear_hydra():
-    try:
-        from hydra.core.global_hydra import GlobalHydra
-        GlobalHydra.instance().clear()
-    except Exception:
-        pass
-
-# 1. sam2 import + 패키지 구조 확인
-log("step", "1_import")
-try:
-    import sam2
-    from sam2.build_sam import build_sam2
-    from sam2.sam2_image_predictor import SAM2ImagePredictor
-    log("sam2Import", "true")
-    pkg_dir = os.path.dirname(sam2.__file__)
-    log("sam2PackageDir", pkg_dir)
-    for cf in sorted(glob.glob(os.path.join(pkg_dir, "**", "*.yaml"), recursive=True))[:20]:
-        log("sam2ConfigFile", os.path.relpath(cf, pkg_dir))
-except ImportError as e:
-    log("sam2Import", "false")
-    log("importError", str(e))
-    with open(TB_FILE, "w") as f:
-        _tb.print_exc(file=f)
-    sys.exit(1)
-
-# 2. Checkpoint 검증
-log("step", "2_checkpoint")
-ckpt_exists = os.path.isfile(CKPT)
-ckpt_size   = os.path.getsize(CKPT) if ckpt_exists else 0
-ckpt_ok     = ckpt_exists and ckpt_size > 100_000_000
-log("sam2CheckpointPath", CKPT)
-log("sam2CheckpointExists", str(ckpt_exists))
-log("sam2CheckpointSizeBytes", str(ckpt_size))
-log("sam2CheckpointReady", str(ckpt_ok))
-if not ckpt_ok:
-    log("sam2ModelBuild", "false")
-    log("reason", f"checkpoint_not_ready:exists={ckpt_exists}:size={ckpt_size}")
-    sys.exit(1)
-
-# 3. build_sam2 — 여러 config 후보 시도
-log("step", "3_build_sam2")
-cfg_candidates = [
-    "configs/sam2.1/sam2.1_hiera_t.yaml",
-    "sam2.1/sam2.1_hiera_t.yaml",
-    "sam2.1_hiera_t",
-]
-sam2_model = None
-cfg_used   = None
-for cfg in cfg_candidates:
-    clear_hydra()
-    try:
-        log("sam2BuildTry", cfg)
-        sam2_model = build_sam2(cfg, CKPT, device="cpu")
-        cfg_used = cfg
-        log("sam2ModelBuild", "true")
-        log("sam2ConfigUsed", cfg)
-        break
-    except Exception as e:
-        log("sam2BuildFail", f"config={cfg} type={type(e).__name__} msg={str(e)[:120]}")
-        with open(TB_FILE, "a") as f:
-            f.write(f"\n=== build_sam2 config={cfg} ===\n")
-            _tb.print_exc(file=f)
-if sam2_model is None:
-    log("sam2ModelBuild", "false")
-    log("sam2ModelReady", "false")
-    sys.exit(1)
-
-# 4. Predictor
-log("step", "4_predictor")
-try:
-    pred = SAM2ImagePredictor(sam2_model)
-    log("sam2PredictorReady", "true")
-except Exception as e:
-    log("sam2PredictorReady", "false")
-    log("predictorError", f"{type(e).__name__}: {e}")
-    with open(TB_FILE, "a") as f:
-        f.write("\n=== SAM2ImagePredictor ===\n")
-        _tb.print_exc(file=f)
-    sys.exit(1)
-
-# 5. Smoke mask (100×100 테스트 이미지)
-log("step", "5_smoke_mask")
-try:
-    import numpy as np
-    from PIL import Image as PILImage
-    test_img = np.array(PILImage.new("RGB", (100, 100), color=(128, 64, 32)))
-    pred.set_image(test_img)
-    masks, scores, _ = pred.predict(
-        box=np.array([10, 10, 80, 80], dtype=np.float32),
-        multimask_output=False,
-    )
-    mask_ok = masks is not None and len(masks) > 0
-    log("sam2SmokeMaskGenerated", str(mask_ok))
-    if mask_ok:
-        log("sam2SmokeShape", str(masks.shape))
-        log("sam2SmokeDtype", str(masks.dtype))
-    log("sam2RealInference", str(mask_ok))
-except Exception as e:
-    log("sam2SmokeMaskGenerated", "false")
-    log("smokeError", f"{type(e).__name__}: {e}")
-    with open(TB_FILE, "a") as f:
-        f.write("\n=== smoke mask ===\n")
-        _tb.print_exc(file=f)
-    sys.exit(1)
-
-log("sam2InitCheck", "PASS")
-SAM2PY
-
-info "SAM2 smoke init 실행 중 (checkpoint=${HF_CACHE_VOLUME}:/models/sam2/sam2.1_hiera_tiny.pt)"
-docker run --rm \
-    -v "${HF_CACHE_VOLUME}:/models" \
-    -v "${ARTIFACT_DIR}:/artifacts:rw" \
-    -v "${SAM2_INIT_SCRIPT}:/scripts/sam2_init_check.py:ro" \
-    -e SAM2_CHECKPOINT=/models/sam2/sam2.1_hiera_tiny.pt \
-    -e ARTIFACT_DIR=/artifacts \
-    -e MODELS_DIR=/models \
-    "${SEG_IMAGE}" \
-    python3 /scripts/sam2_init_check.py \
-    2>&1 | tee "${SAM2_INIT_LOG}" | tee -a "${EXEC_LOG}" || true
-
-# 결과 파싱
-SAM2_INIT_OK=false
-SAM2_INIT_STATUS="FAIL"
-SAM2_CONFIG_USED="N/A"
-SAM2_SMOKE_MASK="false"
-
-if grep -q "sam2InitCheck=PASS" "${SAM2_INIT_LOG}" 2>/dev/null; then
-    SAM2_INIT_OK=true
-    SAM2_INIT_STATUS="PASS"
-    ok "SAM2 초기화 smoke test PASS"
-else
-    warn "SAM2 초기화 smoke test FAIL"
-    if [[ -f "${SAM2_INIT_TB}" ]]; then
-        info "SAM2 traceback:"
-        cat "${SAM2_INIT_TB}" | tee -a "${EXEC_LOG}" || true
-    fi
-    VERDICT_REASONS+=("SAM2 smoke init FAIL — traceback: ${SAM2_INIT_TB}")
-fi
-
-SAM2_CONFIG_USED=$(grep 'sam2ConfigUsed=' "${SAM2_INIT_LOG}" 2>/dev/null \
-    | tail -1 | cut -d'=' -f2- || echo "N/A")
-SAM2_SMOKE_MASK=$(grep 'sam2SmokeMaskGenerated=' "${SAM2_INIT_LOG}" 2>/dev/null \
-    | tail -1 | cut -d'=' -f2- || echo "false")
-
-info "sam2ConfigUsed:        ${SAM2_CONFIG_USED}"
-info "sam2SmokeMaskGenerated: ${SAM2_SMOKE_MASK}"
-
-# ==========================================================================
 # Step 4.7: Named volume 생성 (재실행 시 재사용)
 # ==========================================================================
 section "Step 4.7: Named volume '${HF_CACHE_VOLUME}' 준비"
@@ -664,7 +494,7 @@ docker run --rm \
     -e MODELS_DIR=/models \
     "${SEG_IMAGE}" \
     python3 -c "
-import os, time, urllib.request
+import os, sys, time, urllib.request
 url = '${SAM2_URL}'
 out = '/models/sam2/sam2.1_hiera_tiny.pt'
 os.makedirs('/models/sam2', exist_ok=True)
@@ -672,7 +502,6 @@ os.makedirs('/models/sam2', exist_ok=True)
 if os.path.exists(out) and os.path.getsize(out) > 100_000_000:
     print('SAM2 체크포인트 이미 존재 (캐시 hit):', out, flush=True)
     sys.exit(0)
-import sys
 for attempt in range(1, 4):
     try:
         print(f'SAM2 다운로드 시도 {attempt}/3...', flush=True)
@@ -739,6 +568,196 @@ SAM2_CACHE_READY=$(grep 'sam2CacheReady=' "${CACHE_CHECK}" 2>/dev/null | awk -F'
 [[ "${SAM2_CACHE_READY}" == "True" ]] && ok "SAM2 캐시: 준비 완료" || warn "SAM2 캐시: 없음 (서비스 시작 시 다운로드)"
 
 # ==========================================================================
+# Step 4.96: SAM2 초기화 smoke test (checkpoint 다운로드 이후)
+# ==========================================================================
+section "Step 4.96: SAM2 초기화 smoke test (Hydra + build_sam2 + 256×256 mask)"
+
+SAM2_INIT_LOG="${ARTIFACT_DIR}/sam2-init-check.txt"
+SAM2_INIT_TB="${ARTIFACT_DIR}/sam2-init-traceback.txt"
+SAM2_INIT_SCRIPT="${ARTIFACT_DIR}/sam2_init_check.py"
+
+cat > "${SAM2_INIT_SCRIPT}" <<'SAM2PY'
+#!/usr/bin/env python3
+"""SAM2 초기화 smoke test — verify_stage18_server.sh Step 4.96."""
+import os, sys, traceback as _tb, importlib.metadata, inspect
+
+ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR", "/artifacts")
+CKPT = os.environ.get("SAM2_CHECKPOINT", "/models/sam2/sam2.1_hiera_tiny.pt")
+CFG  = os.environ.get("SAM2_CONFIG", "configs/sam2.1/sam2.1_hiera_t.yaml")
+TB_FILE = os.path.join(ARTIFACT_DIR, "sam2-init-traceback.txt")
+os.makedirs(ARTIFACT_DIR, exist_ok=True)
+
+def log(key, value):
+    print(f"{key}={value}", flush=True)
+
+# 1. sam2 import + 패키지 감사
+log("step", "1_import")
+try:
+    import sam2
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    log("sam2Import", "true")
+    try:
+        ver = importlib.metadata.version("sam2")
+    except Exception:
+        ver = "unknown"
+    log("sam2DistVersion", ver)
+    src = inspect.getsource(build_sam2)
+    log("buildSam2HasHydraInit", str("initialize_config_module" in src))
+except ImportError as e:
+    log("sam2Import", "false")
+    log("importError", str(e))
+    with open(TB_FILE, "w") as f:
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+# 2. Checkpoint 검증
+log("step", "2_checkpoint")
+ckpt_exists = os.path.isfile(CKPT)
+ckpt_size   = os.path.getsize(CKPT) if ckpt_exists else 0
+ckpt_ok     = ckpt_exists and ckpt_size > 100_000_000
+log("sam2CheckpointPath", CKPT)
+log("sam2CheckpointExists", str(ckpt_exists))
+log("sam2CheckpointSizeBytes", str(ckpt_size))
+log("sam2CheckpointReady", str(ckpt_ok))
+if not ckpt_ok:
+    log("sam2ModelBuild", "false")
+    log("reason", f"checkpoint_not_ready:exists={ckpt_exists}:size={ckpt_size}")
+    sys.exit(1)
+
+# 3. Hydra 초기화 (명시적, 단일 config)
+log("step", "3_hydra_init")
+try:
+    from hydra.core.global_hydra import GlobalHydra
+    from hydra import initialize_config_module
+    hydra_before = GlobalHydra.instance().is_initialized()
+    log("hydraInitializedBefore", str(hydra_before))
+    hydra_by_service = False
+    if not hydra_before:
+        initialize_config_module(
+            config_module="sam2",
+            version_base="1.2",
+            job_name="sam2_smoke_check",
+        )
+        hydra_by_service = True
+    log("hydraInitializedByService", str(hydra_by_service))
+    log("hydraInitializedAfter", str(GlobalHydra.instance().is_initialized()))
+    log("sam2ConfigName", CFG)
+except Exception as e:
+    log("hydraInitError", f"{type(e).__name__}: {str(e)[:200]}")
+    with open(TB_FILE, "w") as f:
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+# 4. build_sam2 (단일 config, GlobalHydra.clear 금지)
+log("step", "4_build_sam2")
+try:
+    sam2_model = build_sam2(CFG, CKPT, device="cpu")
+    log("sam2ModelBuild", "true")
+    log("sam2ConfigUsed", CFG)
+except Exception as e:
+    log("sam2ModelBuild", "false")
+    log("buildError", f"{type(e).__name__}: {str(e)[:200]}")
+    with open(TB_FILE, "a") as f:
+        f.write("\n=== build_sam2 ===\n")
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+# 5. Predictor
+log("step", "5_predictor")
+try:
+    pred = SAM2ImagePredictor(sam2_model)
+    log("sam2PredictorReady", "true")
+except Exception as e:
+    log("sam2PredictorReady", "false")
+    log("predictorError", f"{type(e).__name__}: {str(e)[:200]}")
+    with open(TB_FILE, "a") as f:
+        f.write("\n=== SAM2ImagePredictor ===\n")
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+# 6~9. 256×256 smoke mask — CPU에서 torch.inference_mode (autocast 금지)
+log("step", "6_smoke_mask")
+try:
+    import numpy as np
+    import torch
+    img = np.zeros((256, 256, 3), dtype=np.uint8)
+    img[64:192, 64:192] = [200, 100, 50]
+    pred.set_image(img)
+    with torch.inference_mode():
+        masks, scores, _ = pred.predict(
+            box=np.array([20, 20, 200, 200], dtype=np.float32),
+            multimask_output=False,
+        )
+    mask_ok = masks is not None and len(masks) > 0
+    log("sam2SmokeMaskGenerated", str(mask_ok))
+    if mask_ok:
+        log("sam2SmokeMaskArea", str(int(masks[0].sum())))
+        log("sam2SmokeShape", str(masks.shape))
+    log("sam2RealInference", str(mask_ok))
+except Exception as e:
+    log("sam2SmokeMaskGenerated", "false")
+    log("smokeError", f"{type(e).__name__}: {str(e)[:200]}")
+    with open(TB_FILE, "a") as f:
+        f.write("\n=== smoke mask ===\n")
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+log("sam2InitCheck", "PASS")
+SAM2PY
+
+info "SAM2 smoke test 실행 중 (단일 config: configs/sam2.1/sam2.1_hiera_t.yaml)"
+docker run --rm \
+    -v "${HF_CACHE_VOLUME}:/models" \
+    -v "${ARTIFACT_DIR}:/artifacts:rw" \
+    -v "${SAM2_INIT_SCRIPT}:/scripts/sam2_init_check.py:ro" \
+    -e SAM2_CHECKPOINT=/models/sam2/sam2.1_hiera_tiny.pt \
+    -e SAM2_CONFIG=configs/sam2.1/sam2.1_hiera_t.yaml \
+    -e ARTIFACT_DIR=/artifacts \
+    "${SEG_IMAGE}" \
+    python3 /scripts/sam2_init_check.py \
+    2>&1 | tee "${SAM2_INIT_LOG}" | tee -a "${EXEC_LOG}" || true
+
+# 결과 파싱
+SAM2_INIT_OK=false
+SAM2_INIT_STATUS="FAIL"
+SAM2_CONFIG_USED="N/A"
+SAM2_SMOKE_MASK="false"
+
+if grep -q "sam2InitCheck=PASS" "${SAM2_INIT_LOG}" 2>/dev/null; then
+    SAM2_INIT_OK=true
+    SAM2_INIT_STATUS="PASS"
+    ok "SAM2 초기화 smoke test PASS"
+else
+    warn "SAM2 초기화 smoke test FAIL"
+    if [[ -f "${SAM2_INIT_TB}" ]]; then
+        info "SAM2 traceback:"
+        cat "${SAM2_INIT_TB}" | tee -a "${EXEC_LOG}" || true
+    fi
+    VERDICT_REASONS+=("SAM2 smoke init FAIL — traceback: ${SAM2_INIT_TB}")
+fi
+
+SAM2_CONFIG_USED=$(grep 'sam2ConfigUsed=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "N/A")
+SAM2_SMOKE_MASK=$(grep 'sam2SmokeMaskGenerated=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "false")
+HYDRA_BEFORE=$(grep 'hydraInitializedBefore=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "N/A")
+HYDRA_BY_SVC=$(grep 'hydraInitializedByService=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "N/A")
+HYDRA_AFTER=$(grep 'hydraInitializedAfter=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "N/A")
+SAM2_MASK_AREA=$(grep 'sam2SmokeMaskArea=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "N/A")
+
+info "sam2ConfigUsed:          ${SAM2_CONFIG_USED}"
+info "hydraInitializedBefore:  ${HYDRA_BEFORE}"
+info "hydraInitializedByService: ${HYDRA_BY_SVC}"
+info "hydraInitializedAfter:   ${HYDRA_AFTER}"
+info "sam2SmokeMaskGenerated:  ${SAM2_SMOKE_MASK}"
+info "sam2SmokeMaskArea:       ${SAM2_MASK_AREA}"
+
+# ==========================================================================
 # Step 5: 테스트 네트워크 + 컨테이너 시작
 # ==========================================================================
 section "Step 5: 테스트 네트워크·컨테이너 시작"
@@ -767,6 +786,8 @@ docker run -d \
     -e HF_HUB_DOWNLOAD_TIMEOUT=1200 \
     -e HF_HUB_ETAG_TIMEOUT=60 \
     -e HF_HUB_DISABLE_TELEMETRY=1 \
+    -e SAM2_CONFIG=configs/sam2.1/sam2.1_hiera_t.yaml \
+    -e SAM2_CHECKPOINT=/models/sam2/sam2.1_hiera_tiny.pt \
     "${SEG_IMAGE}" \
     > /dev/null 2>&1
 CONTAINER_STARTED=true

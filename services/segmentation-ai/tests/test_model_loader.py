@@ -370,5 +370,267 @@ class TestSam2GranularState(unittest.TestCase):
         self.assertFalse(p_sam2_fail.get_metadata()["realInferenceAvailable"])
 
 
+class TestHydraInitialization(unittest.TestCase):
+    """TC-18~TC-22: ensure_sam2_hydra_initialized() thread-safe 초기화 검증."""
+
+    @staticmethod
+    def _load_provider_fresh():
+        """provider 모듈을 깨끗하게 (재)임포트 — mock hydra/torch 사용."""
+        for mod in list(sys.modules.keys()):
+            if "grounded_sam2_provider" in mod or (
+                "providers" in mod and "grounded" in mod
+            ):
+                del sys.modules[mod]
+        sam2_stub = types.ModuleType("sam2")
+        base_mocks = {
+            "torch": MagicMock(),
+            "transformers": MagicMock(),
+            "sam2": sam2_stub,
+            "hydra": MagicMock(),
+            "hydra.core": MagicMock(),
+            "hydra.core.global_hydra": MagicMock(),
+        }
+        with patch.dict("sys.modules", base_mocks):
+            import providers.grounded_sam2_provider as p  # noqa: PLC0415
+        return p
+
+    def _make_hydra_mocks(self, already_initialized: bool):
+        """sys.modules 패치용 hydra mock dict 반환."""
+        gh_instance = MagicMock()
+        gh_instance.is_initialized.return_value = already_initialized
+
+        GlobalHydra = MagicMock()
+        GlobalHydra.instance.return_value = gh_instance
+
+        gh_module = types.ModuleType("hydra.core.global_hydra")
+        gh_module.GlobalHydra = GlobalHydra
+
+        hydra_module = types.ModuleType("hydra")
+        init_cm_mock = MagicMock()
+        hydra_module.initialize_config_module = init_cm_mock
+
+        mocks = {
+            "hydra": hydra_module,
+            "hydra.core": types.ModuleType("hydra.core"),
+            "hydra.core.global_hydra": gh_module,
+        }
+        return mocks, GlobalHydra, init_cm_mock
+
+    def test_18_returns_true_when_hydra_not_initialized(self):
+        """TC-18: Hydra 미초기화 시 ensure_sam2_hydra_initialized() → True, init 1회."""
+        p = self._load_provider_fresh()
+        mocks, _, init_mock = self._make_hydra_mocks(already_initialized=False)
+        with patch.dict("sys.modules", mocks):
+            p._hydra_initialized = False
+            result = p.ensure_sam2_hydra_initialized()
+        self.assertTrue(result)
+        init_mock.assert_called_once()
+
+    def test_19_returns_false_when_hydra_already_initialized(self):
+        """TC-19: Hydra 이미 초기화된 경우 False 반환, init 호출 없음."""
+        p = self._load_provider_fresh()
+        mocks, _, init_mock = self._make_hydra_mocks(already_initialized=True)
+        with patch.dict("sys.modules", mocks):
+            p._hydra_initialized = False
+            result = p.ensure_sam2_hydra_initialized()
+        self.assertFalse(result)
+        init_mock.assert_not_called()
+
+    def test_20_concurrent_init_called_exactly_once(self):
+        """TC-20: 10개 동시 ensure_sam2_hydra_initialized() → initialize_config_module 정확히 1회."""
+        p = self._load_provider_fresh()
+
+        call_count = [0]
+        initialized_flag = [False]
+        flag_lock = threading.Lock()
+
+        def _is_initialized():
+            with flag_lock:
+                return initialized_flag[0]
+
+        def _init_config_module(**kwargs):
+            with flag_lock:
+                call_count[0] += 1
+                initialized_flag[0] = True
+
+        gh_instance = MagicMock()
+        gh_instance.is_initialized.side_effect = _is_initialized
+        GlobalHydra_mock = MagicMock()
+        GlobalHydra_mock.instance.return_value = gh_instance
+
+        gh_module = types.ModuleType("hydra.core.global_hydra")
+        gh_module.GlobalHydra = GlobalHydra_mock
+        hydra_module = types.ModuleType("hydra")
+        hydra_module.initialize_config_module = _init_config_module
+
+        mocks = {
+            "hydra": hydra_module,
+            "hydra.core": types.ModuleType("hydra.core"),
+            "hydra.core.global_hydra": gh_module,
+        }
+
+        p._hydra_initialized = False
+        p._hydra_init_lock = threading.Lock()
+
+        errors = []
+        barrier = threading.Barrier(10)
+
+        def _run():
+            barrier.wait()
+            try:
+                with patch.dict("sys.modules", mocks):
+                    p.ensure_sam2_hydra_initialized()
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_run) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        self.assertEqual(errors, [], f"스레드 에러: {errors}")
+        self.assertEqual(call_count[0], 1, "initialize_config_module은 정확히 1회만 호출돼야 한다")
+
+    def test_21_no_clear_hydra_in_provider(self):
+        """TC-21: _load_sam2에 GlobalHydra.clear() 또는 _clear_hydra 호출 없음."""
+        provider_file = os.path.join(
+            os.path.dirname(__file__), "..", "providers", "grounded_sam2_provider.py"
+        )
+        with open(provider_file, encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("_clear_hydra", src,
+                         "_clear_hydra 함수가 provider에 남아 있으면 안 된다")
+        # .clear() 는 docstring 설명 문구로 등장할 수 있으므로,
+        # 실제 코드 라인에서 GlobalHydra clear 패턴만 검사
+        code_lines = [
+            l for l in src.split("\n")
+            if not l.strip().startswith("#") and '"""' not in l and "'''" not in l
+        ]
+        for line in code_lines:
+            self.assertNotIn("GlobalHydra.instance().clear()",
+                             line,
+                             f"코드 라인에 GlobalHydra.instance().clear() 호출 발견: {line.strip()}")
+
+    def test_22_single_config_constant_no_candidates(self):
+        """TC-22: SAM2_CONFIG_NAME이 단일 config, _SAM2_CONFIG_CANDIDATES 배열 없음."""
+        provider_file = os.path.join(
+            os.path.dirname(__file__), "..", "providers", "grounded_sam2_provider.py"
+        )
+        with open(provider_file, encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("sam2.1_hiera_t.yaml", src, "단일 config명이 provider에 없음")
+        self.assertNotIn("_SAM2_CONFIG_CANDIDATES", src,
+                         "_SAM2_CONFIG_CANDIDATES 복수 후보 배열이 남아 있으면 안 된다")
+
+
+class TestSmokeScriptRegression(unittest.TestCase):
+    """TC-23~TC-24: verify_stage18_server.sh smoke 스크립트 회귀 검사."""
+
+    @classmethod
+    def _get_script_path(cls):
+        return os.path.join(
+            os.path.dirname(__file__), "..", "..", "..",
+            "scripts", "verify_stage18_server.sh",
+        )
+
+    def _extract_sam2_smoke_section(self):
+        script_path = self._get_script_path()
+        if not os.path.exists(script_path):
+            self.skipTest(f"verify_stage18_server.sh not found: {script_path}")
+        with open(script_path, encoding="utf-8") as f:
+            content = f.read()
+        start = content.find("<<'SAM2PY'")
+        end   = content.find("\nSAM2PY\n", start)
+        if start < 0 or end < 0:
+            self.skipTest("SAM2PY heredoc not found in verify_stage18_server.sh")
+        return content[start:end]
+
+    def test_23_sys_imported_before_sys_usage(self):
+        """TC-23: smoke 스크립트에서 'import sys'가 sys 사용 이전에 등장 (회귀 방지)."""
+        section = self._extract_sam2_smoke_section()
+        lines = section.split("\n")
+        sys_import_line = -1
+        first_sys_use_line = -1
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # sys import 탐지: "import sys" 또는 "import os, sys, ..." 형태 모두 인식
+            tokens = stripped.replace(",", " ").split()
+            if "import" in tokens and "sys" in tokens and sys_import_line < 0:
+                sys_import_line = i
+            # sys 사용 탐지: sys. 포함 라인 (import 문 자체는 제외)
+            if "sys." in stripped and "import" not in stripped and first_sys_use_line < 0:
+                first_sys_use_line = i
+        self.assertGreaterEqual(sys_import_line, 0, "smoke 스크립트에 sys가 import되지 않음")
+        if first_sys_use_line > 0:
+            self.assertLess(
+                sys_import_line, first_sys_use_line,
+                f"sys import ({sys_import_line}줄)이 sys 사용 ({first_sys_use_line}줄) 이후에 있음",
+            )
+
+    def test_24_uses_inference_mode_not_cuda_autocast(self):
+        """TC-24: smoke 스크립트가 torch.inference_mode() 사용, cuda autocast 금지."""
+        section = self._extract_sam2_smoke_section()
+        self.assertIn("torch.inference_mode()", section,
+                      "smoke 스크립트에 torch.inference_mode()가 없음")
+        for bad in ('torch.autocast("cuda")', "torch.autocast('cuda')",
+                    'autocast("cuda")', "autocast('cuda')"):
+            self.assertNotIn(bad, section, f"CPU smoke에 {bad} 사용 금지")
+
+
+class TestProviderConfig(unittest.TestCase):
+    """TC-25~TC-28: provider 설정값 및 소스 동작 검증."""
+
+    @classmethod
+    def _provider_src(cls):
+        provider_file = os.path.join(
+            os.path.dirname(__file__), "..", "providers", "grounded_sam2_provider.py"
+        )
+        with open(provider_file, encoding="utf-8") as f:
+            return f.read()
+
+    def test_25_hydra_init_idempotent(self):
+        """TC-25: 초기화 후 재호출 시 모두 False 반환 (오류 없음)."""
+        p = TestHydraInitialization._load_provider_fresh()
+        mocks, _, _ = TestHydraInitialization(methodName="test_19_returns_false_when_hydra_already_initialized")\
+            ._make_hydra_mocks(already_initialized=True)
+        with patch.dict("sys.modules", mocks):
+            p._hydra_initialized = False
+            results = [p.ensure_sam2_hydra_initialized() for _ in range(3)]
+        self.assertEqual(results, [False, False, False],
+                         "already_initialized=True인 경우 항상 False여야 한다")
+
+    def test_26_sam2_config_name_value(self):
+        """TC-26: SAM2_CONFIG_NAME = 'configs/sam2.1/sam2.1_hiera_t.yaml' 포함."""
+        src = self._provider_src()
+        self.assertIn("configs/sam2.1/sam2.1_hiera_t.yaml", src,
+                      "SAM2_CONFIG_NAME 값이 잘못됐거나 없음")
+
+    def test_27_ensure_hydra_before_build_sam2_in_source(self):
+        """TC-27: _load_sam2 함수 본문에서 ensure_sam2_hydra_initialized()가 build_sam2() 이전에 등장."""
+        src = self._provider_src()
+        # 전체 파일이 아닌 _load_sam2 함수 정의 이후 구간만 검사
+        # (docstring에서 build_sam2()가 먼저 언급될 수 있으므로)
+        load_start = src.find("def _load_sam2")
+        self.assertGreater(load_start, 0, "def _load_sam2 가 provider 소스에 없음")
+        src_load = src[load_start:]
+        hydra_pos = src_load.find("ensure_sam2_hydra_initialized()")
+        build_pos = src_load.find("build_sam2(")
+        self.assertGreater(hydra_pos, 0,
+                           "_load_sam2 내에 ensure_sam2_hydra_initialized() 호출이 없음")
+        self.assertGreater(build_pos, 0,
+                           "_load_sam2 내에 build_sam2() 호출이 없음")
+        self.assertLess(hydra_pos, build_pos,
+                        "ensure_sam2_hydra_initialized()가 build_sam2() 이후에 있음")
+
+    def test_28_run_sam2_uses_inference_mode_not_autocast(self):
+        """TC-28: _run_sam2()가 torch.inference_mode 사용, cuda autocast 사용 안 함."""
+        src = self._provider_src()
+        self.assertIn("inference_mode", src,
+                      "_run_sam2에 torch.inference_mode가 없음")
+        for bad in ('autocast("cuda")', "autocast('cuda')"):
+            self.assertNotIn(bad, src, f"CPU 전용 코드에 {bad} 사용 금지")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
