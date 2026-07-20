@@ -295,5 +295,80 @@ class TestCacheHitBehavior(unittest.TestCase):
         self.assertEqual(ml.get_state(), ml.FAILED)
 
 
+class TestSam2GranularState(unittest.TestCase):
+    """TC-11~TC-13: SAM2 세분화 상태 필드 검증."""
+
+    def _make_provider_with_sam2_ok(self):
+        """GDINO + SAM2 모두 정상인 Mock provider."""
+        p = _make_fake_provider()
+        p.real_inference_available = True
+        p.get_metadata.return_value = {
+            **p.get_metadata.return_value,
+            "groundingDinoReady":         True,
+            "groundingDinoRealInference": True,
+            "sam2CheckpointReady":        True,
+            "sam2ModelReady":             True,
+            "sam2PredictorReady":         True,
+            "sam2RealInference":          True,
+            "sam2LoadErrorType":          "",
+            "sam2LoadErrorMessage":       "",
+            "sam2ConfigUsed":             "configs/sam2.1/sam2.1_hiera_t.yaml",
+            "realInferenceAvailable":     True,
+        }
+        return p
+
+    def _make_provider_sam2_failed(self, err_type="HydraException", err_msg="config not found"):
+        """GDINO 성공, SAM2 초기화 실패인 Mock provider."""
+        p = _make_fake_provider()
+        p.real_inference_available = False
+        meta = {
+            **p.get_metadata.return_value,
+            "groundingDinoReady":         True,
+            "groundingDinoRealInference": True,
+            "sam2CheckpointReady":        True,
+            "sam2ModelReady":             False,
+            "sam2PredictorReady":         False,
+            "sam2RealInference":          False,
+            "sam2LoadErrorType":          err_type,
+            "sam2LoadErrorMessage":       err_msg,
+            "sam2ConfigUsed":             "",
+            "realInferenceAvailable":     False,
+        }
+        p.get_metadata.return_value = meta
+        return p
+
+    def test_11_metadata_has_granular_sam2_fields(self):
+        """TC-11: get_metadata()에 SAM2 세분화 상태 필드가 모두 존재."""
+        p = self._make_provider_with_sam2_ok()
+        meta = p.get_metadata()
+        required = {
+            "groundingDinoReady", "groundingDinoRealInference",
+            "sam2CheckpointReady", "sam2ModelReady", "sam2PredictorReady",
+            "sam2RealInference", "sam2LoadErrorType", "sam2LoadErrorMessage",
+            "sam2ConfigUsed", "realInferenceAvailable",
+        }
+        for key in required:
+            self.assertIn(key, meta, f"metadata에 {key} 키 없음")
+
+    def test_12_sam2_failed_metadata_exposes_error(self):
+        """TC-12: SAM2 초기화 실패 시 sam2LoadErrorType/Message 필드가 채워짐."""
+        p = self._make_provider_sam2_failed("HydraException", "config not found")
+        meta = p.get_metadata()
+        self.assertEqual(meta["sam2LoadErrorType"],    "HydraException")
+        self.assertEqual(meta["sam2LoadErrorMessage"], "config not found")
+        self.assertFalse(meta["sam2RealInference"])
+        self.assertFalse(meta["realInferenceAvailable"])
+
+    def test_13_real_inference_requires_both_gdino_and_sam2(self):
+        """TC-13: realInferenceAvailable = GDINO AND SAM2 모두 true여야 함."""
+        # 둘 다 ok
+        p_both_ok = self._make_provider_with_sam2_ok()
+        self.assertTrue(p_both_ok.get_metadata()["realInferenceAvailable"])
+
+        # SAM2 실패
+        p_sam2_fail = self._make_provider_sam2_failed()
+        self.assertFalse(p_sam2_fail.get_metadata()["realInferenceAvailable"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

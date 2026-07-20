@@ -121,25 +121,47 @@ class HealthResponse:
     # 캐시 상태
     grounding_dino_cache_ready: bool = False
     sam2_cache_ready: bool = False
+    # 세분화 모델 상태 (5.x 확장)
+    grounding_dino_ready: bool = False
+    grounding_dino_real_inference: bool = False
+    sam2_checkpoint_ready: bool = False
+    sam2_model_ready: bool = False
+    sam2_predictor_ready: bool = False
+    sam2_real_inference: bool = False
+    sam2_load_error_type: str = ""
+    sam2_load_error_message: str = ""
+    sam2_config_used: str = ""
 
     def to_dict(self) -> dict:
         d = {
-            "status":                   self.status,
-            "provider":                 self.provider,
-            "device":                   self.device,
-            "modelsLoaded":             self.models_loaded,
-            "realInferenceAvailable":   self.real_inference_available,
-            "groundingDinoModelId":     self.grounding_dino_model_id,
-            "sam2ModelId":              self.sam2_model_id,
-            "bboxFallbackEnabled":      self.bbox_fallback_enabled,
-            "modelCachePath":           self.model_cache_path,
-            "modelLoadState":           self.model_load_state,
-            "modelLoadAttempt":         self.model_load_attempt,
-            "concurrentLoadPrevented":  self.concurrent_load_prevented,
-            "modelLoadMs":              self.model_load_ms,
-            "groundingDinoCacheReady":  self.grounding_dino_cache_ready,
-            "sam2CacheReady":           self.sam2_cache_ready,
+            "status":                      self.status,
+            "provider":                    self.provider,
+            "device":                      self.device,
+            "modelsLoaded":                self.models_loaded,
+            "realInferenceAvailable":      self.real_inference_available,
+            "groundingDinoModelId":        self.grounding_dino_model_id,
+            "sam2ModelId":                 self.sam2_model_id,
+            "bboxFallbackEnabled":         self.bbox_fallback_enabled,
+            "modelCachePath":              self.model_cache_path,
+            "modelLoadState":              self.model_load_state,
+            "modelLoadAttempt":            self.model_load_attempt,
+            "concurrentLoadPrevented":     self.concurrent_load_prevented,
+            "modelLoadMs":                 self.model_load_ms,
+            "groundingDinoCacheReady":     self.grounding_dino_cache_ready,
+            "sam2CacheReady":              self.sam2_cache_ready,
+            # 세분화 모델 상태
+            "groundingDinoReady":          self.grounding_dino_ready,
+            "groundingDinoRealInference":  self.grounding_dino_real_inference,
+            "sam2CheckpointReady":         self.sam2_checkpoint_ready,
+            "sam2ModelReady":              self.sam2_model_ready,
+            "sam2PredictorReady":          self.sam2_predictor_ready,
+            "sam2RealInference":           self.sam2_real_inference,
         }
+        if self.sam2_load_error_type:
+            d["sam2LoadErrorType"]    = self.sam2_load_error_type
+            d["sam2LoadErrorMessage"] = self.sam2_load_error_message
+        if self.sam2_config_used:
+            d["sam2ConfigUsed"] = self.sam2_config_used
         if self.model_load_error:
             d["modelLoadError"] = self.model_load_error
         if self.model_load_started_at:

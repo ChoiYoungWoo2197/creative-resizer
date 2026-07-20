@@ -89,6 +89,17 @@ GDINO_CACHE_READY=false
 SAM2_CACHE_READY=false
 GDINO_DOWNLOAD_OK=false
 SAM2_DOWNLOAD_OK=false
+# SAM2 초기화 smoke (Step 4.6)
+SAM2_INIT_OK=false
+SAM2_INIT_STATUS="not_run"
+SAM2_CONFIG_USED="N/A"
+SAM2_SMOKE_MASK="N/A"
+# /ready strict check (Step 6.5)
+READY_OK=false
+READY_HTTP="N/A"
+READY_JSON=""
+# Strict 검증 정책 (true: SAM2 bbox fallback = FAIL)
+STAGE18_REQUIRE_REAL_INFERENCE="${STAGE18_REQUIRE_REAL_INFERENCE:-true}"
 
 # ── 0-F: Cleanup trap ─────────────────────────────────────────────────────────
 cleanup() {
@@ -413,6 +424,176 @@ printf '  %-30s %-20s %s\n' "nvidia 패키지 수" "0" "${NVIDIA_PKG_COUNT}" | t
 printf '  %-30s %-20s %s\n' "cudaAvailable" "False" "${TORCH_CUDA_AVAIL}" | tee -a "${EXEC_LOG}"
 
 # ==========================================================================
+# Step 4.6: SAM2 실제 초기화 smoke test
+# ==========================================================================
+section "Step 4.6: SAM2 초기화 smoke test (config 탐색 + predictor + mask)"
+
+SAM2_INIT_LOG="${ARTIFACT_DIR}/sam2-init-check.txt"
+SAM2_INIT_TB="${ARTIFACT_DIR}/sam2-init-traceback.txt"
+
+# Python 스크립트를 artifact dir에 작성 후 컨테이너에 마운트
+SAM2_INIT_SCRIPT="${ARTIFACT_DIR}/sam2_init_check.py"
+cat > "${SAM2_INIT_SCRIPT}" <<'SAM2PY'
+#!/usr/bin/env python3
+"""SAM2 초기화 smoke test — verify_stage18_server.sh Step 4.6."""
+import os, sys, traceback as _tb, glob
+
+ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR", "/artifacts")
+CKPT = os.environ.get("SAM2_CHECKPOINT", "/models/sam2/sam2.1_hiera_tiny.pt")
+TB_FILE = os.path.join(ARTIFACT_DIR, "sam2-init-traceback.txt")
+os.makedirs(ARTIFACT_DIR, exist_ok=True)
+
+def log(key, value):
+    print(f"{key}={value}", flush=True)
+
+def clear_hydra():
+    try:
+        from hydra.core.global_hydra import GlobalHydra
+        GlobalHydra.instance().clear()
+    except Exception:
+        pass
+
+# 1. sam2 import + 패키지 구조 확인
+log("step", "1_import")
+try:
+    import sam2
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    log("sam2Import", "true")
+    pkg_dir = os.path.dirname(sam2.__file__)
+    log("sam2PackageDir", pkg_dir)
+    for cf in sorted(glob.glob(os.path.join(pkg_dir, "**", "*.yaml"), recursive=True))[:20]:
+        log("sam2ConfigFile", os.path.relpath(cf, pkg_dir))
+except ImportError as e:
+    log("sam2Import", "false")
+    log("importError", str(e))
+    with open(TB_FILE, "w") as f:
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+# 2. Checkpoint 검증
+log("step", "2_checkpoint")
+ckpt_exists = os.path.isfile(CKPT)
+ckpt_size   = os.path.getsize(CKPT) if ckpt_exists else 0
+ckpt_ok     = ckpt_exists and ckpt_size > 100_000_000
+log("sam2CheckpointPath", CKPT)
+log("sam2CheckpointExists", str(ckpt_exists))
+log("sam2CheckpointSizeBytes", str(ckpt_size))
+log("sam2CheckpointReady", str(ckpt_ok))
+if not ckpt_ok:
+    log("sam2ModelBuild", "false")
+    log("reason", f"checkpoint_not_ready:exists={ckpt_exists}:size={ckpt_size}")
+    sys.exit(1)
+
+# 3. build_sam2 — 여러 config 후보 시도
+log("step", "3_build_sam2")
+cfg_candidates = [
+    "configs/sam2.1/sam2.1_hiera_t.yaml",
+    "sam2.1/sam2.1_hiera_t.yaml",
+    "sam2.1_hiera_t",
+]
+sam2_model = None
+cfg_used   = None
+for cfg in cfg_candidates:
+    clear_hydra()
+    try:
+        log("sam2BuildTry", cfg)
+        sam2_model = build_sam2(cfg, CKPT, device="cpu")
+        cfg_used = cfg
+        log("sam2ModelBuild", "true")
+        log("sam2ConfigUsed", cfg)
+        break
+    except Exception as e:
+        log("sam2BuildFail", f"config={cfg} type={type(e).__name__} msg={str(e)[:120]}")
+        with open(TB_FILE, "a") as f:
+            f.write(f"\n=== build_sam2 config={cfg} ===\n")
+            _tb.print_exc(file=f)
+if sam2_model is None:
+    log("sam2ModelBuild", "false")
+    log("sam2ModelReady", "false")
+    sys.exit(1)
+
+# 4. Predictor
+log("step", "4_predictor")
+try:
+    pred = SAM2ImagePredictor(sam2_model)
+    log("sam2PredictorReady", "true")
+except Exception as e:
+    log("sam2PredictorReady", "false")
+    log("predictorError", f"{type(e).__name__}: {e}")
+    with open(TB_FILE, "a") as f:
+        f.write("\n=== SAM2ImagePredictor ===\n")
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+# 5. Smoke mask (100×100 테스트 이미지)
+log("step", "5_smoke_mask")
+try:
+    import numpy as np
+    from PIL import Image as PILImage
+    test_img = np.array(PILImage.new("RGB", (100, 100), color=(128, 64, 32)))
+    pred.set_image(test_img)
+    masks, scores, _ = pred.predict(
+        box=np.array([10, 10, 80, 80], dtype=np.float32),
+        multimask_output=False,
+    )
+    mask_ok = masks is not None and len(masks) > 0
+    log("sam2SmokeMaskGenerated", str(mask_ok))
+    if mask_ok:
+        log("sam2SmokeShape", str(masks.shape))
+        log("sam2SmokeDtype", str(masks.dtype))
+    log("sam2RealInference", str(mask_ok))
+except Exception as e:
+    log("sam2SmokeMaskGenerated", "false")
+    log("smokeError", f"{type(e).__name__}: {e}")
+    with open(TB_FILE, "a") as f:
+        f.write("\n=== smoke mask ===\n")
+        _tb.print_exc(file=f)
+    sys.exit(1)
+
+log("sam2InitCheck", "PASS")
+SAM2PY
+
+info "SAM2 smoke init 실행 중 (checkpoint=${HF_CACHE_VOLUME}:/models/sam2/sam2.1_hiera_tiny.pt)"
+docker run --rm \
+    -v "${HF_CACHE_VOLUME}:/models" \
+    -v "${ARTIFACT_DIR}:/artifacts:rw" \
+    -v "${SAM2_INIT_SCRIPT}:/scripts/sam2_init_check.py:ro" \
+    -e SAM2_CHECKPOINT=/models/sam2/sam2.1_hiera_tiny.pt \
+    -e ARTIFACT_DIR=/artifacts \
+    -e MODELS_DIR=/models \
+    "${SEG_IMAGE}" \
+    python3 /scripts/sam2_init_check.py \
+    2>&1 | tee "${SAM2_INIT_LOG}" | tee -a "${EXEC_LOG}" || true
+
+# 결과 파싱
+SAM2_INIT_OK=false
+SAM2_INIT_STATUS="FAIL"
+SAM2_CONFIG_USED="N/A"
+SAM2_SMOKE_MASK="false"
+
+if grep -q "sam2InitCheck=PASS" "${SAM2_INIT_LOG}" 2>/dev/null; then
+    SAM2_INIT_OK=true
+    SAM2_INIT_STATUS="PASS"
+    ok "SAM2 초기화 smoke test PASS"
+else
+    warn "SAM2 초기화 smoke test FAIL"
+    if [[ -f "${SAM2_INIT_TB}" ]]; then
+        info "SAM2 traceback:"
+        cat "${SAM2_INIT_TB}" | tee -a "${EXEC_LOG}" || true
+    fi
+    VERDICT_REASONS+=("SAM2 smoke init FAIL — traceback: ${SAM2_INIT_TB}")
+fi
+
+SAM2_CONFIG_USED=$(grep 'sam2ConfigUsed=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "N/A")
+SAM2_SMOKE_MASK=$(grep 'sam2SmokeMaskGenerated=' "${SAM2_INIT_LOG}" 2>/dev/null \
+    | tail -1 | cut -d'=' -f2- || echo "false")
+
+info "sam2ConfigUsed:        ${SAM2_CONFIG_USED}"
+info "sam2SmokeMaskGenerated: ${SAM2_SMOKE_MASK}"
+
+# ==========================================================================
 # Step 4.7: Named volume 생성 (재실행 시 재사용)
 # ==========================================================================
 section "Step 4.7: Named volume '${HF_CACHE_VOLUME}' 준비"
@@ -655,6 +836,58 @@ fi
 cat "${HEALTH_JSON}" >> "${EXEC_LOG}"
 
 # ==========================================================================
+# Step 6.5: /ready strict check (GDINO AND SAM2 모두 필요)
+# ==========================================================================
+section "Step 6.5: /ready strict endpoint check"
+
+READY_JSON_FILE="${ARTIFACT_DIR}/ready.json"
+READY_HTTP=$(curl -s -o "${READY_JSON_FILE}" -w "%{http_code}" \
+    "http://${SERVICE_HOST}:${SERVICE_PORT}/ready" 2>/dev/null || echo "000")
+READY_JSON=$(cat "${READY_JSON_FILE}" 2>/dev/null || echo "{}")
+
+info "HTTP /ready: ${READY_HTTP}"
+info "$(cat "${READY_JSON_FILE}" 2>/dev/null | head -5 || true)"
+
+_parse_ready_field() {
+    local field="$1" default="${2:-}"
+    if [[ -n "${PYTHON_CMD}" ]]; then
+        ${PYTHON_CMD} -c "
+import json, sys
+try:
+    d=json.load(open('${READY_JSON_FILE}'))
+    v=d.get('${field}')
+    print(str(v).lower() if isinstance(v,bool) else (v if v is not None else '${default}'))
+except: print('${default}')
+" 2>/dev/null || echo "${default}"
+    else
+        grep -o "\"${field}\":[^,}]*" "${READY_JSON_FILE}" 2>/dev/null \
+            | head -1 | sed 's/.*: *//;s/[",]//g' || echo "${default}"
+    fi
+}
+
+READY_OK=false
+if [[ "${READY_HTTP}" == "200" ]]; then
+    READY_OK=true
+    ok "/ready HTTP 200 — GDINO AND SAM2 실제 추론 모두 준비"
+else
+    SAM2_READY_VAL=$(_parse_ready_field "sam2Ok"             "false")
+    GDINO_READY_VAL=$(_parse_ready_field "groundingDinoOk"   "false")
+    SAM2_ERR_TYPE=$(_parse_ready_field   "sam2LoadErrorType"    "")
+    SAM2_ERR_MSG=$(_parse_ready_field    "sam2LoadErrorMessage" "")
+    warn "/ready HTTP ${READY_HTTP} — gdino=${GDINO_READY_VAL} sam2=${SAM2_READY_VAL}"
+    if [[ -n "${SAM2_ERR_TYPE}" ]]; then
+        warn "SAM2 init error: type=${SAM2_ERR_TYPE} msg=${SAM2_ERR_MSG}"
+    fi
+    if [[ "${STAGE18_REQUIRE_REAL_INFERENCE}" == "true" ]]; then
+        err "STAGE18_REQUIRE_REAL_INFERENCE=true: /ready!=200 → VERDICT=FAIL"
+        VERDICT="FAIL"; FINAL_EXIT=1
+        VERDICT_REASONS+=("/ready=${READY_HTTP} SAM2 실제 추론 불가 (strict mode)")
+    else
+        VERDICT_REASONS+=("/ready=${READY_HTTP} (sam2=${SAM2_READY_VAL}, gdino=${GDINO_READY_VAL}) — bbox fallback 허용")
+    fi
+fi
+
+# ==========================================================================
 # Step 7: 모델 정보 파싱
 # ==========================================================================
 section "Step 7: 모델 정보 파싱"
@@ -824,6 +1057,12 @@ find "${ARTIFACT_DIR}" -maxdepth 1 -type f \
 # ==========================================================================
 section "Step 10: 컨테이너 정리 및 운영 영향 검사"
 
+# ── 컨테이너 로그 저장 (정리 전에 반드시 보존) ───────────────────────────────
+CONTAINER_LOG_FILE="${ARTIFACT_DIR}/segmentation-service.log"
+info "컨테이너 로그 저장: ${CONTAINER_LOG_FILE}"
+docker logs "${CONTAINER_NAME}" > "${CONTAINER_LOG_FILE}" 2>&1 || true
+ok "컨테이너 로그 저장 완료 ($(wc -l < "${CONTAINER_LOG_FILE}" 2>/dev/null || echo '?')줄)"
+
 # 정리 (trap도 실행하지만 명시적으로 먼저)
 docker stop "${CONTAINER_NAME}" 2>/dev/null | tee -a "${EXEC_LOG}" || true
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null | tee -a "${EXEC_LOG}" || true
@@ -886,9 +1125,18 @@ elif [[ "${SAMPLE_STATUS}" == "FILE_MISSING" ]]; then
 elif [[ "${GDINO_DETECTED}" == "false" ]]; then
     VERDICT="FAIL"; FINAL_EXIT=1
     VERDICT_REASONS+=("GroundingDINO 탐지 실패")
+elif [[ "${READY_OK}" == "false" && "${STAGE18_REQUIRE_REAL_INFERENCE}" == "true" ]]; then
+    # /ready != 200 이고 strict mode → FAIL (Step 6.5에서 이미 설정됐을 수도 있지만 재확인)
+    VERDICT="FAIL"; FINAL_EXIT=1
+    VERDICT_REASONS+=("/ready 미통과: SAM2 실제 추론 불가 (STAGE18_REQUIRE_REAL_INFERENCE=true)")
 elif [[ "${BBOX_FALLBACK_USED}" == "true" ]]; then
-    VERDICT="PARTIAL"; FINAL_EXIT=2
-    VERDICT_REASONS+=("SAM2 bbox fallback 사용")
+    if [[ "${STAGE18_REQUIRE_REAL_INFERENCE}" == "true" ]]; then
+        VERDICT="FAIL"; FINAL_EXIT=1
+        VERDICT_REASONS+=("SAM2 bbox fallback 사용 — strict mode에서 FAIL")
+    else
+        VERDICT="PARTIAL"; FINAL_EXIT=2
+        VERDICT_REASONS+=("SAM2 bbox fallback 사용 (compareOnly 허용)")
+    fi
 else
     # 점수 기반 판정 (host python 없어도 bash printf로 처리)
     score_int=0
@@ -915,9 +1163,9 @@ section "Step 12: 보고서 생성"
 REPORT_MD="${ARTIFACT_DIR}/stage18-server-report.md"
 {
 printf "# Stage 18 운영서버 검증 보고서\n\n"
-printf "- **실행일시**: %s\n" "${TIMESTAMP}"
-printf "- **Git SHA**: %s\n" "${GIT_SHA}"
-printf "- **검증 경로**: %s\n\n" "${PROJECT_ROOT}"
+printf -- "- **실행일시**: %s\n" "${TIMESTAMP}"
+printf -- "- **Git SHA**: %s\n" "${GIT_SHA}"
+printf -- "- **검증 경로**: %s\n\n" "${PROJECT_ROOT}"
 
 printf "## 환경\n\n"
 printf "| 항목 | 결과 |\n|---|---|\n"
@@ -955,6 +1203,19 @@ printf "| cudaAvailable | %s |\n" "${CUDA_AVAILABLE}"
 printf "| externalModelRealInference | %s |\n" "${REAL_INFERENCE}"
 printf "| bboxFallbackEnabled | %s |\n\n" "${BBOX_FALLBACK_ENABLED}"
 
+printf "## SAM2 초기화 Smoke Test (Step 4.6)\n\n"
+printf "| 항목 | 결과 |\n|---|---|\n"
+printf "| sam2InitStatus | %s |\n" "${SAM2_INIT_STATUS:-not_run}"
+printf "| sam2ConfigUsed | %s |\n" "${SAM2_CONFIG_USED:-N/A}"
+printf "| sam2SmokeMaskGenerated | %s |\n" "${SAM2_SMOKE_MASK:-N/A}"
+printf "| sam2InitLog | %s |\n\n" "${ARTIFACT_DIR}/sam2-init-check.txt"
+
+printf "## /ready Strict Check (Step 6.5)\n\n"
+printf "| 항목 | 기대 | 실제 |\n|---|---|---|\n"
+printf "| HTTP status | 200 | %s |\n" "${READY_HTTP:-N/A}"
+printf "| READY_OK | true | %s |\n" "${READY_OK:-false}"
+printf "| STAGE18_REQUIRE_REAL_INFERENCE | - | %s |\n\n" "${STAGE18_REQUIRE_REAL_INFERENCE}"
+
 printf "## 샘플 검증\n\n"
 printf "| field | expected | actual |\n|---|---|---|\n"
 printf "| externalModelRealInference | true | %s |\n" "${REAL_INFERENCE}"
@@ -981,18 +1242,18 @@ find "${ARTIFACT_DIR}" -maxdepth 1 -type f -printf "| %f | %s bytes |\n" 2>/dev/
 
 printf "\n## 판정 이유\n\n"
 for r in "${VERDICT_REASONS[@]+"${VERDICT_REASONS[@]}"}"; do
-    printf "- %s\n" "${r}"
+    printf -- "- %s\n" "${r}"
 done
 
 printf "\n---\n\n"
 printf "## 최종 판정: **%s** (exit %d)\n\n" "${VERDICT}" "${FINAL_EXIT}"
 
 printf "## 최종 5줄 요약\n\n"
-printf "- 빌드 실패 원인: CPU 서버에 GPU PyTorch 설치 → nvidia-* 패키지·디스크 부족\n"
-printf "- CPU PyTorch 적용: torch==2.5.1 (CPU wheel), TORCH_VARIANT=%s\n" "${TORCH_VARIANT}"
-printf "- CUDA 패키지 제거: nvidia 패키지=%s개 (기대: 0)\n" "${NVIDIA_PKG_COUNT}"
-printf "- 디스크 사전 검사: root=%sMB docker=%sMB\n" "${ROOT_FREE_MB}" "${DOCKER_FREE_MB}"
-printf "- 서버 재검증 준비: %s\n" "$([ "${VERDICT}" = "PASS" ] && echo "Stage 19 진행 가능" || echo "PARTIAL — Stage 19 대기")"
+printf -- "- GroundingDINO: %s\n"  "${GDINO_MODEL_ID:-N/A}"
+printf -- "- SAM2 초기화: %s\n"    "${SAM2_INIT_STATUS:-not_run}"
+printf -- "- /ready 판정: %s\n"    "${READY_OK:-false}"
+printf -- "- nvidia 패키지: %s개 (기대: 0)\n" "${NVIDIA_PKG_COUNT}"
+printf -- "- 서버 재검증 준비: %s\n" "$([ "${VERDICT}" = "PASS" ] && echo "Stage 19 진행 가능" || echo "PARTIAL — Stage 19 대기")"
 
 printf "\n## 권장 정리 명령 (필요 시 수동 실행)\n\n"
 printf '```bash\n'

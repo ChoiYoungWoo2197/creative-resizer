@@ -3,8 +3,9 @@
 Port: 8090 (Docker 내부 네트워크 전용, 운영 nginx에 노출 안 함)
 
 Endpoints:
-  GET  /health
-  POST /v1/segment   (multipart/form-data)
+  GET  /health         — 프로세스 생존 + fallback 포함 서비스 가능 여부
+  GET  /ready          — strict readiness: GDINO AND SAM2 실제 추론 모두 준비 완료
+  POST /v1/segment     — 이미지 segmentation (multipart/form-data)
 """
 
 from __future__ import annotations
@@ -91,8 +92,58 @@ def health():
         # 캐시 상태
         grounding_dino_cache_ready = meta.get("groundingDinoCacheReady", False),
         sam2_cache_ready           = meta.get("sam2CacheReady", False),
+        # 세분화 모델 상태
+        grounding_dino_ready           = meta.get("groundingDinoReady", False),
+        grounding_dino_real_inference  = meta.get("groundingDinoRealInference", False),
+        sam2_checkpoint_ready          = meta.get("sam2CheckpointReady", False),
+        sam2_model_ready               = meta.get("sam2ModelReady", False),
+        sam2_predictor_ready           = meta.get("sam2PredictorReady", False),
+        sam2_real_inference            = meta.get("sam2RealInference", False),
+        sam2_load_error_type           = meta.get("sam2LoadErrorType", ""),
+        sam2_load_error_message        = meta.get("sam2LoadErrorMessage", ""),
+        sam2_config_used               = meta.get("sam2ConfigUsed", ""),
     )
     return jsonify(resp.to_dict()), status_code
+
+
+# ── ready (strict) ────────────────────────────────────────────────────────────
+
+@app.get("/ready")
+def ready():
+    """Strict readiness: GDINO AND SAM2 실제 추론 모두 준비 완료여야 HTTP 200."""
+    state    = model_loader.get_state()
+    provider = model_loader.get_provider()
+
+    if state != model_loader.READY or provider is None:
+        return jsonify({
+            "ready":       False,
+            "modelState":  state,
+            "reason":      f"provider_not_ready:{state}",
+        }), 503
+
+    meta     = provider.get_metadata()
+    gdino_ok = meta.get("groundingDinoRealInference", False)
+    sam2_ok  = meta.get("sam2RealInference", False)
+    real_ok  = gdino_ok and sam2_ok
+
+    resp_body: dict = {
+        "ready":                  real_ok,
+        "groundingDinoOk":        gdino_ok,
+        "sam2Ok":                 sam2_ok,
+        "realInferenceAvailable": real_ok,
+        "device":                 meta.get("device", provider.device),
+        "sam2CheckpointReady":    meta.get("sam2CheckpointReady", False),
+        "sam2ModelReady":         meta.get("sam2ModelReady", False),
+        "sam2PredictorReady":     meta.get("sam2PredictorReady", False),
+        "sam2ConfigUsed":         meta.get("sam2ConfigUsed", ""),
+    }
+    if not real_ok:
+        resp_body["sam2LoadErrorType"]    = meta.get("sam2LoadErrorType", "")
+        resp_body["sam2LoadErrorMessage"] = meta.get("sam2LoadErrorMessage", "")
+    if not gdino_ok:
+        resp_body["groundingDinoModelId"] = meta.get("groundingDinoModelId", "")
+
+    return jsonify(resp_body), (200 if real_ok else 503)
 
 
 # ── segment ───────────────────────────────────────────────────────────────────
