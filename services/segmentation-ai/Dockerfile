@@ -16,10 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── SAM2 패키지 출처 감사용 헬퍼 ────────────────────────────────────────────────
-# (빌드 시 sam2 패키지 진단 정보 출력 — 이후 설치 단계에서 사용)
-ARG SAM2_AUDIT=1
-
 # SAM 2 CUDA extension 빌드 비활성화
 ENV SAM2_BUILD_CUDA=0
 ENV SAM2_BUILD_ALLOW_ERRORS=1
@@ -50,22 +46,14 @@ RUN pip install -r requirements-cpu.txt
 # 태그 고정: v1.1 = SAM2.1 공식 릴리스 (facebookresearch/sam2@v1.1).
 # SHA 확인: curl -s https://api.github.com/repos/facebookresearch/sam2/git/refs/tags/v1.1
 RUN SAM2_BUILD_CUDA=0 pip install --no-deps \
-    "https://github.com/facebookresearch/sam2/archive/refs/tags/v1.1.tar.gz" \
-    && python -c "
-import sam2, importlib.metadata, inspect, sys
-print('=== SAM2 패키지 감사 ===', file=sys.stderr)
-print('sam2.__file__:', sam2.__file__, file=sys.stderr)
-try:
-    ver = importlib.metadata.version('sam2')
-except Exception:
-    ver = 'unknown'
-print('sam2 dist version:', ver, file=sys.stderr)
-from sam2.build_sam import build_sam2
-src = inspect.getsource(build_sam2)
-has_auto_init = 'initialize_config_module' in src
-print('build_sam2 has_auto_init:', has_auto_init, file=sys.stderr)
-print('=== SAM2 감사 완료 ===', file=sys.stderr)
-"
+    "https://github.com/facebookresearch/sam2/archive/refs/tags/v1.1.tar.gz" && \
+    python3 -c "import sam2, inspect, sys; \
+from sam2.build_sam import build_sam2; \
+has = 'initialize_config_module' in inspect.getsource(build_sam2); \
+print('=== SAM2 audit ===', file=sys.stderr); \
+print('sam2.__file__: ' + sam2.__file__, file=sys.stderr); \
+print('build_sam2_has_hydra_init: ' + str(has), file=sys.stderr); \
+print('=== SAM2 audit done ===', file=sys.stderr)"
 
 # ── 4단계: 나머지 의존성 설치 (torch/torchvision/sam2 제외) ─────────────────
 COPY requirements.txt .
