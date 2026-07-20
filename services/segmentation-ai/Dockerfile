@@ -9,6 +9,11 @@ FROM python:3.11-slim-bookworm
 # 운영서버 검증 스크립트는 반드시 --build-arg TORCH_VARIANT=cpu 전달
 ARG TORCH_VARIANT=cpu
 
+# SAM2 공식 커밋 고정 (facebookresearch/sam2)
+# sam2/__init__.py가 import 시 Hydra를 자동 초기화한다.
+# main branch floating 설치 금지.
+ARG SAM2_COMMIT=2b90b9f5ceec907a1c18123530e92e794ad901a4
+
 WORKDIR /app
 
 # 빌드 의존성 (libgl1: Debian Trixie 호환)
@@ -40,15 +45,20 @@ RUN if [ "${TORCH_VARIANT}" = "cpu" ]; then \
 COPY requirements-cpu.txt .
 RUN pip install -r requirements-cpu.txt
 
-# ── 3단계: SAM2 설치 — PyPI 공식 패키지 ──────────────────────────────────────
-# build_sam2()의 Hydra 자동초기화 여부와 무관하게,
-# ensure_sam2_hydra_initialized()가 build_sam2() 호출 전 반드시 초기화 수행.
-RUN SAM2_BUILD_CUDA=0 pip install --no-deps sam2 && \
-    python3 -c "import sam2, inspect, sys; \
+# ── 3단계: SAM2 설치 — 공식 커밋 SHA 고정 ───────────────────────────────────
+# SAM2.1은 체크포인트/모델 세대 이름이며 Git tag(v1.1)가 아님.
+# sam2/__init__.py가 import 시 Hydra를 자동 초기화 (initialize_config_module).
+# ensure_sam2_hydra_initialized()는 GlobalHydra 상태를 double-check 후 누락 시 보완.
+RUN SAM2_BUILD_CUDA=0 pip install --no-deps \
+    "https://github.com/facebookresearch/sam2/archive/${SAM2_COMMIT}.tar.gz" && \
+    python3 -c "import sam2, sys; \
+from hydra.core.global_hydra import GlobalHydra; \
 from sam2.build_sam import build_sam2; \
-has = 'initialize_config_module' in inspect.getsource(build_sam2); \
+from sam2.sam2_image_predictor import SAM2ImagePredictor; \
+init = GlobalHydra.instance().is_initialized(); \
 print('sam2.__file__: ' + sam2.__file__, file=sys.stderr); \
-print('build_sam2_has_hydra_init: ' + str(has), file=sys.stderr)"
+print('hydraInitialized: ' + str(init), file=sys.stderr); \
+assert init, 'SAM2 import did not initialize Hydra — check sam2/__init__.py'"
 
 # ── 4단계: 나머지 의존성 설치 (torch/torchvision/sam2 제외) ─────────────────
 COPY requirements.txt .
