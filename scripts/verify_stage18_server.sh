@@ -1113,9 +1113,10 @@ find "${ARTIFACT_DIR}" -maxdepth 1 -type f \
     | sort | tee -a "${EXEC_LOG}" \
     || ls -la "${ARTIFACT_DIR}" 2>/dev/null | tee -a "${EXEC_LOG}"
 
-# Stage 18.3: PSD flatten artifact 필수 확인
+# Stage 18.3/18.4: PSD flatten artifact 확인
 FLATTEN_ARTIFACTS_OK=true
 if [[ "${SAMPLE_PATH}" == *.psd ]]; then
+    # 필수 3개 artifact
     for fname in "original-input.psd" "flattened-input.png" "flatten-metadata.json"; do
         if [[ -f "${ARTIFACT_DIR}/${fname}" ]]; then
             ok "flatten artifact 존재: ${fname}"
@@ -1124,8 +1125,16 @@ if [[ "${SAMPLE_PATH}" == *.psd ]]; then
             FLATTEN_ARTIFACTS_OK=false
         fi
     done
+    # Stage 18.4 추가 artifact (선택, 있으면 확인)
+    for fname in "psd-header.json" "psd-open-error.txt" "embedded-composite-validation.json"; do
+        if [[ -f "${ARTIFACT_DIR}/${fname}" ]]; then
+            ok "Stage 18.4 artifact 존재: ${fname}"
+        else
+            info "Stage 18.4 artifact 없음 (필수 아님): ${fname}"
+        fi
+    done
     if [[ "${FLATTEN_ARTIFACTS_OK}" == "true" ]]; then
-        ok "PSD flatten 3개 artifact 모두 존재"
+        ok "PSD flatten 3개 core artifact 모두 존재"
     fi
 fi
 
@@ -1232,16 +1241,44 @@ else
         fi
     fi
     if [[ "${score_int}" -ge 70 ]]; then
-        # Stage 18.3: PSD는 psd_tools_composite 또는 psd_tools_merged이어야 PASS
-        # psd_tools_merged: psd-tools 열기 성공 + Pillow 병합 데이터 (acceptable)
-        # pillow_psd_fallback: psd-tools 완전 실패 → PARTIAL
+        # Stage 18.4: 허용 flattenMethod:
+        #   psd_tools_composite     -> PASS (무조건)
+        #   psd_tools_merged        -> PASS (무조건)
+        #   psd_embedded_composite  -> 추가 검증 통과 시 PASS
+        #   pillow_psd_fallback     -> PARTIAL
         PSD_FLATTEN_OK=true
         if [[ "${SAMPLE_PATH}" == *.psd ]]; then
             FM="${FLATTEN_METHOD:-unknown}"
-            if [[ "${FM}" != "psd_tools_composite" && "${FM}" != "psd_tools_merged" ]]; then
+            ANALYSIS_JSON="${ARTIFACT_DIR}/stage18-server-report.json"
+
+            if [[ "${FM}" == "psd_tools_composite" || "${FM}" == "psd_tools_merged" ]]; then
+                ok "PSD flattenMethod=${FM} -> PASS"
+
+            elif [[ "${FM}" == "psd_embedded_composite" ]]; then
+                info "psd_embedded_composite 추가 검증 중..."
+                EMB_VALIDATED=$(parse_json "${ANALYSIS_JSON}" "embeddedCompositeValidated" "false")
+                PSD_HDR_VALID=$(parse_json "${ANALYSIS_JSON}" "psdHeaderValid" "false")
+                OUT_REOPEN=$(parse_json "${ANALYSIS_JSON}" "outputReopenSucceeded" "false")
+                OUT_BLANK=$(parse_json "${ANALYSIS_JSON}" "outputBlankDetected" "true")
+                FAIL_CAT=$(parse_json "${ANALYSIS_JSON}" "psdOpenFailureCategory" "")
+                info "  embeddedCompositeValidated=${EMB_VALIDATED}"
+                info "  psdHeaderValid=${PSD_HDR_VALID}"
+                info "  outputReopenSucceeded=${OUT_REOPEN}"
+                info "  outputBlankDetected=${OUT_BLANK}"
+                info "  psdOpenFailureCategory=${FAIL_CAT}"
+                if [[ "${EMB_VALIDATED}" == "true" && "${PSD_HDR_VALID}" == "true" \
+                      && "${OUT_REOPEN}" == "true" && "${OUT_BLANK}" == "false" ]]; then
+                    ok "psd_embedded_composite 검증 PASS"
+                    info "PSD parser compatibility: psd-tools 내부 메타 오류, validated embedded composite 사용"
+                else
+                    PSD_FLATTEN_OK=false
+                    VERDICT_REASONS+=("psd_embedded_composite 검증 실패: validated=${EMB_VALIDATED} header=${PSD_HDR_VALID} reopen=${OUT_REOPEN} blank=${OUT_BLANK}")
+                    warn "psd_embedded_composite 검증 실패 -> PARTIAL"
+                fi
+            else
                 PSD_FLATTEN_OK=false
-                VERDICT_REASONS+=("PSD flattenMethod=${FM} (기대: psd_tools_composite|psd_tools_merged)")
-                warn "PSD composite 미완성 — flattenMethod=${FM} → PARTIAL"
+                VERDICT_REASONS+=("PSD flattenMethod=${FM} (기대: psd_tools_composite|psd_tools_merged|psd_embedded_composite)")
+                warn "PSD flatten 미완성 -- flattenMethod=${FM}"
             fi
         fi
         # flatten artifact 누락 시 PARTIAL
@@ -1335,8 +1372,21 @@ printf "| backgroundLeakRisk | low | %s |\n" "${BG_LEAK}"
 printf "| productCompleteness | pass | %s |\n" "${PRODUCT_COMPLETENESS}"
 printf "| maskSource | real_sam2 | %s |\n" "${MASK_SOURCE}"
 printf "| edgeSharpness | - | %s |\n" "${EDGE_SHARPNESS}"
-printf "| flattenMethod | psd_tools_composite&#124;psd_tools_merged | %s |\n" "${FLATTEN_METHOD}"
-printf "| flatten artifacts | 3개 존재 | %s |\n\n" "${FLATTEN_ARTIFACTS_OK:-N/A}"
+printf "| flattenMethod | psd_tools_composite&#124;psd_tools_merged&#124;psd_embedded_composite | %s |\n" "${FLATTEN_METHOD}"
+printf "| flatten artifacts | 3개 존재 | %s |\n" "${FLATTEN_ARTIFACTS_OK:-N/A}"
+printf "| flattenCompatibilityMode | - | %s |\n\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "flattenCompatibilityMode" "false")"
+
+printf "## PSD embedded composite (Stage 18.4)\n\n"
+printf "| 항목 | 값 |\n|---|---|\n"
+printf "| psdHeaderValid | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "psdHeaderValid" "N/A")"
+printf "| psdHeaderVersion | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "psdHeaderVersion" "N/A")"
+printf "| psdOpenFailureCategory | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "psdOpenFailureCategory" "N/A")"
+printf "| embeddedCompositeValidated | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "embeddedCompositeValidated" "N/A")"
+printf "| outputWidthMatchesHeader | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "outputWidthMatchesHeader" "N/A")"
+printf "| outputHeightMatchesHeader | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "outputHeightMatchesHeader" "N/A")"
+printf "| outputReopenSucceeded | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "outputReopenSucceeded" "N/A")"
+printf "| outputBlankDetected | %s |\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "outputBlankDetected" "N/A")"
+printf "| unsupportedMetadataKeys | %s |\n\n" "$(parse_json "${ANALYSIS_JSON:-/dev/null}" "unsupportedMetadataKeys" "[]")"
 
 printf "## 마스크 소스 분리 (Stage 18.3)\n\n"
 printf "| 항목 | 값 |\n|---|---|\n"

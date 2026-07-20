@@ -69,6 +69,7 @@ if _PRELOAD:
 _PSD_FLATTEN_METHODS = frozenset({
     "psd_tools_composite",
     "psd_tools_merged",
+    "psd_embedded_composite",  # Stage 18.4: 검증된 Pillow embedded composite
     "pillow_psd_fallback",
 })
 

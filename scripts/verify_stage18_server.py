@@ -18,6 +18,13 @@ Stage 18.3 변경:
   - score-comparison.json: 베이스라인(806e168) 대비 현재 점수
   - rawEdgeMetric / normalizedEdgeMetric / edgeMetricClamped 읽기
 
+Stage 18.4 변경:
+  - psd-header.json: PSD 헤더 파싱 결과 저장
+  - psd-open-error.txt: psd-tools 전체 traceback 저장
+  - embedded-composite-validation.json: _validate_embedded_composite 결과 저장
+  - 보고서에 psdHeaderValid / psdOpenFailureCategory / embeddedCompositeValidated 추가
+  - psd_embedded_composite flattenMethod 지원
+
 사용법:
   python3 scripts/verify_stage18_server.py \
     --segment-json /path/to/segmentation.json \
@@ -213,6 +220,18 @@ def main() -> int:
             args.image_path, detections, args.output_dir
         )
 
+    # ── Stage 18.4: flatten meta에서 추가 필드 추출 ────────────────────────────
+    psd_header_valid          = flatten_meta.get("psdHeaderValid")
+    psd_header_version        = flatten_meta.get("psdHeaderVersion")
+    psd_open_failure_category = flatten_meta.get("psdOpenFailureCategory")
+    embedded_composite_validated = flatten_meta.get("embeddedCompositeValidated")
+    flatten_compatibility_mode   = flatten_meta.get("flattenCompatibilityMode", False)
+    output_width_matches      = flatten_meta.get("outputWidthMatchesHeader")
+    output_height_matches     = flatten_meta.get("outputHeightMatchesHeader")
+    output_reopen_ok          = flatten_meta.get("outputReopenSucceeded")
+    output_blank_detected     = flatten_meta.get("outputBlankDetected")
+    unsupported_meta_keys     = flatten_meta.get("unsupportedMetadataKeys", [])
+
     # ── JSON 보고서 ────────────────────────────────────────────────────────────
     report = {
         # 모델 정보
@@ -222,6 +241,17 @@ def main() -> int:
         "externalModelRealInference": real_inference,
         # 입력 처리
         "flattenMethod":              flatten_method,
+        # Stage 18.4: PSD 헤더 + embedded composite 검증
+        "psdHeaderValid":             psd_header_valid,
+        "psdHeaderVersion":           psd_header_version,
+        "psdOpenFailureCategory":     psd_open_failure_category,
+        "embeddedCompositeValidated": embedded_composite_validated,
+        "flattenCompatibilityMode":   flatten_compatibility_mode,
+        "outputWidthMatchesHeader":   output_width_matches,
+        "outputHeightMatchesHeader":  output_height_matches,
+        "outputReopenSucceeded":      output_reopen_ok,
+        "outputBlankDetected":        output_blank_detected,
+        "unsupportedMetadataKeys":    unsupported_meta_keys,
         # 탐지 결과
         "groundingDinoDetected":      gdino_detected,
         "groundingDinoPrompt":        "cosmetic tube . skincare product . cosmetic product . cream tube . product bottle",
@@ -287,29 +317,83 @@ def main() -> int:
 # ─── Stage 18.3 artifact 헬퍼 ───────────────────────────────────────────────────
 
 def _save_flatten_artifacts(seg_data: dict, output_dir: str) -> None:
-    """flattenMeta → flatten-metadata.json, flattenedPngBase64 → flattened-input.png."""
-    # flatten-metadata.json
-    flatten_meta = seg_data.get("flattenMeta")
+    """flatten artifact 저장: metadata / png / header / traceback / validation."""
+    flatten_meta = seg_data.get("flattenMeta") or {}
+
+    # ── flatten-metadata.json ─────────────────────────────────────────────────
     if flatten_meta:
         try:
-            meta_path = os.path.join(output_dir, "flatten-metadata.json")
-            with open(meta_path, "w", encoding="utf-8") as f:
+            path = os.path.join(output_dir, "flatten-metadata.json")
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(flatten_meta, f, indent=2, ensure_ascii=False)
-            print(f"[INFO] flatten-metadata.json 저장 완료", file=sys.stderr)
+            print("[INFO] flatten-metadata.json 저장 완료", file=sys.stderr)
         except Exception as e:
             print(f"[WARN] flatten-metadata.json 저장 실패: {e}", file=sys.stderr)
 
-    # flattened-input.png
+    # ── flattened-input.png ───────────────────────────────────────────────────
     png_b64 = seg_data.get("flattenedPngBase64", "")
     if png_b64 and PIL_AVAILABLE:
         try:
             png_bytes = base64.b64decode(png_b64)
-            png_path  = os.path.join(output_dir, "flattened-input.png")
-            with open(png_path, "wb") as f:
+            path = os.path.join(output_dir, "flattened-input.png")
+            with open(path, "wb") as f:
                 f.write(png_bytes)
             print(f"[INFO] flattened-input.png 저장 완료 ({len(png_bytes)} bytes)", file=sys.stderr)
         except Exception as e:
             print(f"[WARN] flattened-input.png 저장 실패: {e}", file=sys.stderr)
+
+    # ── psd-header.json (Stage 18.4) ──────────────────────────────────────────
+    _PSD_HEADER_KEYS = (
+        "psdHeaderSignature", "psdHeaderVersion", "psdHeaderValid",
+        "psdHeaderChannels", "psdHeaderWidth", "psdHeaderHeight",
+        "psdHeaderDepth", "psdHeaderColorMode", "psdHeaderFailureReason",
+    )
+    header_data = {k: flatten_meta.get(k) for k in _PSD_HEADER_KEYS}
+    if any(v is not None for v in header_data.values()):
+        try:
+            path = os.path.join(output_dir, "psd-header.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(header_data, f, indent=2, ensure_ascii=False)
+            print("[INFO] psd-header.json 저장 완료", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] psd-header.json 저장 실패: {e}", file=sys.stderr)
+
+    # ── psd-open-error.txt (Stage 18.4) ───────────────────────────────────────
+    traceback_str = flatten_meta.get("psdOpenTraceback", "")
+    if traceback_str:
+        try:
+            path = os.path.join(output_dir, "psd-open-error.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"psdOpenErrorType:      {flatten_meta.get('psdOpenErrorType', 'N/A')}\n")
+                f.write(f"psdOpenError:          {flatten_meta.get('psdOpenError', 'N/A')}\n")
+                f.write(f"psdOpenFailureCategory:{flatten_meta.get('psdOpenFailureCategory', 'N/A')}\n")
+                f.write(f"psdOpenFailureModule:  {flatten_meta.get('psdOpenFailureModule', 'N/A')}\n")
+                f.write(f"psdOpenFailureFunction:{flatten_meta.get('psdOpenFailureFunction', 'N/A')}\n")
+                f.write(f"psdOpenFailureLine:    {flatten_meta.get('psdOpenFailureLine', 'N/A')}\n")
+                f.write("\n=== Full Traceback ===\n")
+                f.write(traceback_str)
+            print("[INFO] psd-open-error.txt 저장 완료", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] psd-open-error.txt 저장 실패: {e}", file=sys.stderr)
+
+    # ── embedded-composite-validation.json (Stage 18.4) ───────────────────────
+    _EMB_KEYS = (
+        "embeddedCompositeAvailable", "embeddedCompositeValidated",
+        "pillowFormat", "outputWidthMatchesHeader", "outputHeightMatchesHeader",
+        "outputMode", "outputHasAlpha", "outputBlankDetected",
+        "outputSingleColorDetected", "outputReopenSucceeded",
+        "outputVariance", "outputEntropy", "flattenedPngSha256",
+        "flattenCompatibilityMode",
+    )
+    emb_data = {k: flatten_meta.get(k) for k in _EMB_KEYS}
+    if any(v is not None for v in emb_data.values()):
+        try:
+            path = os.path.join(output_dir, "embedded-composite-validation.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(emb_data, f, indent=2, ensure_ascii=False)
+            print("[INFO] embedded-composite-validation.json 저장 완료", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] embedded-composite-validation.json 저장 실패: {e}", file=sys.stderr)
 
 
 def _save_score_comparison(report: dict, output_dir: str) -> None:

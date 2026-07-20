@@ -1,11 +1,20 @@
-"""tests/test_psd_flatten.py — Stage 18.3 PSD flatten 파이프라인 테스트 (30개).
+"""tests/test_psd_flatten.py — Stage 18.4 PSD flatten 파이프라인 테스트 (56개).
 
 psd_flatten.py의 각 전략·메타·폴백 경로를 mock으로 검증한다.
 실제 PSD 파일 불필요 — unittest.mock.patch로 psd-tools 동작 제어.
+
+Stage 18.4 추가 테스트 (26개):
+  10. inspect_psd_header (6)
+  11. _categorize_psd_open_error (5)
+  12. _parse_psd_tools_warnings (3)
+  13. _validate_embedded_composite (5)
+  14. psd_embedded_composite flatten_input path (5)
+  15. 회귀 (2)
 """
 from __future__ import annotations
 
 import io
+import struct as _struct
 import sys
 import os
 import json
@@ -22,6 +31,12 @@ from psd_flatten import (
     _open_psd,
     _try_composite_strategies,
     _count_layers,
+    # Stage 18.4 신규
+    inspect_psd_header,
+    PsdHeaderInfo,
+    _categorize_psd_open_error,
+    _parse_psd_tools_warnings,
+    _validate_embedded_composite,
 )
 
 
@@ -383,3 +398,310 @@ def test_flatten_pillow_fallback_meta_flatten_method():
     with fill_patch, pillow_patch:
         _, _, meta = flatten_input(psd_bytes, "nopsd.psd")
     assert meta["flattenMethod"] == "pillow_psd_fallback"
+
+
+# ─── 10. inspect_psd_header (6개) ────────────────────────────────────────────
+
+def _make_valid_psd_raw(w: int, h: int, version: int = 1) -> bytes:
+    """Valid 26-byte PSD header + padding."""
+    header = (
+        b"8BPS"
+        + _struct.pack(">H", version)
+        + b"\x00" * 6
+        + _struct.pack(">H", 3)   # channels
+        + _struct.pack(">I", h)   # height
+        + _struct.pack(">I", w)   # width
+        + _struct.pack(">H", 8)   # depth
+        + _struct.pack(">H", 3)   # color_mode RGB
+    )
+    return header + b"\x00" * 200
+
+
+def test_inspect_header_valid_v1():
+    info = inspect_psd_header(_make_valid_psd_raw(200, 150, version=1))
+    assert info.valid is True
+    assert info.version == 1
+    assert info.width == 200
+    assert info.height == 150
+
+
+def test_inspect_header_valid_v2_psb():
+    info = inspect_psd_header(_make_valid_psd_raw(400, 300, version=2))
+    assert info.valid is True
+    assert info.version == 2
+
+
+def test_inspect_header_invalid_signature():
+    bad = b"NOPE" + _make_valid_psd_raw(100, 80)[4:]
+    info = inspect_psd_header(bad)
+    assert info.valid is False
+    assert info.failure_reason == "invalid_signature"
+
+
+def test_inspect_header_invalid_version():
+    raw = b"8BPS" + _struct.pack(">H", 0) + b"\x00" * 20
+    info = inspect_psd_header(raw)
+    assert info.valid is False
+    assert "invalid_header_version" in info.failure_reason
+
+
+def test_inspect_header_zero_dimensions():
+    raw = (
+        b"8BPS"
+        + _struct.pack(">H", 1)
+        + b"\x00" * 6
+        + _struct.pack(">H", 3)
+        + _struct.pack(">I", 0)   # height = 0
+        + _struct.pack(">I", 0)   # width = 0
+        + _struct.pack(">H", 8)
+        + _struct.pack(">H", 3)
+    )
+    info = inspect_psd_header(raw)
+    assert info.valid is False
+    assert info.failure_reason == "invalid_dimensions"
+
+
+def test_inspect_header_too_short():
+    info = inspect_psd_header(b"8BPS\x00\x01")
+    assert info.valid is False
+    assert info.failure_reason == "file_too_short"
+
+
+# ─── 11. _categorize_psd_open_error (5개) ────────────────────────────────────
+
+def test_categorize_assertion_version():
+    assert _categorize_psd_open_error(AssertionError("Invalid version 8")) == \
+        "unsupported_internal_descriptor_version"
+
+
+def test_categorize_assertion_unknown_key():
+    assert _categorize_psd_open_error(AssertionError("Unknown key in block")) == \
+        "unsupported_tagged_block"
+
+
+def test_categorize_invalid_signature():
+    assert _categorize_psd_open_error(ValueError("Invalid signature expected 8BPS")) == \
+        "invalid_psd_header"
+
+
+def test_categorize_truncated_file():
+    assert _categorize_psd_open_error(OSError("Unexpected end of file truncated")) == \
+        "truncated_file"
+
+
+def test_categorize_struct_error_malformed():
+    exc = _struct.error("unpack requires a buffer of 4 bytes")
+    assert _categorize_psd_open_error(exc) == "malformed_image_resource"
+
+
+# ─── 12. _parse_psd_tools_warnings (3개) ────────────────────────────────────
+
+def test_parse_warnings_unknown_image_resource():
+    meta: dict = {}
+    _parse_psd_tools_warnings(["Unknown image resource 1092"], meta)
+    assert 1092 in meta.get("unknownImageResources", [])
+
+
+def test_parse_warnings_unknown_tagged_block():
+    meta: dict = {}
+    _parse_psd_tools_warnings(["Unknown tagged block: b'CAI '"], meta)
+    assert "CAI" in meta.get("unsupportedMetadataKeys", [])
+
+
+def test_parse_warnings_empty_messages_no_keys():
+    meta: dict = {}
+    _parse_psd_tools_warnings([], meta)
+    assert "unknownImageResources" not in meta
+    assert "unsupportedMetadataKeys" not in meta
+
+
+# ─── 13. _validate_embedded_composite (5개) ──────────────────────────────────
+
+def _gradient_pil(w: int = 100, h: int = 80) -> Image.Image:
+    """Non-uniform RGB image with good variance (no numpy)."""
+    img = Image.new("RGB", (w, h))
+    img.putdata([(i % 256, (i * 3) % 256, (i * 7) % 256) for i in range(w * h)])
+    return img
+
+
+def _gradient_png_bytes(w: int = 100, h: int = 80) -> bytes:
+    buf = io.BytesIO()
+    _gradient_pil(w, h).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _make_header(w: int = 100, h: int = 80) -> PsdHeaderInfo:
+    hi = PsdHeaderInfo()
+    hi.signature = "8BPS"
+    hi.version   = 1
+    hi.valid     = True
+    hi.width     = w
+    hi.height    = h
+    hi.channels  = 3
+    hi.depth     = 8
+    hi.color_mode = 3
+    return hi
+
+
+def test_validate_embedded_valid_image_pass():
+    img, val = _validate_embedded_composite(_gradient_png_bytes(100, 80), _make_header(100, 80))
+    assert val["embeddedCompositeValidated"] is True
+    assert img is not None
+    assert img.mode == "RGB"
+
+
+def test_validate_embedded_blank_image_returns_none():
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 80), (0, 0, 0)).save(buf, format="PNG")
+    img, val = _validate_embedded_composite(buf.getvalue(), _make_header(100, 80))
+    assert img is None
+    assert val["outputBlankDetected"] is True
+
+
+def test_validate_embedded_size_mismatch_returns_none():
+    img, val = _validate_embedded_composite(
+        _gradient_png_bytes(50, 40),
+        _make_header(100, 80),  # header says 100×80, image is 50×40
+    )
+    assert img is None
+    assert val["outputWidthMatchesHeader"] is False or val["outputHeightMatchesHeader"] is False
+
+
+def test_validate_embedded_reopen_succeeded():
+    _, val = _validate_embedded_composite(_gradient_png_bytes(100, 80), _make_header(100, 80))
+    assert val["outputReopenSucceeded"] is True
+
+
+def test_validate_embedded_bad_bytes_returns_none():
+    img, val = _validate_embedded_composite(b"\x00" * 50, _make_header(100, 80))
+    assert img is None
+    assert val["embeddedCompositeValidated"] is False
+
+
+# ─── 14. psd_embedded_composite flatten_input 경로 (5개) ─────────────────────
+
+def _fill_import_ok(m: dict) -> None:
+    m.update({
+        "psdToolsInstalled": True,
+        "psdToolsVersion": "1.9.31",
+        "psdToolsImportSucceeded": True,
+    })
+
+
+def _fake_embedded_ok_val() -> dict:
+    return {
+        "embeddedCompositeValidated": True,
+        "outputBlankDetected": False,
+        "outputReopenSucceeded": True,
+        "outputWidthMatchesHeader": True,
+        "outputHeightMatchesHeader": True,
+    }
+
+
+def test_flatten_psd_embedded_composite_method():
+    raw = _make_valid_psd_raw(100, 80)
+    fake_img = _gradient_pil(100, 80)
+    mock_cls = MagicMock()
+    mock_cls.open.side_effect = AssertionError("Invalid version 8")
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=_fill_import_ok),
+        patch("psd_tools.PSDImage", mock_cls),
+        patch("psd_flatten._validate_embedded_composite",
+              return_value=(fake_img, _fake_embedded_ok_val())),
+    ):
+        _, method, _ = flatten_input(raw, "test.psd")
+    assert method == "psd_embedded_composite"
+
+
+def test_flatten_psd_embedded_compatibility_mode_true():
+    raw = _make_valid_psd_raw(100, 80)
+    fake_img = _gradient_pil(100, 80)
+    mock_cls = MagicMock()
+    mock_cls.open.side_effect = AssertionError("Invalid version 8")
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=_fill_import_ok),
+        patch("psd_tools.PSDImage", mock_cls),
+        patch("psd_flatten._validate_embedded_composite",
+              return_value=(fake_img, _fake_embedded_ok_val())),
+    ):
+        _, _, meta = flatten_input(raw, "test.psd")
+    assert meta.get("flattenCompatibilityMode") is True
+
+
+def test_flatten_embedded_validation_fails_falls_back_to_pillow():
+    raw = _make_valid_psd_raw(100, 80)
+    fail_val = {"embeddedCompositeValidated": False, "outputBlankDetected": True}
+    mock_cls = MagicMock()
+    mock_cls.open.side_effect = AssertionError("Invalid version 8")
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=_fill_import_ok),
+        patch("psd_tools.PSDImage", mock_cls),
+        patch("psd_flatten._validate_embedded_composite", return_value=(None, fail_val)),
+        patch("psd_flatten.Image.open", return_value=Image.new("RGB", (100, 80))),
+    ):
+        _, method, _ = flatten_input(raw, "test.psd")
+    assert method == "pillow_psd_fallback"
+
+
+def test_flatten_embedded_not_triggered_unknown_error_category():
+    """분류 불가 오류 -> unknown_parser_error -> embedded composite 미진입."""
+    raw = _make_valid_psd_raw(100, 80)
+    mock_cls = MagicMock()
+    mock_cls.open.side_effect = Exception("totally random failure xyz")
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=_fill_import_ok),
+        patch("psd_tools.PSDImage", mock_cls),
+        patch("psd_flatten.Image.open", return_value=Image.new("RGB", (100, 80))),
+    ):
+        _, method, _ = flatten_input(raw, "test.psd")
+    assert method == "pillow_psd_fallback"
+
+
+def test_flatten_embedded_not_triggered_when_header_invalid():
+    """header.valid=False -> psd_embedded_composite 조건 불충족 -> pillow_psd_fallback."""
+    raw = _fake_psd_bytes()  # version=0 -> valid=False
+    mock_cls = MagicMock()
+    mock_cls.open.side_effect = AssertionError("Invalid version 8")
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=_fill_import_ok),
+        patch("psd_tools.PSDImage", mock_cls),
+        patch("psd_flatten.Image.open", return_value=Image.new("RGB", (10, 10))),
+    ):
+        _, method, _ = flatten_input(raw, "test.psd")
+    assert method == "pillow_psd_fallback"
+
+
+# ─── 15. 회귀 (2개) ──────────────────────────────────────────────────────────
+
+def test_regression_composite_unaffected_by_stage184():
+    """Stage 18.4 추가 후 psd_tools_composite 경로 정상 동작."""
+    raw = _make_valid_psd_raw(100, 100)
+    cls, inst = _mock_psd_cls(composite_result=Image.new("RGB", (100, 100)))
+    inst.width = 100
+    inst.height = 100
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=lambda m: m.update({
+            "psdToolsInstalled": True, "psdToolsVersion": "1.9.31",
+            "psdToolsImportSucceeded": True,
+        })),
+        patch("psd_tools.PSDImage", cls),
+    ):
+        _, method, meta = flatten_input(raw, "test.psd")
+    assert method == "psd_tools_composite"
+    assert meta.get("psdHeaderValid") is True
+
+
+def test_psd_header_fields_always_in_meta():
+    """PSD 경로 어느 flattenMethod든 psdHeader* 필드가 meta에 항상 존재."""
+    raw = _fake_psd_bytes()
+    with (
+        patch("psd_flatten._fill_psd_tools_meta", side_effect=lambda m: m.update({
+            "psdToolsInstalled": False, "psdToolsVersion": None,
+            "psdToolsImportSucceeded": False,
+        })),
+        patch("psd_flatten.Image.open", return_value=Image.new("RGB", (10, 10))),
+    ):
+        _, _, meta = flatten_input(raw, "test.psd")
+    assert "psdHeaderSignature" in meta
+    assert "psdHeaderValid" in meta
+    assert "psdHeaderVersion" in meta
