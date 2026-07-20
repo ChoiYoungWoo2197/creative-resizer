@@ -7,12 +7,16 @@
 #   cd /opt/creative-resizer
 #   bash scripts/verify_stage18_server.sh
 #
+# 환경변수:
+#   STAGE18_MIN_FREE_DISK_MB  최소 여유 공간 (기본 8192MB)
+#
 # 안전 원칙:
 #   - 운영 컨테이너 (creative-nginx/api/worker) 건드리지 않음
 #   - 운영 이미지 latest 태그 덮어쓰기 금지
 #   - compareOnly=true 강제 유지 (기존 결과 교체 금지)
 #   - 테스트 컨테이너/네트워크는 trap으로 반드시 정리
 #   - docker compose down 금지
+#   - docker system prune -a / docker volume prune 금지
 #
 # Exit code:
 #   0 = PASS
@@ -47,6 +51,9 @@ SAMPLE_BASE="${PROJECT_ROOT}/test-assets/stage18"
 HEALTH_RETRY_MAX=120              # 120 × 5s = 10분 (초기 모델 다운로드 고려)
 HEALTH_RETRY_INTERVAL=5
 
+# 디스크 최소 여유 공간 (MB)
+STAGE18_MIN_FREE_DISK_MB="${STAGE18_MIN_FREE_DISK_MB:-8192}"
+
 # ── 0-C: 아티팩트 디렉토리 준비 ───────────────────────────────────────────────
 mkdir -p "${ARTIFACT_DIR}"
 touch "${EXEC_LOG}"
@@ -67,6 +74,16 @@ NETWORK_CREATED=false
 FINAL_EXIT=2                      # default: PARTIAL
 VERDICT="PARTIAL"
 declare -a VERDICT_REASONS
+
+# 디스크 / 패키지 검사 결과 (Step 1.5 / 4.5에서 설정)
+ROOT_FREE_MB="N/A"
+DOCKER_FREE_MB="N/A"
+TORCH_VERSION="N/A"
+TORCHVISION_VERSION="N/A"
+SAM2_PKG_VERSION="N/A"
+NVIDIA_PKG_COUNT="N/A"
+TORCH_CUDA_AVAIL="N/A"
+TORCH_VARIANT="cpu"
 
 # ── 0-F: Cleanup trap ─────────────────────────────────────────────────────────
 cleanup() {
@@ -127,20 +144,20 @@ fi
 DOCKER_VERSION=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
 ok "Docker: ${DOCKER_VERSION}"
 
-# python3
+# host python3 — 없어도 계속 (Python helper는 컨테이너 내부에서 실행)
 PYTHON_CMD=""
 for py in python3 python; do
     if command -v "${py}" >/dev/null 2>&1 && "${py}" -c "import sys; assert sys.version_info >= (3,8)" 2>/dev/null; then
         PYTHON_CMD="${py}"
-        ok "Python: $(${py} --version 2>&1)"
+        ok "Host Python: $(${py} --version 2>&1) (parse_json 가속)"
         break
     fi
 done
 if [[ -z "${PYTHON_CMD}" ]]; then
-    warn "python3 없음 — JSON 파싱·이미지 분석 단계 제한"
+    info "host python3 없음 — parse_json은 grep/sed 사용 (Python helper는 컨테이너 내부 실행)"
 fi
 
-# CUDA (빠른 확인)
+# CUDA 감지
 CUDA_AVAILABLE=false
 CUDA_DEVICE="N/A"
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -152,10 +169,74 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 info "CUDA 사용 가능: ${CUDA_AVAILABLE}"
 
+# TORCH_VARIANT 자동 결정
+TORCH_VARIANT="cpu"
+if [[ "${CUDA_AVAILABLE}" == "true" ]]; then
+    TORCH_VARIANT="gpu"
+    info "CUDA 감지: TORCH_VARIANT=gpu"
+else
+    info "CPU 서버: TORCH_VARIANT=cpu 강제"
+fi
+
 GPU_FLAGS=""
 if [[ "${CUDA_AVAILABLE}" == "true" ]]; then
     GPU_FLAGS="--gpus all"
 fi
+
+# ==========================================================================
+# Step 1.5: 디스크 여유 공간 검사
+# ==========================================================================
+section "Step 1.5: 디스크 여유 공간 검사 (최소 ${STAGE18_MIN_FREE_DISK_MB}MB)"
+
+ROOT_FREE_KB=$(df -Pk / | awk 'NR==2{print $4}')
+ROOT_FREE_MB=$(( ROOT_FREE_KB / 1024 ))
+
+if df -Pk /var/lib/docker >/dev/null 2>&1; then
+    DOCKER_FREE_KB=$(df -Pk /var/lib/docker | awk 'NR==2{print $4}')
+    DOCKER_FREE_MB=$(( DOCKER_FREE_KB / 1024 ))
+else
+    DOCKER_FREE_MB="${ROOT_FREE_MB}"
+fi
+
+DISK_INFO=$(docker system df 2>/dev/null || echo "")
+DOCKER_IMAGES_SIZE=$(echo "${DISK_INFO}" | awk '/Images/{print $4}' 2>/dev/null || echo "N/A")
+DOCKER_BUILD_CACHE=$(echo "${DISK_INFO}" | awk '/Build Cache/{print $4}' 2>/dev/null || echo "N/A")
+
+info "루트 여유:          ${ROOT_FREE_MB}MB"
+info "Docker 여유:        ${DOCKER_FREE_MB}MB"
+info "Docker 이미지 합계: ${DOCKER_IMAGES_SIZE}"
+info "Docker 빌드 캐시:   ${DOCKER_BUILD_CACHE}"
+
+MIN_FREE=${STAGE18_MIN_FREE_DISK_MB}
+DISK_OK=true
+if [[ "${ROOT_FREE_MB}" -lt "${MIN_FREE}" || "${DOCKER_FREE_MB}" -lt "${MIN_FREE}" ]]; then
+    err "디스크 여유 공간 부족: root=${ROOT_FREE_MB}MB docker=${DOCKER_FREE_MB}MB (최소 ${MIN_FREE}MB 필요)"
+    warn "권장 정리 명령 (수동 실행 — 자동 실행 안 함):"
+    warn "  docker image prune -f"
+    warn "  docker builder prune -f --filter 'until=24h'"
+    warn "절대 실행 금지: docker system prune -a / docker volume prune"
+    VERDICT_REASONS+=("INSUFFICIENT_DISK: root=${ROOT_FREE_MB}MB docker=${DOCKER_FREE_MB}MB")
+    VERDICT="PARTIAL"; FINAL_EXIT=2
+    DISK_OK=false
+fi
+
+if [[ "${DISK_OK}" == "false" ]]; then
+    # 보고서만 남기고 종료
+    section "디스크 부족으로 조기 종료"
+    cat > "${ARTIFACT_DIR}/stage18-server-report.json" <<EOF
+{
+  "verdict": "PARTIAL",
+  "reason": "INSUFFICIENT_DISK",
+  "rootFreeMb": ${ROOT_FREE_MB},
+  "dockerFreeMb": ${DOCKER_FREE_MB},
+  "minRequiredMb": ${MIN_FREE},
+  "timestamp": "${TIMESTAMP}",
+  "gitSha": "${GIT_SHA}"
+}
+EOF
+    exit 2
+fi
+ok "디스크 여유 공간 충분: root=${ROOT_FREE_MB}MB docker=${DOCKER_FREE_MB}MB"
 
 # ==========================================================================
 # Step 2: 운영 컨테이너 스냅샷 (before)
@@ -214,12 +295,14 @@ fi
 # ==========================================================================
 # Step 4: 테스트 이미지 빌드
 # ==========================================================================
-section "Step 4: 테스트 이미지 빌드 (${SEG_IMAGE})"
+section "Step 4: 테스트 이미지 빌드 (${SEG_IMAGE}, TORCH_VARIANT=${TORCH_VARIANT})"
 
 BUILD_LOG="${ARTIFACT_DIR}/build-segmentation-ai.log"
 BUILD_SUCCESS=false
 
+info "TORCH_VARIANT=${TORCH_VARIANT} 로 빌드 (CPU: nvidia 패키지 제외)"
 if docker build \
+    --build-arg TORCH_VARIANT="${TORCH_VARIANT}" \
     -t "${SEG_IMAGE}" \
     "${PROJECT_ROOT}/services/segmentation-ai" \
     > "${BUILD_LOG}" 2>&1; then
@@ -227,18 +310,72 @@ if docker build \
     ok "이미지 빌드 성공: ${SEG_IMAGE}"
 else
     err "이미지 빌드 실패"
-    tail -20 "${BUILD_LOG}" | tee -a "${EXEC_LOG}"
+    tail -30 "${BUILD_LOG}" | tee -a "${EXEC_LOG}"
     VERDICT="FAIL"; FINAL_EXIT=1; exit 1
 fi
 
-# GroundingDINO / SAM2 패키지 존재 확인
-for pkg in transformers sam2; do
-    if docker run --rm "${SEG_IMAGE}" python3 -c "import ${pkg}; print('OK')" 2>/dev/null | grep -q "OK"; then
-        ok "패키지 존재: ${pkg}"
-    else
-        warn "패키지 확인 실패: ${pkg}"
-    fi
-done
+# ==========================================================================
+# Step 4.5: 설치 패키지 검증 (nvidia/cuda 없음 확인)
+# ==========================================================================
+section "Step 4.5: 설치 패키지 검증"
+
+PKG_LIST="${ARTIFACT_DIR}/pip-list.txt"
+docker run --rm "${SEG_IMAGE}" pip list > "${PKG_LIST}" 2>&1
+
+TORCH_VERSION=$(awk '/^[Tt]orch /{print $2}' "${PKG_LIST}" | head -1 || echo "N/A")
+TORCHVISION_VERSION=$(awk '/^[Tt]orch[Vv]ision /{print $2}' "${PKG_LIST}" | head -1 || echo "N/A")
+SAM2_PKG_VERSION=$(awk '/^sam2 /{print $2}' "${PKG_LIST}" | head -1 || echo "N/A")
+NVIDIA_PKG_COUNT=$(grep -Ei 'nvidia|cuda-toolkit|triton' "${PKG_LIST}" 2>/dev/null | wc -l | tr -d ' ')
+
+info "torch 버전:      ${TORCH_VERSION}"
+info "torchvision 버전: ${TORCHVISION_VERSION}"
+info "sam2 버전:        ${SAM2_PKG_VERSION}"
+info "nvidia/cuda 패키지 수: ${NVIDIA_PKG_COUNT}"
+
+if [[ "${NVIDIA_PKG_COUNT}" -gt 0 ]]; then
+    err "GPU 패키지 발견 (${NVIDIA_PKG_COUNT}개) — CPU 이미지에 허용 안 됨:"
+    grep -Ei 'nvidia|cuda-toolkit|triton' "${PKG_LIST}" | tee -a "${EXEC_LOG}"
+    VERDICT_REASONS+=("GPU 패키지 ${NVIDIA_PKG_COUNT}개 발견 → CPU 빌드 실패")
+    VERDICT="FAIL"; FINAL_EXIT=1; exit 1
+fi
+ok "nvidia/cuda 패키지 없음 (CPU-only 확인)"
+
+# torch CUDA 상태 검증 (컨테이너 내부)
+TORCH_CUDA_CHECK="${ARTIFACT_DIR}/torch-cuda-check.txt"
+docker run --rm "${SEG_IMAGE}" python3 -c "
+import torch, torchvision
+print('torchVersion=', torch.__version__)
+print('torchvisionVersion=', torchvision.__version__)
+print('torchCudaVersion=', torch.version.cuda)
+print('cudaAvailable=', torch.cuda.is_available())
+" > "${TORCH_CUDA_CHECK}" 2>&1 || echo "(torch check failed)" > "${TORCH_CUDA_CHECK}"
+cat "${TORCH_CUDA_CHECK}" | tee -a "${EXEC_LOG}"
+
+TORCH_CUDA_AVAIL=$(grep 'cudaAvailable' "${TORCH_CUDA_CHECK}" 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' ' || echo "N/A")
+if [[ "${TORCH_CUDA_AVAIL}" == "False" ]]; then
+    ok "torch.cuda.is_available()=False (CPU-only 확인)"
+else
+    warn "CUDA 상태 예외: cudaAvailable=${TORCH_CUDA_AVAIL} (CPU 서버 기대값: False)"
+    VERDICT_REASONS+=("torch.cuda.is_available()=${TORCH_CUDA_AVAIL} (기대: False)")
+fi
+
+# SAM 2 import 검증 (컨테이너 내부)
+if docker run --rm "${SEG_IMAGE}" python3 -c "import sam2; print('sam2 import OK')" 2>/dev/null | grep -q "sam2 import OK"; then
+    ok "sam2 import 성공 (버전: ${SAM2_PKG_VERSION})"
+else
+    err "sam2 import 실패"
+    VERDICT_REASONS+=("sam2 import 실패")
+    VERDICT="FAIL"; FINAL_EXIT=1; exit 1
+fi
+
+# 패키지 검증 요약
+info "═══ 패키지 검증 요약 ═══"
+printf '  %-30s %-20s %s\n' "항목" "기대" "실제" | tee -a "${EXEC_LOG}"
+printf '  %-30s %-20s %s\n' "torch CPU wheel" "2.5.1" "${TORCH_VERSION}" | tee -a "${EXEC_LOG}"
+printf '  %-30s %-20s %s\n' "torchvision CPU wheel" "0.20.1" "${TORCHVISION_VERSION}" | tee -a "${EXEC_LOG}"
+printf '  %-30s %-20s %s\n' "sam2 import" "success" "OK" | tee -a "${EXEC_LOG}"
+printf '  %-30s %-20s %s\n' "nvidia 패키지 수" "0" "${NVIDIA_PKG_COUNT}" | tee -a "${EXEC_LOG}"
+printf '  %-30s %-20s %s\n' "cudaAvailable" "False" "${TORCH_CUDA_AVAIL}" | tee -a "${EXEC_LOG}"
 
 # ==========================================================================
 # Step 5: 테스트 네트워크 + 컨테이너 시작
@@ -300,7 +437,6 @@ except: print('parse_error')
             ok "Health OK (시도 ${i}/${HEALTH_RETRY_MAX})"
             break
         else
-            # 매 6번째(30s)마다 로그 출력
             if (( i % 6 == 0 )); then
                 info "Health: status=${LAST_STATUS} — 모델 로딩 중 (${i}/${HEALTH_RETRY_MAX})"
                 docker logs "${CONTAINER_NAME}" 2>&1 | tail -3 | tee -a "${EXEC_LOG}" || true
@@ -384,7 +520,7 @@ SEGMENT_JSON="${ARTIFACT_DIR}/segmentation.json"
 if [[ -n "${SAMPLE_PATH}" ]]; then
     info "샘플 검증: ${SAMPLE_PATH}"
 
-    # PSD → PNG 변환 시도
+    # PSD → PNG 변환 시도 (host python + psd-tools)
     IMAGE_PATH="${SAMPLE_PATH}"
     if [[ "${SAMPLE_PATH}" == *.psd ]]; then
         PNG_TMP="${ARTIFACT_DIR}/sample_converted.png"
@@ -393,7 +529,7 @@ if [[ -n "${SAMPLE_PATH}" ]]; then
             IMAGE_PATH="${PNG_TMP}"
             ok "PSD → PNG 변환 완료: ${PNG_TMP}"
         else
-            warn "PSD 변환 실패 (psd-tools 없음) — 원본 파일로 업로드 시도"
+            warn "PSD 변환 실패 (psd-tools 없음) — Pillow가 PSD를 직접 처리"
         fi
     fi
 
@@ -427,13 +563,18 @@ PROMPTS_EOF
     if [[ "${HTTP_SEG}" == "200" ]]; then
         ok "Segment 응답: HTTP 200"
 
-        # Python helper 호출 (분석 + debug 이미지 생성)
-        if [[ -n "${PYTHON_CMD}" ]] && [[ -f "${SCRIPT_DIR}/verify_stage18_server.py" ]]; then
-            ${PYTHON_CMD} "${SCRIPT_DIR}/verify_stage18_server.py" \
-                --segment-json "${SEGMENT_JSON}" \
-                --health-json "${HEALTH_JSON}" \
-                --image-path "${ARTIFACT_DIR}/original.png" \
-                --output-dir "${ARTIFACT_DIR}" \
+        # Python helper를 컨테이너 내부에서 실행 (host python3 불필요)
+        if [[ -f "${SCRIPT_DIR}/verify_stage18_server.py" ]]; then
+            info "Python helper: 컨테이너 내부 실행"
+            docker run --rm \
+                -v "${ARTIFACT_DIR}:/artifacts:rw" \
+                -v "${SCRIPT_DIR}/verify_stage18_server.py:/scripts/verify.py:ro" \
+                "${SEG_IMAGE}" \
+                python3 /scripts/verify.py \
+                    --segment-json /artifacts/segmentation.json \
+                    --health-json /artifacts/health.json \
+                    --image-path /artifacts/original.png \
+                    --output-dir /artifacts \
                 2>>"${EXEC_LOG}" | tee "${ARTIFACT_DIR}/python-analysis.txt" | tee -a "${EXEC_LOG}" || true
 
             # 분석 결과 파싱
@@ -449,26 +590,6 @@ PROMPTS_EOF
                 PRODUCT_COMPLETENESS=$(parse_json "${ANALYSIS_JSON}" "productCompleteness")
                 EDGE_SHARPNESS=$(parse_json "${ANALYSIS_JSON}" "edgeSharpness" "N/A")
                 SEG_VERDICT=$(parse_json "${ANALYSIS_JSON}" "segmentationVerdict" "N/A")
-            fi
-        else
-            # Python 없을 때 기본 파싱
-            if [[ -n "${PYTHON_CMD}" ]]; then
-                DET_COUNT=$(${PYTHON_CMD} -c "
-import json
-d=json.load(open('${SEGMENT_JSON}'))
-dets=d.get('detections',[])
-prods=[x for x in dets if x.get('role')=='product']
-print(len(prods))
-" 2>/dev/null || echo "0")
-                [[ "${DET_COUNT}" -gt 0 ]] && GDINO_DETECTED="true" || GDINO_DETECTED="false"
-                warn_field=$(${PYTHON_CMD} -c "
-import json
-d=json.load(open('${SEGMENT_JSON}'))
-w=d.get('warnings',[])
-print('true' if 'sam2_unavailable_bbox_mask_used' in w else 'false')
-" 2>/dev/null || echo "false")
-                BBOX_FALLBACK_USED="${warn_field}"
-                [[ "${GDINO_DETECTED}" == "true" && "${BBOX_FALLBACK_USED}" == "false" ]] && SAM2_GENERATED="true" || SAM2_GENERATED="false"
             fi
         fi
 
@@ -565,11 +686,7 @@ elif [[ "${HEALTH_OK}" != "true" ]]; then
     VERDICT="FAIL"; FINAL_EXIT=1
 elif [[ "${SAMPLE_STATUS}" == "FILE_MISSING" ]]; then
     # 샘플 없어도 모델 로드 성공이면 PARTIAL
-    if [[ "${REAL_INFERENCE_OK}" == "true" ]]; then
-        VERDICT="PARTIAL"; FINAL_EXIT=2
-    else
-        VERDICT="PARTIAL"; FINAL_EXIT=2
-    fi
+    VERDICT="PARTIAL"; FINAL_EXIT=2
 elif [[ "${GDINO_DETECTED}" == "false" ]]; then
     VERDICT="FAIL"; FINAL_EXIT=1
     VERDICT_REASONS+=("GroundingDINO 탐지 실패")
@@ -577,10 +694,14 @@ elif [[ "${BBOX_FALLBACK_USED}" == "true" ]]; then
     VERDICT="PARTIAL"; FINAL_EXIT=2
     VERDICT_REASONS+=("SAM2 bbox fallback 사용")
 else
-    # 점수 기반 판정
+    # 점수 기반 판정 (host python 없어도 bash printf로 처리)
     score_int=0
-    if [[ -n "${PYTHON_CMD}" ]] && [[ "${EXT_MASK_SCORE}" != "N/A" ]]; then
-        score_int=$(${PYTHON_CMD} -c "print(int(float('${EXT_MASK_SCORE}')))" 2>/dev/null || echo 0)
+    if [[ "${EXT_MASK_SCORE}" != "N/A" ]]; then
+        if [[ -n "${PYTHON_CMD}" ]]; then
+            score_int=$(${PYTHON_CMD} -c "print(int(float('${EXT_MASK_SCORE}')))" 2>/dev/null || echo 0)
+        else
+            score_int=$(printf "%.0f" "${EXT_MASK_SCORE}" 2>/dev/null || echo 0)
+        fi
     fi
     if [[ "${score_int}" -ge 70 ]]; then
         VERDICT="PASS"; FINAL_EXIT=0
@@ -595,7 +716,6 @@ fi
 # ==========================================================================
 section "Step 12: 보고서 생성"
 
-# Markdown 보고서
 REPORT_MD="${ARTIFACT_DIR}/stage18-server-report.md"
 {
 printf "# Stage 18 운영서버 검증 보고서\n\n"
@@ -608,8 +728,19 @@ printf "| 항목 | 결과 |\n|---|---|\n"
 printf "| Docker 버전 | %s |\n" "${DOCKER_VERSION}"
 printf "| CUDA 사용 가능 | %s |\n" "${CUDA_AVAILABLE}"
 printf "| CUDA 디바이스 | %s |\n" "${CUDA_DEVICE}"
+printf "| TORCH_VARIANT | %s |\n" "${TORCH_VARIANT}"
 printf "| 테스트 이미지 | %s |\n" "${SEG_IMAGE}"
 printf "| 샘플 상태 | %s |\n\n" "${SAMPLE_STATUS}"
+
+printf "## 디스크 / 패키지 검사\n\n"
+printf "| 항목 | 기대 | 실제 |\n|---|---|---|\n"
+printf "| 루트 여유 (MB) | >=%s | %s |\n" "${STAGE18_MIN_FREE_DISK_MB}" "${ROOT_FREE_MB}"
+printf "| Docker 여유 (MB) | >=%s | %s |\n" "${STAGE18_MIN_FREE_DISK_MB}" "${DOCKER_FREE_MB}"
+printf "| torch 버전 | 2.5.1 (CPU) | %s |\n" "${TORCH_VERSION}"
+printf "| torchvision 버전 | 0.20.1 (CPU) | %s |\n" "${TORCHVISION_VERSION}"
+printf "| sam2 버전 | any | %s |\n" "${SAM2_PKG_VERSION}"
+printf "| nvidia 패키지 수 | 0 | %s |\n" "${NVIDIA_PKG_COUNT}"
+printf "| cudaAvailable | False | %s |\n\n" "${TORCH_CUDA_AVAIL}"
 
 printf "## 모델 정보\n\n"
 printf "| field | actual |\n|---|---|\n"
@@ -653,11 +784,18 @@ printf "\n---\n\n"
 printf "## 최종 판정: **%s** (exit %d)\n\n" "${VERDICT}" "${FINAL_EXIT}"
 
 printf "## 최종 5줄 요약\n\n"
-printf "- 운영서버 SSH: 스크립트 직접 실행 (SSH 없음)\n"
-printf "- 실제 GroundingDINO/SAM2: %s\n" "${REAL_INFERENCE}"
-printf "- 어머니 손/제품 분리: %s\n" "${SAMPLE_STATUS}"
-printf "- 운영 영향: %s\n" "${OPS_IMPACT}"
-printf "- Stage 19 진행 가능: %s\n" "$([ "${VERDICT}" = "PASS" ] && echo YES || echo NO)"
+printf "- 빌드 실패 원인: CPU 서버에 GPU PyTorch 설치 → nvidia-* 패키지·디스크 부족\n"
+printf "- CPU PyTorch 적용: torch==2.5.1 (CPU wheel), TORCH_VARIANT=%s\n" "${TORCH_VARIANT}"
+printf "- CUDA 패키지 제거: nvidia 패키지=%s개 (기대: 0)\n" "${NVIDIA_PKG_COUNT}"
+printf "- 디스크 사전 검사: root=%sMB docker=%sMB\n" "${ROOT_FREE_MB}" "${DOCKER_FREE_MB}"
+printf "- 서버 재검증 준비: %s\n" "$([ "${VERDICT}" = "PASS" ] && echo "Stage 19 진행 가능" || echo "PARTIAL — Stage 19 대기")"
+
+printf "\n## 권장 정리 명령 (필요 시 수동 실행)\n\n"
+printf '```bash\n'
+printf "docker image prune -f\n"
+printf "docker builder prune -f --filter 'until=24h'\n"
+printf "# 절대 실행 금지: docker system prune -a / docker volume prune\n"
+printf '```\n'
 } > "${REPORT_MD}"
 
 ok "Markdown 보고서: ${REPORT_MD}"
@@ -684,14 +822,18 @@ if [[ "${#VERDICT_REASONS[@]}" -gt 0 ]]; then
         echo "    - ${r}" | tee -a "${EXEC_LOG}"
     done
 fi
-echo "  externalModelRealInference: ${REAL_INFERENCE}" | tee -a "${EXEC_LOG}"
-echo "  groundingDinoDetected:      ${GDINO_DETECTED}" | tee -a "${EXEC_LOG}"
-echo "  sam2MaskGenerated:          ${SAM2_GENERATED}" | tee -a "${EXEC_LOG}"
-echo "  bboxFallbackUsed:           ${BBOX_FALLBACK_USED}" | tee -a "${EXEC_LOG}"
-echo "  externalMaskScore:          ${EXT_MASK_SCORE}" | tee -a "${EXEC_LOG}"
-echo "  handLeakRisk:               ${HAND_LEAK}" | tee -a "${EXEC_LOG}"
-echo "  backgroundLeakRisk:         ${BG_LEAK}" | tee -a "${EXEC_LOG}"
-echo "  selectedMaskSource:         native (compareOnly=true)" | tee -a "${EXEC_LOG}"
+echo "  TORCH_VARIANT:              ${TORCH_VARIANT}"                          | tee -a "${EXEC_LOG}"
+echo "  torch 버전:                 ${TORCH_VERSION}"                          | tee -a "${EXEC_LOG}"
+echo "  nvidia 패키지 수:           ${NVIDIA_PKG_COUNT} (기대: 0)"             | tee -a "${EXEC_LOG}"
+echo "  cudaAvailable:              ${TORCH_CUDA_AVAIL} (기대: False)"         | tee -a "${EXEC_LOG}"
+echo "  externalModelRealInference: ${REAL_INFERENCE}"                         | tee -a "${EXEC_LOG}"
+echo "  groundingDinoDetected:      ${GDINO_DETECTED}"                         | tee -a "${EXEC_LOG}"
+echo "  sam2MaskGenerated:          ${SAM2_GENERATED}"                         | tee -a "${EXEC_LOG}"
+echo "  bboxFallbackUsed:           ${BBOX_FALLBACK_USED}"                     | tee -a "${EXEC_LOG}"
+echo "  externalMaskScore:          ${EXT_MASK_SCORE}"                         | tee -a "${EXEC_LOG}"
+echo "  handLeakRisk:               ${HAND_LEAK}"                              | tee -a "${EXEC_LOG}"
+echo "  backgroundLeakRisk:         ${BG_LEAK}"                                | tee -a "${EXEC_LOG}"
+echo "  selectedMaskSource:         native (compareOnly=true)"                 | tee -a "${EXEC_LOG}"
 echo "  Stage 19 진행 가능:         $([ "${VERDICT}" = "PASS" ] && echo YES || echo NO)" | tee -a "${EXEC_LOG}"
 echo "═══════════════════════════════════════════════════════════" | tee -a "${EXEC_LOG}"
 

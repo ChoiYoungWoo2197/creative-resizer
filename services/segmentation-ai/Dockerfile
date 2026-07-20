@@ -5,16 +5,47 @@
 # CPU 환경 (기본):
 FROM python:3.11-slim-bookworm
 
+# CPU/GPU 빌드 분기 (기본: cpu)
+# 운영서버 검증 스크립트는 반드시 --build-arg TORCH_VARIANT=cpu 전달
+ARG TORCH_VARIANT=cpu
+
 WORKDIR /app
 
-# 빌드 의존성
+# 빌드 의존성 (libgl1: Debian Trixie 호환)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 패키지 설치 (CPU 모드; GPU는 torch CUDA 버전으로 교체)
+# SAM 2 CUDA extension 빌드 비활성화
+ENV SAM2_BUILD_CUDA=0
+ENV SAM2_BUILD_ALLOW_ERRORS=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ── 1단계: PyTorch 설치 (CPU/GPU 분기) ──────────────────────────────────────
+#   CPU: download.pytorch.org/whl/cpu → nvidia-* / cuda-toolkit 설치 안 됨
+#   GPU: 기본 PyPI (향후 CUDA 버전 명시 필요)
+RUN if [ "${TORCH_VARIANT}" = "cpu" ]; then \
+      pip install \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.5.1 \
+        torchvision==0.20.1; \
+    else \
+      pip install \
+        torch==2.5.1 \
+        torchvision==0.20.1; \
+    fi
+
+# ── 2단계: SAM 2 비-torch 의존성 설치 ───────────────────────────────────────
+COPY requirements-cpu.txt .
+RUN pip install -r requirements-cpu.txt
+
+# ── 3단계: SAM 2 설치 (--no-deps: GPU torch 교체 방지) ──────────────────────
+RUN SAM2_BUILD_CUDA=0 pip install --no-deps sam2
+
+# ── 4단계: 나머지 의존성 설치 (torch/torchvision/sam2 제외) ─────────────────
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 # 소스 복사
 COPY . .
