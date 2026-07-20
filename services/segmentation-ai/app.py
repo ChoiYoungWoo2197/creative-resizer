@@ -12,6 +12,11 @@ Stage 18.1 변경:
   - DetectionResult에 handOverlapRatio / personOverlapRatio 포함
   - score_external_mask에 overlap 비율 전달 (hand/person leak 감점)
   - scoreBreakdown 응답 포함
+
+Stage 18.2 변경:
+  - _parse_image: apply_icc=False 2차 시도, flatten_meta dict 반환
+  - flattenMethod: "psd_tools" → "psd_tools_composite"
+  - SegmentationResponse에 flattenMeta 포함
 """
 
 from __future__ import annotations
@@ -58,34 +63,84 @@ if _PRELOAD:
 
 # ── PSD 파싱 ─────────────────────────────────────────────────────────────────
 
-def _parse_image(image_bytes: bytes) -> tuple[Image.Image, str]:
-    """이미지 bytes → PIL RGB + flatten_method.
+def _parse_image(image_bytes: bytes) -> tuple[Image.Image, str, dict]:
+    """이미지 bytes → (PIL RGB, flatten_method, flatten_meta).
 
-    PSD: psd-tools composite 우선, 실패 시 Pillow fallback.
-    기타: Pillow 직접 로드.
+    PSD:
+      1차: psd.composite() 기본값
+      2차: psd.composite(apply_icc=False)  ← ICC 프로필 오류 우회
+      3차: Pillow 직접 로드 (pillow_psd_fallback)
+    기타: Pillow 직접 로드 (pillow).
     """
-    if image_bytes[:4] == _PSD_MAGIC:
+    if image_bytes[:4] != _PSD_MAGIC:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        return img, "pillow", {}
+
+    meta: dict = {}
+
+    # psd-tools 설치 확인
+    try:
+        import importlib.metadata as _im
+        meta["psdToolsVersion"]   = _im.version("psd-tools")
+        meta["psdToolsInstalled"] = True
+    except Exception as _e:
+        meta["psdToolsInstalled"]      = False
+        meta["psdToolsVersion"]        = None
+        meta["psdToolsImportErrorType"] = type(_e).__name__
+
+    if meta.get("psdToolsInstalled"):
         try:
             from psd_tools import PSDImage
             psd = PSDImage.open(io.BytesIO(image_bytes))
-            composite = psd.composite()
-            if composite is None:
-                raise ValueError("psd.composite() returned None")
-            log.info(
-                "PSD composite (psd-tools): size=%dx%d layers=%d",
-                psd.width, psd.height, len(list(psd)),
-            )
-            return composite.convert("RGB"), "psd_tools"
-        except Exception as e:
-            log.warning("psd-tools 실패 → Pillow fallback: %s", e)
-            try:
-                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                return img, "pillow_psd_fallback"
-            except Exception as e2:
-                raise ValueError(f"PSD image_parse_failed: {e2}") from e2
+            meta["psdLayerCount"] = len(list(psd))
+            meta["psdSize"]       = f"{psd.width}x{psd.height}"
 
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    return img, "pillow"
+            # 1차: composite() 기본값
+            try:
+                composite = psd.composite()
+                if composite is None:
+                    raise ValueError("psd.composite() returned None")
+                meta["psdCompositeCreated"]   = True
+                meta["psdFlattenAttempt"]     = "default"
+                log.info(
+                    "PSD composite (psd-tools): size=%dx%d layers=%d",
+                    psd.width, psd.height, meta["psdLayerCount"],
+                )
+                return composite.convert("RGB"), "psd_tools_composite", meta
+            except Exception as _e1:
+                meta["psdFlattenErrorType"]    = type(_e1).__name__
+                meta["psdFlattenErrorMessage"] = str(_e1)[:300]
+                log.warning("psd.composite() 실패: %s", _e1)
+
+            # 2차: apply_icc=False (ICC 프로필 문제 우회)
+            try:
+                composite = psd.composite(apply_icc=False)
+                if composite is None:
+                    raise ValueError("psd.composite(apply_icc=False) returned None")
+                meta["psdCompositeCreated"] = True
+                meta["psdFlattenAttempt"]   = "apply_icc_false"
+                log.info(
+                    "PSD composite (apply_icc=False): size=%dx%d layers=%d",
+                    psd.width, psd.height, meta["psdLayerCount"],
+                )
+                return composite.convert("RGB"), "psd_tools_composite", meta
+            except Exception as _e2:
+                meta["psdFlattenError2Type"]    = type(_e2).__name__
+                meta["psdFlattenError2Message"] = str(_e2)[:300]
+                meta["psdCompositeCreated"]     = False
+                log.warning("psd.composite(apply_icc=False) 실패: %s", _e2)
+
+        except Exception as _e_open:
+            meta["psdToolsOpenError"] = str(_e_open)[:300]
+            log.warning("psd-tools open 실패 → Pillow fallback: %s", _e_open)
+
+    # 3차: Pillow fallback
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        meta.setdefault("psdCompositeCreated", False)
+        return img, "pillow_psd_fallback", meta
+    except Exception as _e_pil:
+        raise ValueError(f"PSD image_parse_failed: {_e_pil}") from _e_pil
 
 
 # ── health ────────────────────────────────────────────────────────────────────
@@ -197,7 +252,7 @@ def segment():
 
     image_bytes = request.files["image"].read()
     try:
-        pil_image, flatten_method = _parse_image(image_bytes)
+        pil_image, flatten_method, flatten_meta = _parse_image(image_bytes)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -293,24 +348,29 @@ def segment():
             continue
 
         det = DetectionResult(
-            detection_id         = d.get("detectionId", ""),
-            role                 = d.get("role", "product"),
-            prompt               = d.get("prompt", ""),
-            bbox                 = BboxSchema.from_dict(bbox_dict),
-            detection_confidence = d.get("detectionConfidence", 0.0),
-            mask_confidence      = d.get("maskConfidence", 0.0),
-            mask_png_base64      = d.get("maskPngBase64", ""),
-            mask_area_ratio      = d.get("maskAreaRatio", 0.0),
-            edge_sharpness       = quality["edgeSharpness"],
-            fragment_count       = d.get("fragmentCount", 1),
-            mask_quality_score   = quality["overallMaskScore"],
-            leak_risk            = quality["leakRisk"],
-            hard_fail            = quality.get("hardFail", False),
-            mask_source          = d.get("maskSource", "real_sam2"),
-            hand_overlap_ratio   = d.get("handOverlapRatio", 0.0),
-            person_overlap_ratio = d.get("personOverlapRatio", 0.0),
+            detection_id          = d.get("detectionId", ""),
+            role                  = d.get("role", "product"),
+            prompt                = d.get("prompt", ""),
+            bbox                  = BboxSchema.from_dict(bbox_dict),
+            detection_confidence  = d.get("detectionConfidence", 0.0),
+            mask_confidence       = d.get("maskConfidence", 0.0),
+            mask_png_base64       = d.get("maskPngBase64", ""),
+            mask_area_ratio       = d.get("maskAreaRatio", 0.0),
+            edge_sharpness        = quality["edgeSharpness"],
+            fragment_count        = d.get("fragmentCount", 1),
+            mask_quality_score    = quality["overallMaskScore"],
+            leak_risk             = quality["leakRisk"],
+            hard_fail             = quality.get("hardFail", False),
+            mask_source           = d.get("maskSource", "real_sam2"),
+            hand_overlap_ratio    = d.get("handOverlapRatio", 0.0),
+            person_overlap_ratio  = d.get("personOverlapRatio", 0.0),
             hand_subtract_applied = d.get("handSubtractApplied", False),
-            score_breakdown      = quality.get("scoreBreakdown", {}),
+            score_breakdown       = quality.get("scoreBreakdown", {}),
+            # Stage 18.2: 경계 품질 + completeness
+            edge_pixel_count        = quality.get("edgePixelCount", 0),
+            raw_boundary_gradient   = quality.get("rawBoundaryGradient", 0.0),
+            low_contrast_edge_ratio = quality.get("lowContrastEdgeRatio", 0.0),
+            completeness_metrics    = quality.get("completenessMetrics", {}),
         )
         detections.append(det)
 
@@ -328,6 +388,7 @@ def segment():
         detections    = detections,
         warnings      = warnings,
         flatten_method = flatten_method,
+        flatten_meta   = flatten_meta,
     )
     result = resp.to_dict()
     cache.put(cache_key, result)

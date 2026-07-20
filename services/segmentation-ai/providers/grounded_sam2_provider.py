@@ -662,7 +662,11 @@ class GroundedSam2Provider:
         return mask_pil, conf, frags
 
     def _run_sam2_np(self, image, box_xyxy: list) -> tuple:
-        """SAM2 추론 → (numpy uint8 0/255, confidence, frag_count)."""
+        """SAM2 추론 → (numpy uint8 0/255, confidence, frag_count).
+
+        Stage 18.2: multimask_output=True로 3개 마스크 생성 후 최고 score 선택.
+        단일 호출로 3배 후보를 확보하면서 추론 시간은 동일.
+        """
         import numpy as np
         import torch
         if hasattr(image, "mode"):
@@ -673,14 +677,21 @@ class GroundedSam2Provider:
         box_np = np.array(box_xyxy, dtype=np.float32)
         with torch.inference_mode():
             masks, scores, _ = self._sam2_predictor.predict(
-                box=box_np, multimask_output=False
+                box=box_np, multimask_output=True
             )
         if masks is None or len(masks) == 0:
             fb_np, fb_conf, fb_frags = _bbox_to_mask_np(image, box_xyxy)
             return fb_np, 0.5, fb_frags
 
-        mask_arr = masks[0]
-        conf  = float(scores[0]) if scores is not None and len(scores) > 0 else 0.8
+        # 최고 SAM2 score 마스크 선택
+        if scores is not None and len(scores) > 0:
+            best_idx = int(np.argmax(scores))
+            conf = float(scores[best_idx])
+        else:
+            best_idx = 0
+            conf = 0.8
+
+        mask_arr = masks[best_idx]
         frags = _count_fragments(mask_arr)
         return (mask_arr * 255).astype("uint8"), conf, frags
 
@@ -907,12 +918,19 @@ def _mask_to_base64(mask_pil) -> str:
 
 
 def _compute_edge_sharpness(mask_pil) -> float:
+    """Stage 18.2: 경계 픽셀 평균값 기반 sharpness (소형 제품 패널티 제거).
+
+    FIND_EDGES 결과에서 30 초과 픽셀(실제 경계)만 추출해 mean / 200으로 정규화.
+    이진 SAM2 마스크의 경계 평균 ≈ 200 → sharpness ≈ 1.0.
+    """
     try:
         from PIL import ImageFilter
         import numpy as np
-        edge = mask_pil.filter(ImageFilter.FIND_EDGES)
-        arr  = np.array(edge).astype(float)
-        return min(float(arr.std()) / 64.0, 1.0)
+        edge_arr = np.array(mask_pil.filter(ImageFilter.FIND_EDGES)).astype(float)
+        boundary = edge_arr[edge_arr > 30]
+        if len(boundary) >= 10:
+            return float(min(boundary.mean() / 200.0, 1.0))
+        return 0.0
     except Exception:
         return 0.35
 

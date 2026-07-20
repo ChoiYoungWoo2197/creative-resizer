@@ -5,6 +5,10 @@ JSON 직렬화 / 역직렬화에만 사용. Pydantic 의존 없이 dataclass로 
 Stage 18.1 변경:
   - DetectionResult: handOverlapRatio / personOverlapRatio / handSubtractApplied / scoreBreakdown 추가
   - SegmentationResponse: flattenMethod 추가
+
+Stage 18.2 변경:
+  - DetectionResult: edgePixelCount / rawBoundaryGradient / lowContrastEdgeRatio / completenessMetrics 추가
+  - SegmentationResponse: flattenMeta 추가
 """
 
 from __future__ import annotations
@@ -67,29 +71,39 @@ class DetectionResult:
     person_overlap_ratio: float = 0.0
     hand_subtract_applied: bool = False
     score_breakdown: dict = field(default_factory=dict)
+    # Stage 18.2: 경계 품질 + completeness 진단 필드
+    edge_pixel_count: int = 0
+    raw_boundary_gradient: float = 0.0
+    low_contrast_edge_ratio: float = 0.0
+    completeness_metrics: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = {
-            "detectionId":          self.detection_id,
-            "role":                 self.role,
-            "prompt":               self.prompt,
-            "bbox":                 self.bbox.to_dict(),
-            "detectionConfidence":  round(self.detection_confidence, 4),
-            "maskConfidence":       round(self.mask_confidence, 4),
-            "maskPngBase64":        self.mask_png_base64,
-            "maskAreaRatio":        round(self.mask_area_ratio, 4),
-            "edgeSharpness":        round(self.edge_sharpness, 4),
-            "fragmentCount":        self.fragment_count,
-            "maskQualityScore":     round(self.mask_quality_score, 2),
-            "leakRisk":             round(self.leak_risk, 4),
-            "hardFail":             self.hard_fail,
-            "maskSource":           self.mask_source,
-            "handOverlapRatio":     round(self.hand_overlap_ratio, 4),
-            "personOverlapRatio":   round(self.person_overlap_ratio, 4),
-            "handSubtractApplied":  self.hand_subtract_applied,
+            "detectionId":            self.detection_id,
+            "role":                   self.role,
+            "prompt":                 self.prompt,
+            "bbox":                   self.bbox.to_dict(),
+            "detectionConfidence":    round(self.detection_confidence, 4),
+            "maskConfidence":         round(self.mask_confidence, 4),
+            "maskPngBase64":          self.mask_png_base64,
+            "maskAreaRatio":          round(self.mask_area_ratio, 4),
+            "edgeSharpness":          round(self.edge_sharpness, 4),
+            "fragmentCount":          self.fragment_count,
+            "maskQualityScore":       round(self.mask_quality_score, 2),
+            "leakRisk":               round(self.leak_risk, 4),
+            "hardFail":               self.hard_fail,
+            "maskSource":             self.mask_source,
+            "handOverlapRatio":       round(self.hand_overlap_ratio, 4),
+            "personOverlapRatio":     round(self.person_overlap_ratio, 4),
+            "handSubtractApplied":    self.hand_subtract_applied,
+            "edgePixelCount":         self.edge_pixel_count,
+            "rawBoundaryGradient":    round(self.raw_boundary_gradient, 2),
+            "lowContrastEdgeRatio":   round(self.low_contrast_edge_ratio, 4),
         }
         if self.score_breakdown:
             d["scoreBreakdown"] = self.score_breakdown
+        if self.completeness_metrics:
+            d["completenessMetrics"] = self.completeness_metrics
         return d
 
 
@@ -102,17 +116,21 @@ class SegmentationResponse:
     detections: list[DetectionResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     flatten_method: str = "pillow"
+    flatten_meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "requestId":     self.request_id,
             "provider":      self.provider,
             "device":        self.device,
             "processingMs":  self.processing_ms,
-            "detections":    [d.to_dict() for d in self.detections],
+            "detections":    [det.to_dict() for det in self.detections],
             "warnings":      self.warnings,
             "flattenMethod": self.flatten_method,
         }
+        if self.flatten_meta:
+            d["flattenMeta"] = self.flatten_meta
+        return d
 
 
 @dataclass

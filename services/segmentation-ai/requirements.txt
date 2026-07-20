@@ -14,6 +14,3 @@ accelerate==0.33.0
 # 추가 유틸
 requests==2.32.3
 gunicorn==22.0.0
-
-# PSD 입력 지원 (Stage 18.1)
-psd-tools==1.9.31

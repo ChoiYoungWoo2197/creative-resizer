@@ -84,6 +84,10 @@ SAM2_PKG_VERSION="N/A"
 NVIDIA_PKG_COUNT="N/A"
 TORCH_CUDA_AVAIL="N/A"
 TORCH_VARIANT="cpu"
+PSD_TOOLS_VERSION="N/A"
+PSD_TOOLS_OK=false
+# Stage 18.2: flattenMethod 결과
+FLATTEN_METHOD="N/A"
 # 모델 캐시 상태 (Step 4.7-4.9에서 설정)
 GDINO_CACHE_READY=false
 SAM2_CACHE_READY=false
@@ -414,12 +418,34 @@ else
     VERDICT="FAIL"; FINAL_EXIT=1; exit 1
 fi
 
+# psd-tools import 검증 (컨테이너 내부, Stage 18.2)
+PSD_TOOLS_CHECK="${ARTIFACT_DIR}/psd-tools-check.txt"
+if docker run --rm "${SEG_IMAGE}" python3 -c "
+import psd_tools
+from psd_tools import PSDImage
+import importlib.metadata
+version = importlib.metadata.version('psd-tools')
+print('psdToolsVersion=' + version)
+print('psd_tools import OK')
+" > "${PSD_TOOLS_CHECK}" 2>&1; then
+    PSD_TOOLS_VERSION=$(grep 'psdToolsVersion=' "${PSD_TOOLS_CHECK}" | cut -d= -f2 || echo "N/A")
+    PSD_TOOLS_VERSION="${PSD_TOOLS_VERSION:-N/A}"
+    PSD_TOOLS_OK=true
+    ok "psd-tools import 성공 (버전: ${PSD_TOOLS_VERSION})"
+else
+    err "psd-tools import 실패 — requirements-cpu.txt에 psd-tools==1.9.31 선언 확인 필요"
+    cat "${PSD_TOOLS_CHECK}" | tee -a "${EXEC_LOG}"
+    VERDICT_REASONS+=("psd-tools import 실패 (Stage 18.2 요건)")
+    VERDICT="FAIL"; FINAL_EXIT=1; exit 1
+fi
+
 # 패키지 검증 요약
 info "═══ 패키지 검증 요약 ═══"
 printf '  %-30s %-20s %s\n' "항목" "기대" "실제" | tee -a "${EXEC_LOG}"
 printf '  %-30s %-20s %s\n' "torch CPU wheel" "2.5.1" "${TORCH_VERSION}" | tee -a "${EXEC_LOG}"
 printf '  %-30s %-20s %s\n' "torchvision CPU wheel" "0.20.1" "${TORCHVISION_VERSION}" | tee -a "${EXEC_LOG}"
 printf '  %-30s %-20s %s\n' "sam2 import" "success" "OK" | tee -a "${EXEC_LOG}"
+printf '  %-30s %-20s %s\n' "psd-tools import" "1.9.31" "${PSD_TOOLS_VERSION}" | tee -a "${EXEC_LOG}"
 printf '  %-30s %-20s %s\n' "nvidia 패키지 수" "0" "${NVIDIA_PKG_COUNT}" | tee -a "${EXEC_LOG}"
 printf '  %-30s %-20s %s\n' "cudaAvailable" "False" "${TORCH_CUDA_AVAIL}" | tee -a "${EXEC_LOG}"
 
@@ -1050,6 +1076,7 @@ PROMPTS_EOF
                 PRODUCT_COMPLETENESS=$(parse_json "${ANALYSIS_JSON}" "productCompleteness")
                 EDGE_SHARPNESS=$(parse_json "${ANALYSIS_JSON}" "edgeSharpness" "N/A")
                 SEG_VERDICT=$(parse_json "${ANALYSIS_JSON}" "segmentationVerdict" "N/A")
+                FLATTEN_METHOD=$(parse_json "${ANALYSIS_JSON}" "flattenMethod" "unknown")
             fi
         fi
 
@@ -1066,6 +1093,7 @@ fi
 info "groundingDinoDetected:  ${GDINO_DETECTED}"
 info "sam2MaskGenerated:      ${SAM2_GENERATED}"
 info "bboxFallbackUsed:       ${BBOX_FALLBACK_USED}"
+info "flattenMethod:          ${FLATTEN_METHOD}"
 info "externalMaskScore:      ${EXT_MASK_SCORE}"
 info "handLeakRisk:           ${HAND_LEAK}"
 info "backgroundLeakRisk:     ${BG_LEAK}"
@@ -1179,7 +1207,15 @@ else
         fi
     fi
     if [[ "${score_int}" -ge 70 ]]; then
-        VERDICT="PASS"; FINAL_EXIT=0
+        # Stage 18.2: PSD 샘플인 경우 psd_tools_composite이어야 PASS
+        # pillow_psd_fallback은 psd-tools composite 실패를 의미 → PARTIAL
+        if [[ "${SAMPLE_PATH}" == *.psd ]] && [[ "${FLATTEN_METHOD:-unknown}" != "psd_tools_composite" ]]; then
+            VERDICT="PARTIAL"; FINAL_EXIT=2
+            VERDICT_REASONS+=("PSD 샘플이나 flattenMethod=${FLATTEN_METHOD:-unknown} (기대: psd_tools_composite)")
+            warn "PSD composite 미완성 — flattenMethod=${FLATTEN_METHOD:-unknown} → PARTIAL"
+        else
+            VERDICT="PASS"; FINAL_EXIT=0
+        fi
     else
         VERDICT="PARTIAL"; FINAL_EXIT=2
         VERDICT_REASONS+=("externalMaskScore=${EXT_MASK_SCORE} < 70")
@@ -1214,6 +1250,8 @@ printf "| Docker 여유 (MB) | >=%s | %s |\n" "${STAGE18_MIN_FREE_DISK_MB}" "${D
 printf "| torch 버전 | 2.5.1 (CPU) | %s |\n" "${TORCH_VERSION}"
 printf "| torchvision 버전 | 0.20.1 (CPU) | %s |\n" "${TORCHVISION_VERSION}"
 printf "| sam2 버전 | any | %s |\n" "${SAM2_PKG_VERSION}"
+printf "| psd-tools 버전 | 1.9.31 | %s |\n" "${PSD_TOOLS_VERSION}"
+printf "| psd-tools import | OK | %s |\n" "$([ "${PSD_TOOLS_OK}" == "true" ] && echo OK || echo FAIL)"
 printf "| nvidia 패키지 수 | 0 | %s |\n" "${NVIDIA_PKG_COUNT}"
 printf "| cudaAvailable | False | %s |\n\n" "${TORCH_CUDA_AVAIL}"
 
