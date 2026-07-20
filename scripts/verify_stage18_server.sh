@@ -862,8 +862,18 @@ cat "${HEALTH_JSON}" >> "${EXEC_LOG}"
 section "Step 6.5: /ready strict endpoint check"
 
 READY_JSON_FILE="${ARTIFACT_DIR}/ready.json"
-READY_HTTP=$(curl -s -o "${READY_JSON_FILE}" -w "%{http_code}" \
-    "http://${SERVICE_HOST}:${SERVICE_PORT}/ready" 2>/dev/null || echo "000")
+READY_URL="${SERVICE_URL}/ready"
+info "Strict readiness URL: ${READY_URL}"
+READY_HTTP="$(
+    curl -sS \
+        --connect-timeout 10 \
+        --max-time 30 \
+        -o "${READY_JSON_FILE}" \
+        -w "%{http_code}" \
+        "${READY_URL}" \
+        2>>"${EXEC_LOG}"
+)" || READY_HTTP="000"
+READY_HTTP="${READY_HTTP:-000}"
 READY_JSON=$(cat "${READY_JSON_FILE}" 2>/dev/null || echo "{}")
 
 info "HTTP /ready: ${READY_HTTP}"
