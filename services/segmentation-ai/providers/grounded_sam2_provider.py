@@ -10,6 +10,16 @@ Hydra 초기화:
   build_sam2() 호출 전 반드시 ensure_sam2_hydra_initialized()를 먼저 호출.
   프로세스 당 1회, thread-safe double-checked locking 패턴.
   GlobalHydra clear() 직접 호출 금지 — 서비스 코드에서 Hydra 상태를 리셋하면 안 됨.
+
+Stage 18.1:
+  segment()를 다단계 후보 파이프라인으로 재작성.
+  1. 전 역할 GDINO 탐지 + SAM2 마스크 생성 (numpy)
+  2. 손/사람 union mask 계산
+  3. product 후보: 원본 + subtract(손/사람 제거) + union(근접 쌍)
+  4. 후처리: morphological close + 작은 fragment 제거 + hole filling
+  5. 손·사람 픽셀 overlap 비율 계산
+  6. numpy → PIL 변환, 최종 필드 계산
+  _run_sam2() 유지 (TC-28 회귀 보호), _run_sam2_np() 신규 추가.
 """
 
 from __future__ import annotations
@@ -44,6 +54,9 @@ SAM2_CONFIG_NAME = os.environ.get(
     "SAM2_CONFIG", "configs/sam2.1/sam2.1_hiera_t.yaml"
 )
 CPU_MAX_SIDE = 640
+
+# 후보 생성 상한
+_MAX_UNION_PAIRS = 5   # union 후보 최대 쌍 수
 
 
 # ── Hydra 초기화 (thread-safe, 프로세스 당 1회) ──────────────────────────────
@@ -265,17 +278,31 @@ class GroundedSam2Provider:
         min_confidence: float = 0.25,
         max_image_side: int = 1280,
     ) -> tuple[list, list[str]]:
+        """다단계 후보 파이프라인으로 segmentation 수행.
+
+        1. 전 역할 GDINO 탐지 + SAM2 마스크 생성 (numpy)
+        2. 손/사람 union mask 계산
+        3. product 후보 생성: 원본 + subtract + union(근접 쌍)
+        4. 픽셀 overlap 비율 계산
+        5. 후처리: morphological close, hole fill, fragment 제거
+        6. numpy → PIL 변환, 최종 필드 계산
+        """
         if not self._loaded:
             return [], ["provider_not_loaded"]
 
         warnings: list[str] = []
-        detections: list[dict] = []
 
         if self._device == "cpu":
             max_image_side = min(max_image_side, CPU_MAX_SIDE)
             image = _resize_for_inference(image, max_image_side)
 
+        canvas_w, canvas_h = image.width, image.height
+        canvas_area = canvas_w * canvas_h
+
+        # ── Phase 1: GDINO 탐지 + SAM2 마스크 생성 (전 역할) ─────────────────
+        raw_by_role: dict[str, list] = {}
         det_idx = 0
+
         for prompt_schema in prompts:
             if getattr(prompt_schema, "experimental", False):
                 warnings.append(f"experimental_prompt_skipped:{prompt_schema.role}")
@@ -295,47 +322,136 @@ class GroundedSam2Provider:
 
             for box, score, label in zip(boxes, scores, labels):
                 det_idx += 1
-                det_id  = f"det_{det_idx:03d}"
-                bbox    = _box_to_bbox(box, image.width, image.height)
+                det_id = f"det_{det_idx:03d}"
+                bbox   = _box_to_bbox(box, canvas_w, canvas_h)
 
                 if self._sam2_available:
-                    mask_pil, mask_conf, frags = self._run_sam2(image, box)
+                    mask_np, mask_conf, frags = self._run_sam2_np(image, box)
                     mask_source = "real_sam2"
                 else:
-                    mask_pil, mask_conf, frags = _bbox_to_mask(image, box)
+                    mask_np, mask_conf, frags = _bbox_to_mask_np(image, box)
                     mask_source = "external_bbox_fallback"
 
-                mask_b64 = _mask_to_base64(mask_pil)
-                edge_sh  = _compute_edge_sharpness(mask_pil)
-
-                try:
-                    import numpy as np
-                    arr = np.array(mask_pil)
-                    area_ratio = float((arr > 127).sum()) / (image.width * image.height)
-                except Exception:
-                    area_ratio = (bbox["width"] * bbox["height"]) / (
-                        image.width * image.height
-                    )
-
-                detections.append({
+                raw_by_role.setdefault(role, []).append({
                     "detectionId":         det_id,
                     "role":                role,
                     "prompt":              label or gdino_prompt,
                     "bbox":                bbox,
                     "detectionConfidence": round(float(score), 4),
                     "maskConfidence":      round(float(mask_conf), 4),
-                    "maskPngBase64":       mask_b64,
-                    "maskAreaRatio":       round(area_ratio, 4),
-                    "edgeSharpness":       round(edge_sh, 4),
+                    "maskNp":              mask_np,
                     "fragmentCount":       frags,
                     "maskSource":          mask_source,
-                    "_maskPil":            mask_pil,
+                    "handOverlapRatio":    0.0,
+                    "personOverlapRatio":  0.0,
+                    "handSubtractApplied": False,
                 })
 
-        if not self._sam2_available and detections:
+        # ── Phase 2: 손·사람 union mask 계산 ──────────────────────────────────
+        hand_union   = _union_mask_np(
+            [d["maskNp"] for d in raw_by_role.get("hand", [])],
+            canvas_w, canvas_h
+        )
+        person_union = _union_mask_np(
+            [d["maskNp"] for d in raw_by_role.get("person", [])],
+            canvas_w, canvas_h
+        )
+
+        # ── Phase 3: product 후보 생성 ─────────────────────────────────────────
+        product_raw        = raw_by_role.get("product", [])
+        product_candidates = []
+
+        for d in product_raw:
+            mask_np = d["maskNp"]
+
+            # 후처리 (원본)
+            proc_np    = _postprocess_mask(mask_np, canvas_area)
+            proc_frags = _count_fragments(proc_np > 127)
+            hand_ovl   = _pixel_overlap_ratio(proc_np, hand_union)
+            person_ovl = _pixel_overlap_ratio(proc_np, person_union)
+
+            cand = dict(d)
+            cand["maskNp"]            = proc_np
+            cand["fragmentCount"]     = proc_frags
+            cand["handOverlapRatio"]  = round(hand_ovl, 4)
+            cand["personOverlapRatio"] = round(person_ovl, 4)
+            product_candidates.append(cand)
+
+            # subtract 후보 (겹침 5% 이상)
+            if hand_ovl > 0.05 or person_ovl > 0.05:
+                sub_np    = _subtract_masks(proc_np, hand_union, person_union)
+                sub_np    = _postprocess_mask(sub_np, canvas_area)
+                sub_area  = float((sub_np > 127).sum())
+                orig_area = float((proc_np > 127).sum())
+
+                # subtract 후 최소 30% 면적 유지
+                if sub_area > orig_area * 0.30:
+                    sub_frags      = _count_fragments(sub_np > 127)
+                    sub_hand_ovl   = _pixel_overlap_ratio(sub_np, hand_union)
+                    sub_person_ovl = _pixel_overlap_ratio(sub_np, person_union)
+
+                    sub_cand = dict(d)
+                    sub_cand["detectionId"]        = d["detectionId"] + "_sub"
+                    sub_cand["maskNp"]             = sub_np
+                    sub_cand["fragmentCount"]      = sub_frags
+                    sub_cand["handOverlapRatio"]   = round(sub_hand_ovl, 4)
+                    sub_cand["personOverlapRatio"] = round(sub_person_ovl, 4)
+                    sub_cand["handSubtractApplied"] = True
+                    product_candidates.append(sub_cand)
+                else:
+                    log.debug(
+                        "subtract 후보 스킵 (면적 %d%% < 30%%): %s",
+                        int(sub_area / max(orig_area, 1) * 100),
+                        d["detectionId"],
+                    )
+
+        # union 후보 (근접 product 쌍)
+        union_cands = _generate_union_candidates(
+            product_raw, hand_union, person_union, canvas_w, canvas_h, canvas_area
+        )
+        product_candidates.extend(union_cands)
+
+        # ── Phase 4: 비product 역할 정리 ──────────────────────────────────────
+        other_dets: list = []
+        for role, role_dets in raw_by_role.items():
+            if role == "product":
+                continue
+            other_dets.extend(role_dets)
+
+        # ── Phase 5: numpy → PIL 변환, 최종 필드 계산 ─────────────────────────
+        all_dets: list = []
+        for d in product_candidates + other_dets:
+            mask_np = d.pop("maskNp", None)
+            if mask_np is None:
+                continue
+
+            mask_pil = _np_to_pil(mask_np)
+            mask_b64 = _mask_to_base64(mask_pil)
+            area_ratio = round(float((mask_np > 127).sum()) / max(canvas_area, 1), 4)
+            edge_sh    = round(_compute_edge_sharpness(mask_pil), 4)
+
+            all_dets.append({
+                "detectionId":          d["detectionId"],
+                "role":                 d["role"],
+                "prompt":               d["prompt"],
+                "bbox":                 d["bbox"],
+                "detectionConfidence":  d["detectionConfidence"],
+                "maskConfidence":       d["maskConfidence"],
+                "maskPngBase64":        mask_b64,
+                "maskAreaRatio":        area_ratio,
+                "edgeSharpness":        edge_sh,
+                "fragmentCount":        d["fragmentCount"],
+                "maskSource":           d["maskSource"],
+                "handOverlapRatio":     d.get("handOverlapRatio", 0.0),
+                "personOverlapRatio":   d.get("personOverlapRatio", 0.0),
+                "handSubtractApplied":  d.get("handSubtractApplied", False),
+                "_maskPil":             mask_pil,
+            })
+
+        if not self._sam2_available and all_dets:
             warnings.append("sam2_unavailable_bbox_mask_used")
 
-        return detections, warnings
+        return all_dets, warnings
 
     # ── 내부 ─────────────────────────────────────────────────────────────────
 
@@ -408,7 +524,6 @@ class GroundedSam2Provider:
             pkg_dir = os.path.dirname(_s2.__file__)
             self._sam2_import_ok = True
             log.info("sam2 import 성공: package_dir=%s", pkg_dir)
-            # build_sam2 소스에서 Hydra 자동 초기화 코드 확인 (진단용)
             try:
                 src = inspect.getsource(build_sam2)
                 has_auto = "initialize_config_module" in src
@@ -521,6 +636,7 @@ class GroundedSam2Provider:
         )
 
     def _run_sam2(self, image, box_xyxy: list) -> tuple:
+        """SAM2 추론 → (PIL L-mode mask, confidence, frag_count). TC-28 회귀 유지."""
         import numpy as np
         import torch
         # set_image: numpy RGB 배열로 전달
@@ -545,8 +661,197 @@ class GroundedSam2Provider:
         frags    = _count_fragments(mask_arr)
         return mask_pil, conf, frags
 
+    def _run_sam2_np(self, image, box_xyxy: list) -> tuple:
+        """SAM2 추론 → (numpy uint8 0/255, confidence, frag_count)."""
+        import numpy as np
+        import torch
+        if hasattr(image, "mode"):
+            img_np = np.array(image.convert("RGB"))
+        else:
+            img_np = np.asarray(image)
+        self._sam2_predictor.set_image(img_np)
+        box_np = np.array(box_xyxy, dtype=np.float32)
+        with torch.inference_mode():
+            masks, scores, _ = self._sam2_predictor.predict(
+                box=box_np, multimask_output=False
+            )
+        if masks is None or len(masks) == 0:
+            fb_np, fb_conf, fb_frags = _bbox_to_mask_np(image, box_xyxy)
+            return fb_np, 0.5, fb_frags
 
-# ─── 유틸 ─────────────────────────────────────────────────────────────────────
+        mask_arr = masks[0]
+        conf  = float(scores[0]) if scores is not None and len(scores) > 0 else 0.8
+        frags = _count_fragments(mask_arr)
+        return (mask_arr * 255).astype("uint8"), conf, frags
+
+
+# ─── 다단계 후보 유틸 ─────────────────────────────────────────────────────────
+
+def _union_mask_np(mask_list: list, w: int, h: int):
+    """여러 numpy mask를 pixel-wise max로 union. 빈 리스트면 None."""
+    import numpy as np
+    if not mask_list:
+        return None
+    union = np.zeros((h, w), dtype=np.uint8)
+    for m in mask_list:
+        if m is None:
+            continue
+        if m.shape == (h, w):
+            union = np.maximum(union, m)
+        else:
+            from PIL import Image
+            pil = Image.fromarray(m.astype("uint8")).resize((w, h), Image.NEAREST)
+            union = np.maximum(union, np.array(pil))
+    return union
+
+
+def _pixel_overlap_ratio(mask_np, other_np) -> float:
+    """product mask 면적 대비 other_np와 겹치는 픽셀 비율."""
+    import numpy as np
+    if other_np is None or mask_np is None:
+        return 0.0
+    binary1 = mask_np > 127
+    binary2 = other_np > 127
+    denom = float(binary1.sum())
+    if denom == 0.0:
+        return 0.0
+    return float((binary1 & binary2).sum()) / denom
+
+
+def _subtract_masks(mask_np, hand_np, person_np):
+    """mask_np에서 hand·person 영역을 제거한 numpy mask 반환."""
+    import numpy as np
+    result = mask_np.copy()
+    if hand_np is not None:
+        result = np.where(hand_np > 127, 0, result).astype(np.uint8)
+    if person_np is not None:
+        result = np.where(person_np > 127, 0, result).astype(np.uint8)
+    return result
+
+
+def _postprocess_mask(mask_np, canvas_area: int):
+    """형태학적 후처리.
+
+    1. binary_closing: 작은 구멍 닫기 (disk 5)
+    2. remove_small_holes: 제품 내부 빈 공간 채우기
+    3. remove_small_objects: 작은 파편 제거 (제품 끝부분 보호 위해 최소값 제한)
+    """
+    try:
+        import numpy as np
+        from skimage.morphology import binary_closing, disk
+        from skimage.morphology import remove_small_objects, remove_small_holes
+
+        binary = mask_np > 127
+
+        # 1. close (disk 5): 경계 불연속 닫기
+        binary = binary_closing(binary, disk(5))
+
+        # 2. hole fill (최소 0.1% canvas)
+        min_hole = max(int(canvas_area * 0.001), 64)
+        binary = remove_small_holes(binary, area_threshold=min_hole)
+
+        # 3. fragment 제거 — 제품 상단/하단 보호: 0.2% 미만만 제거
+        min_obj = max(int(canvas_area * 0.002), 128)
+        binary = remove_small_objects(binary, min_size=min_obj)
+
+        return (binary.astype(np.uint8)) * 255
+    except Exception as e:
+        log.debug("postprocess_mask 실패 (원본 반환): %s", e)
+        return mask_np
+
+
+def _generate_union_candidates(
+    product_raws: list,
+    hand_union,
+    person_union,
+    canvas_w: int,
+    canvas_h: int,
+    canvas_area: int,
+) -> list:
+    """근접 product 탐지 쌍에 대한 union 후보 생성.
+
+    근접 판단: 세로 거리 < max_height * 2.0 AND 가로 거리 < max_width * 1.5
+    상위 _MAX_UNION_PAIRS 쌍(합산 confidence 기준) 만 생성.
+    """
+    import numpy as np
+
+    if len(product_raws) < 2:
+        return []
+
+    n = len(product_raws)
+    pair_scores = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            di, dj = product_raws[i], product_raws[j]
+            bi, bj = di["bbox"], dj["bbox"]
+            ci_y = bi["y"] + bi["height"] / 2
+            cj_y = bj["y"] + bj["height"] / 2
+            ci_x = bi["x"] + bi["width"] / 2
+            cj_x = bj["x"] + bj["width"] / 2
+            max_h = max(bi["height"], bj["height"], 1)
+            max_w = max(bi["width"],  bj["width"],  1)
+            if (
+                abs(ci_y - cj_y) < max_h * 2.0
+                and abs(ci_x - cj_x) < max_w * 1.5
+            ):
+                pair_scores.append(
+                    (di["detectionConfidence"] + dj["detectionConfidence"], i, j)
+                )
+
+    pair_scores.sort(reverse=True)
+    candidates = []
+
+    for _, i, j in pair_scores[:_MAX_UNION_PAIRS]:
+        di, dj = product_raws[i], product_raws[j]
+        bi, bj = di["bbox"], dj["bbox"]
+
+        union_np = np.maximum(di["maskNp"], dj["maskNp"])
+        union_np = _postprocess_mask(union_np, canvas_area)
+
+        sub_area = float((union_np > 127).sum())
+        if sub_area < canvas_area * 0.001:
+            continue
+
+        frags      = _count_fragments(union_np > 127)
+        hand_ovl   = _pixel_overlap_ratio(union_np, hand_union)
+        person_ovl = _pixel_overlap_ratio(union_np, person_union)
+
+        ux1 = min(bi["x"], bj["x"])
+        uy1 = min(bi["y"], bj["y"])
+        ux2 = max(bi["x"] + bi["width"],  bj["x"] + bj["width"])
+        uy2 = max(bi["y"] + bi["height"], bj["y"] + bj["height"])
+
+        best_conf      = max(di["detectionConfidence"], dj["detectionConfidence"])
+        best_mask_conf = max(di["maskConfidence"],      dj["maskConfidence"])
+
+        candidates.append({
+            "detectionId":         f"{di['detectionId']}_{dj['detectionId']}_union",
+            "role":                "product",
+            "prompt":              di["prompt"],
+            "bbox":                {
+                "x": ux1, "y": uy1,
+                "width":  max(1, ux2 - ux1),
+                "height": max(1, uy2 - uy1),
+            },
+            "detectionConfidence":  round(best_conf, 4),
+            "maskConfidence":       round(best_mask_conf, 4),
+            "maskNp":               union_np,
+            "fragmentCount":        frags,
+            "maskSource":           di["maskSource"],
+            "handOverlapRatio":     round(hand_ovl, 4),
+            "personOverlapRatio":   round(person_ovl, 4),
+            "handSubtractApplied":  False,
+        })
+
+    return candidates
+
+
+def _np_to_pil(mask_np):
+    from PIL import Image
+    return Image.fromarray(mask_np.astype("uint8"), mode="L")
+
+
+# ─── 기존 유틸 (하위 호환) ────────────────────────────────────────────────────
 
 def _resize_for_inference(image, max_side: int):
     w, h = image.size
@@ -569,6 +874,7 @@ def _box_to_bbox(box_xyxy: list, img_w: int, img_h: int) -> dict:
 
 
 def _bbox_to_mask(image, box_xyxy: list) -> tuple:
+    """PIL mask 반환 (하위 호환, _run_sam2 fallback용)."""
     from PIL import Image, ImageFilter
     w, h = image.size
     x1, y1, x2, y2 = [int(float(v)) for v in box_xyxy]
@@ -578,6 +884,19 @@ def _bbox_to_mask(image, box_xyxy: list) -> tuple:
     if x2 > x1 and y2 > y1:
         mask.paste(Image.new("L", (x2 - x1, y2 - y1), 255), (x1, y1))
         mask = mask.filter(ImageFilter.GaussianBlur(radius=3))
+    return mask, 0.55, 1
+
+
+def _bbox_to_mask_np(image, box_xyxy: list) -> tuple:
+    """numpy mask 반환 (bbox fallback)."""
+    import numpy as np
+    w, h = image.width, image.height
+    x1, y1, x2, y2 = [int(float(v)) for v in box_xyxy]
+    x1 = max(0, x1); y1 = max(0, y1)
+    x2 = min(w, x2); y2 = min(h, y2)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    if x2 > x1 and y2 > y1:
+        mask[y1:y2, x1:x2] = 255
     return mask, 0.55, 1
 
 

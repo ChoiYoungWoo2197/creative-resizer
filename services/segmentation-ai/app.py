@@ -6,6 +6,12 @@ Endpoints:
   GET  /health         — 프로세스 생존 + fallback 포함 서비스 가능 여부
   GET  /ready          — strict readiness: GDINO AND SAM2 실제 추론 모두 준비 완료
   POST /v1/segment     — 이미지 segmentation (multipart/form-data)
+
+Stage 18.1 변경:
+  - PSD 입력 시 psd-tools composite 우선, Pillow fallback 유지
+  - DetectionResult에 handOverlapRatio / personOverlapRatio 포함
+  - score_external_mask에 overlap 비율 전달 (hand/person leak 감점)
+  - scoreBreakdown 응답 포함
 """
 
 from __future__ import annotations
@@ -40,12 +46,46 @@ MASK_SCORE_THRESHOLD = float(os.environ.get("CREATIVE_SEGMENTATION_MASK_SCORE_TH
 
 _PRELOAD = os.environ.get("PRELOAD_MODELS", "false").lower() == "true"
 
+_PSD_MAGIC = b"8BPS"
+
 
 # ── startup ───────────────────────────────────────────────────────────────────
 
 if _PRELOAD:
     log.info("PRELOAD_MODELS=true: 백그라운드 모델 로드 시작")
-    model_loader.preload()   # single-flight: 중복 호출은 내부에서 방지
+    model_loader.preload()
+
+
+# ── PSD 파싱 ─────────────────────────────────────────────────────────────────
+
+def _parse_image(image_bytes: bytes) -> tuple[Image.Image, str]:
+    """이미지 bytes → PIL RGB + flatten_method.
+
+    PSD: psd-tools composite 우선, 실패 시 Pillow fallback.
+    기타: Pillow 직접 로드.
+    """
+    if image_bytes[:4] == _PSD_MAGIC:
+        try:
+            from psd_tools import PSDImage
+            psd = PSDImage.open(io.BytesIO(image_bytes))
+            composite = psd.composite()
+            if composite is None:
+                raise ValueError("psd.composite() returned None")
+            log.info(
+                "PSD composite (psd-tools): size=%dx%d layers=%d",
+                psd.width, psd.height, len(list(psd)),
+            )
+            return composite.convert("RGB"), "psd_tools"
+        except Exception as e:
+            log.warning("psd-tools 실패 → Pillow fallback: %s", e)
+            try:
+                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                return img, "pillow_psd_fallback"
+            except Exception as e2:
+                raise ValueError(f"PSD image_parse_failed: {e2}") from e2
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    return img, "pillow"
 
 
 # ── health ────────────────────────────────────────────────────────────────────
@@ -54,7 +94,7 @@ if _PRELOAD:
 def health():
     """모델 로드 상태 조회 — 절대 모델 다운로드를 새로 시작하지 않는다."""
     state    = model_loader.get_state()
-    provider = model_loader.get_provider()   # READY일 때만 non-None
+    provider = model_loader.get_provider()
     diag     = model_loader.get_diagnostics()
     meta     = provider.get_metadata() if provider else {}
 
@@ -82,17 +122,14 @@ def health():
         sam2_model_id             = meta.get("sam2ModelId", ""),
         bbox_fallback_enabled     = meta.get("bboxFallbackEnabled", True),
         model_cache_path          = meta.get("modelCachePath", ""),
-        # single-flight 진단
         model_load_state          = diag.get("modelLoadState", state),
         model_load_attempt        = diag.get("modelLoadAttempt", 0),
         concurrent_load_prevented = diag.get("concurrentLoadPrevented", 0),
         model_load_ms             = diag.get("modelLoadMs", 0),
         model_load_started_at     = diag.get("modelLoadStartedAt"),
         model_load_completed_at   = diag.get("modelLoadCompletedAt"),
-        # 캐시 상태
         grounding_dino_cache_ready = meta.get("groundingDinoCacheReady", False),
         sam2_cache_ready           = meta.get("sam2CacheReady", False),
-        # 세분화 모델 상태
         grounding_dino_ready           = meta.get("groundingDinoReady", False),
         grounding_dino_real_inference  = meta.get("groundingDinoRealInference", False),
         sam2_checkpoint_ready          = meta.get("sam2CheckpointReady", False),
@@ -154,15 +191,18 @@ def segment():
     request_id = request.form.get("requestId") or str(uuid.uuid4())
     source_type = request.form.get("sourceType", "unknown")
 
-    # ── 이미지 파싱 ────────────────────────────────────────────────────────────
+    # ── 이미지 파싱 (PSD 지원) ────────────────────────────────────────────────
     if "image" not in request.files:
         return jsonify({"error": "image field required"}), 400
 
     image_bytes = request.files["image"].read()
     try:
-        pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        pil_image, flatten_method = _parse_image(image_bytes)
     except Exception as e:
-        return jsonify({"error": f"image_parse_failed: {e}"}), 400
+        return jsonify({"error": str(e)}), 400
+
+    if flatten_method != "pillow":
+        log.info("이미지 파싱 방식: %s size=%dx%d", flatten_method, pil_image.width, pil_image.height)
 
     # ── prompts 파싱 ───────────────────────────────────────────────────────────
     prompts_raw = request.form.get("prompts", "[]")
@@ -187,25 +227,24 @@ def segment():
 
     if provider is None:
         if state == model_loader.NOT_STARTED:
-            # lazy load: 처음 요청 시 한 번만 시작
             log.info("lazy load 시작")
             model_loader.preload()
             return jsonify({
-                "requestId": request_id,
-                "provider":  "grounded-sam2",
-                "device":    "unknown",
+                "requestId":    request_id,
+                "provider":     "grounded-sam2",
+                "device":       "unknown",
                 "processingMs": int((time.time() - t0) * 1000),
-                "detections": [],
-                "warnings":   ["model_loading_retry_later"],
+                "detections":   [],
+                "warnings":     ["model_loading_retry_later"],
             }), 503
         elif state == model_loader.LOADING:
             return jsonify({
-                "requestId": request_id,
-                "provider":  "grounded-sam2",
-                "device":    "unknown",
+                "requestId":    request_id,
+                "provider":     "grounded-sam2",
+                "device":       "unknown",
                 "processingMs": int((time.time() - t0) * 1000),
-                "detections": [],
-                "warnings":   ["model_loading_retry_later"],
+                "detections":   [],
+                "warnings":     ["model_loading_retry_later"],
             }), 503
         else:  # FAILED
             return jsonify({
@@ -225,11 +264,14 @@ def segment():
         log.exception("segment 실행 실패: %s", e)
         raw_detections, warnings = [], [f"segment_exception:{e}"]
 
+    if flatten_method not in ("pillow",):
+        warnings.append(f"flatten_method:{flatten_method}")
+
     # ── DetectionResult 변환 ──────────────────────────────────────────────────
     detections: list[DetectionResult] = []
     for d in raw_detections:
-        bbox_dict = d.get("bbox", {})
-        mask_pil  = d.get("_maskPil")
+        bbox_dict  = d.get("bbox", {})
+        mask_pil   = d.get("_maskPil")
 
         quality = score_external_mask(
             detection_confidence = d.get("detectionConfidence", 0.0),
@@ -240,6 +282,8 @@ def segment():
             canvas_h             = canvas_h,
             role                 = d.get("role", "product"),
             fragment_count       = d.get("fragmentCount", 1),
+            hand_overlap_ratio   = d.get("handOverlapRatio", 0.0),
+            person_overlap_ratio = d.get("personOverlapRatio", 0.0),
         )
 
         if quality["hardFail"]:
@@ -249,27 +293,31 @@ def segment():
             continue
 
         det = DetectionResult(
-            detection_id        = d.get("detectionId", ""),
-            role                = d.get("role", "product"),
-            prompt              = d.get("prompt", ""),
-            bbox                = BboxSchema.from_dict(bbox_dict),
+            detection_id         = d.get("detectionId", ""),
+            role                 = d.get("role", "product"),
+            prompt               = d.get("prompt", ""),
+            bbox                 = BboxSchema.from_dict(bbox_dict),
             detection_confidence = d.get("detectionConfidence", 0.0),
-            mask_confidence     = d.get("maskConfidence", 0.0),
-            mask_png_base64     = d.get("maskPngBase64", ""),
-            mask_area_ratio     = d.get("maskAreaRatio", 0.0),
-            edge_sharpness      = quality["edgeSharpness"],
-            fragment_count      = d.get("fragmentCount", 1),
-            mask_quality_score  = quality["overallMaskScore"],
-            leak_risk           = quality["leakRisk"],
-            hard_fail           = quality.get("hardFail", False),
-            mask_source         = d.get("maskSource", "real_sam2"),
+            mask_confidence      = d.get("maskConfidence", 0.0),
+            mask_png_base64      = d.get("maskPngBase64", ""),
+            mask_area_ratio      = d.get("maskAreaRatio", 0.0),
+            edge_sharpness       = quality["edgeSharpness"],
+            fragment_count       = d.get("fragmentCount", 1),
+            mask_quality_score   = quality["overallMaskScore"],
+            leak_risk            = quality["leakRisk"],
+            hard_fail            = quality.get("hardFail", False),
+            mask_source          = d.get("maskSource", "real_sam2"),
+            hand_overlap_ratio   = d.get("handOverlapRatio", 0.0),
+            person_overlap_ratio = d.get("personOverlapRatio", 0.0),
+            hand_subtract_applied = d.get("handSubtractApplied", False),
+            score_breakdown      = quality.get("scoreBreakdown", {}),
         )
         detections.append(det)
 
     processing_ms = int((time.time() - t0) * 1000)
     log.info(
-        "segment 완료: requestId=%s source=%s detections=%d warnings=%d ms=%d",
-        request_id, source_type, len(detections), len(warnings), processing_ms,
+        "segment 완료: requestId=%s source=%s flatten=%s detections=%d warnings=%d ms=%d",
+        request_id, source_type, flatten_method, len(detections), len(warnings), processing_ms,
     )
 
     resp   = SegmentationResponse(
@@ -279,6 +327,7 @@ def segment():
         processing_ms = processing_ms,
         detections    = detections,
         warnings      = warnings,
+        flatten_method = flatten_method,
     )
     result = resp.to_dict()
     cache.put(cache_key, result)

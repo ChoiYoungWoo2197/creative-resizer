@@ -1,6 +1,10 @@
 """Request / Response schemas for creative-segmentation-ai service.
 
 JSON 직렬화 / 역직렬화에만 사용. Pydantic 의존 없이 dataclass로 구현.
+
+Stage 18.1 변경:
+  - DetectionResult: handOverlapRatio / personOverlapRatio / handSubtractApplied / scoreBreakdown 추가
+  - SegmentationResponse: flattenMethod 추가
 """
 
 from __future__ import annotations
@@ -57,26 +61,36 @@ class DetectionResult:
     mask_quality_score: float = 0.0
     leak_risk: float = 0.0
     hard_fail: bool = False
-    # bbox fallback vs real SAM2 구분
     mask_source: str = "real_sam2"
+    # Stage 18.1: overlap / subtract / score breakdown
+    hand_overlap_ratio: float = 0.0
+    person_overlap_ratio: float = 0.0
+    hand_subtract_applied: bool = False
+    score_breakdown: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
-            "detectionId":         self.detection_id,
-            "role":                self.role,
-            "prompt":              self.prompt,
-            "bbox":                self.bbox.to_dict(),
-            "detectionConfidence": round(self.detection_confidence, 4),
-            "maskConfidence":      round(self.mask_confidence, 4),
-            "maskPngBase64":       self.mask_png_base64,
-            "maskAreaRatio":       round(self.mask_area_ratio, 4),
-            "edgeSharpness":       round(self.edge_sharpness, 4),
-            "fragmentCount":       self.fragment_count,
-            "maskQualityScore":    round(self.mask_quality_score, 2),
-            "leakRisk":            round(self.leak_risk, 4),
-            "hardFail":            self.hard_fail,
-            "maskSource":          self.mask_source,
+        d = {
+            "detectionId":          self.detection_id,
+            "role":                 self.role,
+            "prompt":               self.prompt,
+            "bbox":                 self.bbox.to_dict(),
+            "detectionConfidence":  round(self.detection_confidence, 4),
+            "maskConfidence":       round(self.mask_confidence, 4),
+            "maskPngBase64":        self.mask_png_base64,
+            "maskAreaRatio":        round(self.mask_area_ratio, 4),
+            "edgeSharpness":        round(self.edge_sharpness, 4),
+            "fragmentCount":        self.fragment_count,
+            "maskQualityScore":     round(self.mask_quality_score, 2),
+            "leakRisk":             round(self.leak_risk, 4),
+            "hardFail":             self.hard_fail,
+            "maskSource":           self.mask_source,
+            "handOverlapRatio":     round(self.hand_overlap_ratio, 4),
+            "personOverlapRatio":   round(self.person_overlap_ratio, 4),
+            "handSubtractApplied":  self.hand_subtract_applied,
         }
+        if self.score_breakdown:
+            d["scoreBreakdown"] = self.score_breakdown
+        return d
 
 
 @dataclass
@@ -87,15 +101,17 @@ class SegmentationResponse:
     processing_ms: int = 0
     detections: list[DetectionResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    flatten_method: str = "pillow"
 
     def to_dict(self) -> dict:
         return {
-            "requestId":    self.request_id,
-            "provider":     self.provider,
-            "device":       self.device,
-            "processingMs": self.processing_ms,
-            "detections":   [d.to_dict() for d in self.detections],
-            "warnings":     self.warnings,
+            "requestId":     self.request_id,
+            "provider":      self.provider,
+            "device":        self.device,
+            "processingMs":  self.processing_ms,
+            "detections":    [d.to_dict() for d in self.detections],
+            "warnings":      self.warnings,
+            "flattenMethod": self.flatten_method,
         }
 
 
@@ -121,7 +137,7 @@ class HealthResponse:
     # 캐시 상태
     grounding_dino_cache_ready: bool = False
     sam2_cache_ready: bool = False
-    # 세분화 모델 상태 (5.x 확장)
+    # 세분화 모델 상태
     grounding_dino_ready: bool = False
     grounding_dino_real_inference: bool = False
     sam2_checkpoint_ready: bool = False
@@ -149,7 +165,6 @@ class HealthResponse:
             "modelLoadMs":                 self.model_load_ms,
             "groundingDinoCacheReady":     self.grounding_dino_cache_ready,
             "sam2CacheReady":              self.sam2_cache_ready,
-            # 세분화 모델 상태
             "groundingDinoReady":          self.grounding_dino_ready,
             "groundingDinoRealInference":  self.grounding_dino_real_inference,
             "sam2CheckpointReady":         self.sam2_checkpoint_ready,

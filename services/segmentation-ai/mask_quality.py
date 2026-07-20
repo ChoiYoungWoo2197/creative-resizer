@@ -2,6 +2,11 @@
 
 가산/감산 항목을 명시적으로 계산해 overallMaskScore를 반환한다.
 PIL L-mode 이미지(255=masked, 0=background)를 입력으로 받는다.
+
+Stage 18.1: hand_overlap_ratio / person_overlap_ratio 감점 추가.
+  - product mask와 hand/person 영역의 픽셀 겹침 비율을 받아 감점
+  - 기본값 0.0 → 기존 테스트 영향 없음
+  - scoreBreakdown 필드 추가 (artifact 기록용)
 """
 
 from __future__ import annotations
@@ -13,22 +18,30 @@ import math
 SCORE_MAX = 100.0
 
 # hard-fail 조건 상수
-MIN_AREA_RATIO = 0.001   # 너무 작은 mask
-MAX_AREA_RATIO = 0.90    # canvas 거의 전체
-MIN_CONFIDENCE = 0.10
-MAX_FRAGMENT_HARD = 20   # 조각이 너무 많음
+MIN_AREA_RATIO    = 0.001   # 너무 작은 mask
+MAX_AREA_RATIO    = 0.90    # canvas 거의 전체
+MIN_CONFIDENCE    = 0.10
+MAX_FRAGMENT_HARD = 20      # 조각이 너무 많음
+
+# 손·사람 겹침 임계값
+HAND_OVERLAP_SOFT   = 0.05   # 이상: 약한 감점
+HAND_OVERLAP_HARD   = 0.10   # 이상: 강한 감점
+PERSON_OVERLAP_SOFT = 0.05
+PERSON_OVERLAP_HARD = 0.10
 
 
 def score_external_mask(
     detection_confidence: float,
     mask_confidence: float,
-    mask_pil,                   # PIL Image L-mode | None
+    mask_pil,                       # PIL Image L-mode | None
     bbox: dict,
     canvas_w: int,
     canvas_h: int,
     role: str = "product",
     fragment_count: int = 1,
     native_bbox: dict | None = None,
+    hand_overlap_ratio: float = 0.0,    # Stage 18.1: 손 겹침 비율 (0~1)
+    person_overlap_ratio: float = 0.0,  # Stage 18.1: 사람 겹침 비율 (0~1)
 ) -> dict:
     """외부 AI mask 품질 점수 0~100 계산.
 
@@ -36,7 +49,8 @@ def score_external_mask(
       edgeSharpness, alphaCoverage, leakRisk, fragmentCount,
       bboxFillRatio, maskAreaRatio, roleConsistencyScore,
       objectCompletenessScore, overallMaskScore,
-      hardFail (bool), hardFailReason (str|None)
+      hardFail (bool), hardFailReason (str|None),
+      scoreBreakdown (dict)
     """
     canvas_area = canvas_w * canvas_h or 1
 
@@ -54,11 +68,10 @@ def score_external_mask(
             arr = np.array(mask_pil.convert("L"))
             mask_pixel_count = int((arr > 127).sum())
 
-            # Edge sharpness: Sobel magnitude 표준편차
             from PIL import ImageFilter
             edge = mask_pil.filter(ImageFilter.FIND_EDGES)
             edge_arr = np.array(edge).astype(float)
-            edge_sharpness = float(min(edge_arr.std() / 64.0, 1.0))  # normalise
+            edge_sharpness = float(min(edge_arr.std() / 64.0, 1.0))
         except Exception:
             mask_pixel_count = int(bbox_area * 0.6)
             edge_sharpness = 0.35
@@ -96,88 +109,125 @@ def score_external_mask(
         )
 
     # ── 가산 점수 계산 ──────────────────────────────────────────────────────────
-    score = 0.0
+    conf_score = detection_confidence * 30          # +30
+    mask_conf_score = mask_confidence * 20          # +20
+    edge_score = edge_sharpness * 12                # +12
 
-    # +30: detection confidence (0~1 → 0~30)
-    score += detection_confidence * 30
-
-    # +20: mask confidence (0~1 → 0~20)
-    score += mask_confidence * 20
-
-    # +12: edge sharpness (높을수록 정밀 mask)
-    score += edge_sharpness * 12
-
-    # +10: 단일 연결 객체 (fragment 적을수록 가점)
+    frag_score = 0.0
     if fragment_count == 1:
-        score += 10
+        frag_score = 10.0
     elif fragment_count <= 3:
-        score += 6
+        frag_score = 6.0
     elif fragment_count <= 6:
-        score += 2
+        frag_score = 2.0
 
-    # +8: bbox fill ratio — bbox를 적당히 채움 (0.3~0.85 이상적)
+    bbox_fill_score = 0.0
     if 0.30 <= bbox_fill_ratio <= 0.85:
-        score += 8
+        bbox_fill_score = 8.0
     elif 0.15 <= bbox_fill_ratio < 0.30 or 0.85 < bbox_fill_ratio <= 0.95:
-        score += 3
+        bbox_fill_score = 3.0
 
-    # +10: 제품형 aspect ratio (키/폭이 극단적이지 않은 경우)
+    aspect_score = 0.0
     if role == "product" and bbox_w > 0 and bbox_h > 0:
         ar = bbox_h / bbox_w
         if 0.4 <= ar <= 3.0:
-            score += 10
+            aspect_score = 10.0
         elif 0.2 <= ar < 0.4 or 3.0 < ar <= 5.0:
-            score += 4
+            aspect_score = 4.0
 
-    # +8: 기존 product bbox와 위치 유사
+    native_bbox_score = 0.0
     if native_bbox and role == "product":
         overlap = _iou(bbox, native_bbox)
-        score += overlap * 8
+        native_bbox_score = overlap * 8
 
-    # +5: role 일관성
     role_consistency = _role_consistency(role, detection_confidence)
-    score += role_consistency * 5
+    role_score = role_consistency * 5
+
+    score = (
+        conf_score + mask_conf_score + edge_score + frag_score
+        + bbox_fill_score + aspect_score + native_bbox_score + role_score
+    )
 
     # ── 감산 점수 ──────────────────────────────────────────────────────────────
-    # 감점 항목 — 합리적 상한 내에서만
 
-    # -15: 배경 누출 의심 (canvas fill ratio가 매우 높음)
+    area_leak_penalty = 0.0
     if mask_area_ratio > 0.60:
-        score -= 15
+        area_leak_penalty = 15.0
     elif mask_area_ratio > 0.40:
-        score -= 5
+        area_leak_penalty = 5.0
 
-    # -10: bbox 면적 대부분 차지 (잘림/배경 누출 위험)
+    bbox_fill_penalty = 0.0
     if bbox_fill_ratio > 0.95:
-        score -= 10
+        bbox_fill_penalty = 10.0
 
-    # -8: 조각 과다
+    frag_penalty = 0.0
     if fragment_count > 6:
-        score -= min((fragment_count - 6) * 2, 12)
+        frag_penalty = min((fragment_count - 6) * 2.0, 12.0)
 
-    # -12: 제품 잘림 의심 (bbox가 canvas 가장자리에 매우 가까움)
-    edge_clip_penalty = _compute_edge_clip_penalty(bbox, canvas_w, canvas_h)
-    score -= edge_clip_penalty * 12
+    edge_clip_factor = _compute_edge_clip_penalty(bbox, canvas_w, canvas_h)
+    edge_clip_penalty = edge_clip_factor * 12.0
+
+    # ── 손·사람 겹침 감점 (Stage 18.1) ────────────────────────────────────────
+    # product mask에서 hand 영역이 차지하는 비율이 높을수록 강한 감점
+    hand_leak_penalty = 0.0
+    if hand_overlap_ratio >= HAND_OVERLAP_HARD:
+        # 10% 이상: 최대 25점 감점 (비율에 비례)
+        hand_leak_penalty = min(hand_overlap_ratio / 0.5, 1.0) * 25.0
+    elif hand_overlap_ratio >= HAND_OVERLAP_SOFT:
+        # 5~10%: 최대 8점 감점
+        hand_leak_penalty = (hand_overlap_ratio / HAND_OVERLAP_HARD) * 8.0
+
+    person_leak_penalty = 0.0
+    if person_overlap_ratio >= PERSON_OVERLAP_HARD:
+        person_leak_penalty = min(person_overlap_ratio / 0.5, 1.0) * 18.0
+    elif person_overlap_ratio >= PERSON_OVERLAP_SOFT:
+        person_leak_penalty = (person_overlap_ratio / PERSON_OVERLAP_HARD) * 5.0
+
+    score -= (
+        area_leak_penalty + bbox_fill_penalty + frag_penalty
+        + edge_clip_penalty + hand_leak_penalty + person_leak_penalty
+    )
 
     alpha_coverage = min(bbox_fill_ratio, 1.0)
-    leak_risk = max(0.0, mask_area_ratio - 0.3) / 0.7  # 0.3 이상부터 증가
+    leak_risk = max(0.0, mask_area_ratio - 0.3) / 0.7
 
     overall = max(0.0, min(SCORE_MAX, score))
 
+    score_breakdown = {
+        "confidenceScore":     round(conf_score, 2),
+        "maskConfScore":       round(mask_conf_score, 2),
+        "edgeScore":           round(edge_score, 2),
+        "fragmentScore":       round(frag_score, 2),
+        "bboxFillScore":       round(bbox_fill_score, 2),
+        "aspectRatioScore":    round(aspect_score, 2),
+        "nativeBboxScore":     round(native_bbox_score, 2),
+        "roleConsistencyScore": round(role_score, 2),
+        "areaLeakPenalty":     round(-area_leak_penalty, 2),
+        "bboxFillPenalty":     round(-bbox_fill_penalty, 2),
+        "fragmentPenalty":     round(-frag_penalty, 2),
+        "edgeClipPenalty":     round(-edge_clip_penalty, 2),
+        "handLeakPenalty":     round(-hand_leak_penalty, 2),
+        "personLeakPenalty":   round(-person_leak_penalty, 2),
+        "totalScore":          round(overall, 2),
+    }
+
     return {
-        "edgeSharpness":          round(edge_sharpness, 3),
-        "alphaCoverage":          round(alpha_coverage, 3),
-        "leakRisk":               round(leak_risk, 3),
-        "fragmentCount":          fragment_count,
-        "bboxFillRatio":          round(bbox_fill_ratio, 3),
-        "maskAreaRatio":          round(mask_area_ratio, 4),
-        "roleConsistencyScore":   round(role_consistency, 3),
+        "edgeSharpness":           round(edge_sharpness, 3),
+        "alphaCoverage":           round(alpha_coverage, 3),
+        "leakRisk":                round(leak_risk, 3),
+        "fragmentCount":           fragment_count,
+        "bboxFillRatio":           round(bbox_fill_ratio, 3),
+        "maskAreaRatio":           round(mask_area_ratio, 4),
+        "roleConsistencyScore":    round(role_consistency, 3),
         "objectCompletenessScore": round(min(bbox_fill_ratio * 1.1, 1.0), 3),
-        "overallMaskScore":       round(overall, 2),
-        "hardFail":               False,
-        "hardFailReason":         None,
-        "detectionConfidence":    round(detection_confidence, 4),
-        "maskConfidence":         round(mask_confidence, 4),
+        "overallMaskScore":        round(overall, 2),
+        "hardFail":                False,
+        "hardFailReason":          None,
+        "detectionConfidence":     round(detection_confidence, 4),
+        "maskConfidence":          round(mask_confidence, 4),
+        "handLeakPenalty":         round(hand_leak_penalty, 2),
+        "personLeakPenalty":       round(person_leak_penalty, 2),
+        "scoreBreakdown":          score_breakdown,
     }
 
 
@@ -188,10 +238,7 @@ def score_native_mask(
     canvas_h: int,
     product_score: float = 50.0,
 ) -> float:
-    """기존 native mask에 대한 0~100 점수 반환.
-
-    source 우선순위 기반 점수화. segmentation_poc.py 의 compute_mask_quality와 연동.
-    """
+    """기존 native mask에 대한 0~100 점수 반환."""
     _SOURCE_BASE: dict[str, float] = {
         "psd_isolated_layer":   95.0,
         "psd_alpha":            80.0,
@@ -204,7 +251,6 @@ def score_native_mask(
         "unknown":              5.0,
     }
     base = _SOURCE_BASE.get(source, 5.0)
-    # product_score 가중치 (±10)
     score = base + (product_score - 50.0) * 0.20
     return round(max(0.0, min(100.0, score)), 2)
 
@@ -215,6 +261,14 @@ def _zero_result(
     area_ratio: float, bbox_fill: float, edge_sh: float,
     frags: int, hf: bool, hf_reason: str | None,
 ) -> dict:
+    breakdown = {
+        "confidenceScore": 0.0, "maskConfScore": 0.0, "edgeScore": 0.0,
+        "fragmentScore": 0.0, "bboxFillScore": 0.0, "aspectRatioScore": 0.0,
+        "nativeBboxScore": 0.0, "roleConsistencyScore": 0.0,
+        "areaLeakPenalty": 0.0, "bboxFillPenalty": 0.0, "fragmentPenalty": 0.0,
+        "edgeClipPenalty": 0.0, "handLeakPenalty": 0.0, "personLeakPenalty": 0.0,
+        "totalScore": 0.0,
+    }
     return {
         "edgeSharpness":           round(edge_sh, 3),
         "alphaCoverage":           round(bbox_fill, 3),
@@ -229,6 +283,9 @@ def _zero_result(
         "hardFailReason":          hf_reason,
         "detectionConfidence":     0.0,
         "maskConfidence":          0.0,
+        "handLeakPenalty":         0.0,
+        "personLeakPenalty":       0.0,
+        "scoreBreakdown":          breakdown,
     }
 
 

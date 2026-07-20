@@ -4,6 +4,13 @@
 verify_stage18_server.sh 에서 호출됨.
 PIL/numpy 없을 때도 JSON 분석은 정상 동작 (이미지 생성만 스킵).
 
+Stage 18.1 변경:
+  - handLeakRisk: 픽셀 overlap(handOverlapRatio) 우선, bbox IoU fallback
+  - personLeakRisk: 동일
+  - handSubtractApplied 필드 읽기
+  - flattenMethod / scoreBreakdown 보고서 포함
+  - psd-tools 정보 기록
+
 사용법:
   python3 scripts/verify_stage18_server.py \
     --segment-json /path/to/segmentation.json \
@@ -32,7 +39,7 @@ except ImportError:
 
 MASK_SCORE_THRESHOLD = 70.0
 BBOX_FALLBACK_WARNINGS = {"sam2_unavailable_bbox_mask_used"}
-REAL_SAM2_SOURCES = {"real_sam2", ""}   # maskSource 기본값 "" 도 real_sam2 취급
+REAL_SAM2_SOURCES = {"real_sam2", ""}
 BBOX_FALLBACK_SOURCES = {"external_bbox_fallback", "bbox_fallback"}
 
 ROLE_COLORS = {
@@ -76,6 +83,7 @@ def main() -> int:
     # ── Detections 파싱 ────────────────────────────────────────────────────────
     detections: list[dict] = seg_data.get("detections", [])
     warnings:   list[str]  = seg_data.get("warnings", [])
+    flatten_method: str    = seg_data.get("flattenMethod", "unknown")
 
     product_dets = [d for d in detections if d.get("role") == "product"]
     hand_dets    = [d for d in detections if d.get("role") == "hand"]
@@ -108,19 +116,28 @@ def main() -> int:
             key=lambda d: d.get("maskQualityScore", 0.0),
         )
 
-    ext_mask_score:   float = best_product.get("maskQualityScore", 0.0) if best_product else 0.0
-    mask_source:      str   = best_product.get("maskSource", "N/A")      if best_product else "N/A"
-    edge_sharpness:   float = best_product.get("edgeSharpness", 0.0)     if best_product else 0.0
-    fragment_count:   int   = best_product.get("fragmentCount", 0)        if best_product else 0
-    mask_area_ratio:  float = best_product.get("maskAreaRatio", 0.0)      if best_product else 0.0
-    detection_conf:   float = best_product.get("detectionConfidence", 0.0) if best_product else 0.0
-    mask_conf:        float = best_product.get("maskConfidence", 0.0)      if best_product else 0.0
+    ext_mask_score:   float = best_product.get("maskQualityScore", 0.0)   if best_product else 0.0
+    mask_source:      str   = best_product.get("maskSource", "N/A")        if best_product else "N/A"
+    edge_sharpness:   float = best_product.get("edgeSharpness", 0.0)       if best_product else 0.0
+    fragment_count:   int   = best_product.get("fragmentCount", 0)          if best_product else 0
+    mask_area_ratio:  float = best_product.get("maskAreaRatio", 0.0)        if best_product else 0.0
+    detection_conf:   float = best_product.get("detectionConfidence", 0.0)  if best_product else 0.0
+    mask_conf:        float = best_product.get("maskConfidence", 0.0)       if best_product else 0.0
+    hand_subtract:    bool  = bool(best_product.get("handSubtractApplied", False)) if best_product else False
+    score_breakdown:  dict  = best_product.get("scoreBreakdown", {})        if best_product else {}
 
     # ── Leak risk 계산 ─────────────────────────────────────────────────────────
-    hand_leak_risk: float = _compute_overlap_risk(best_product, hand_dets + person_dets)
+    # 픽셀 overlap 우선 (Stage 18.1 provider가 handOverlapRatio 계산)
+    # 없으면 bbox IoU fallback
+    if best_product and "handOverlapRatio" in best_product:
+        hand_leak_risk   = float(best_product.get("handOverlapRatio", 0.0))
+        person_leak_risk = float(best_product.get("personOverlapRatio", 0.0))
+    else:
+        hand_leak_risk   = _compute_overlap_risk(best_product, hand_dets + person_dets)
+        person_leak_risk = _compute_overlap_risk(best_product, person_dets)
+
     bg_leak_risk:   float = best_product.get("leakRisk", 0.0) if best_product else 0.0
-    person_leak_risk: float = _compute_overlap_risk(best_product, person_dets)
-    text_leak_risk: float = 0.0   # text role 탐지 미구현 → 0
+    text_leak_risk: float = 0.0
 
     # ── Product completeness ───────────────────────────────────────────────────
     product_completeness = _score_completeness(ext_mask_score)
@@ -161,6 +178,8 @@ def main() -> int:
         "sam2ModelId":                sam2_model_id,
         "device":                     device,
         "externalModelRealInference": real_inference,
+        # 입력 처리
+        "flattenMethod":              flatten_method,
         # 탐지 결과
         "groundingDinoDetected":      gdino_detected,
         "groundingDinoPrompt":        "cosmetic tube . skincare product . cosmetic product . cream tube . product bottle",
@@ -168,6 +187,7 @@ def main() -> int:
         "sam2MaskGenerated":          sam2_generated,
         "maskSource":                 mask_source,
         "bboxFallbackUsed":           bbox_fallback_used,
+        "handSubtractApplied":        hand_subtract,
         # 품질
         "externalMaskScore":          round(ext_mask_score, 2),
         "handLeakRisk":               round(hand_leak_risk, 4),
@@ -179,6 +199,8 @@ def main() -> int:
         "fragmentCount":              fragment_count,
         "maskAreaRatio":              round(mask_area_ratio, 4),
         "maskConfidence":             round(mask_conf, 4),
+        # 점수 구성 (Stage 18.1)
+        "scoreBreakdown":             score_breakdown,
         # 선택 결과
         "selectedMaskSource":         selected_mask_source,
         "externalMaskRejectedReason": ext_mask_rejected_reason,
@@ -210,7 +232,7 @@ def _compute_overlap_risk(
     product_det: dict | None,
     other_dets: list[dict],
 ) -> float:
-    """product bbox와 hand/person bbox의 최대 IoU."""
+    """product bbox와 hand/person bbox의 최대 IoU (bbox fallback)."""
     if not product_det or not other_dets:
         return 0.0
     pb = product_det.get("bbox", {})
@@ -269,7 +291,8 @@ def _generate_debug_images(
             score = d.get("maskQualityScore", 0.0)
             conf  = d.get("detectionConfidence", 0.0)
             src   = d.get("maskSource", "?")
-            label = f"{d.get('role','')} c={conf:.2f} q={score:.0f} [{src}]"
+            sub   = " [sub]" if d.get("handSubtractApplied") else ""
+            label = f"{d.get('role','')} c={conf:.2f} q={score:.0f} [{src}]{sub}"
             draw.text((x+4, y+4), label, fill=color)
         det_path = os.path.join(output_dir, "detections.png")
         det_img.save(det_path)
@@ -284,22 +307,25 @@ def _generate_debug_images(
                 mask_bytes = base64.b64decode(mask_b64)
                 mask_pil = Image.open(io.BytesIO(mask_bytes)).convert("L")
 
-                # product.mask.png
                 mask_path = os.path.join(output_dir, "product.mask.png")
                 mask_pil.save(mask_path)
                 generated.append("product.mask.png")
 
-                # product.cutout.png (RGBA)
                 rgba = img.convert("RGBA")
-                rgba.putalpha(mask_pil.resize(img.size, Image.LANCZOS) if mask_pil.size != img.size else mask_pil)
+                rgba.putalpha(
+                    mask_pil.resize(img.size, Image.LANCZOS)
+                    if mask_pil.size != img.size else mask_pil
+                )
                 cutout_path = os.path.join(output_dir, "product.cutout.png")
                 rgba.save(cutout_path)
                 generated.append("product.cutout.png")
 
-                # product.overlay.png
                 overlay = img.copy().convert("RGBA")
                 tinted = Image.new("RGBA", img.size, (0, 200, 0, 80))
-                mask_resized = mask_pil.resize(img.size, Image.LANCZOS) if mask_pil.size != img.size else mask_pil
+                mask_resized = (
+                    mask_pil.resize(img.size, Image.LANCZOS)
+                    if mask_pil.size != img.size else mask_pil
+                )
                 overlay.paste(tinted, mask=mask_resized)
                 overlay_path = os.path.join(output_dir, "product.overlay.png")
                 overlay.convert("RGB").save(overlay_path)
