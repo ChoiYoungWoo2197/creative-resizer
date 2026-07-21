@@ -49,7 +49,7 @@ def _template_1250x560_image_left() -> tuple[str, list[LayoutSlot]]:
         cta       =dict(x=650, y=320, w=220,  h=65,  mode="contain", z=6),
         badge     =dict(x=650, y=415, w=200,  h=65,  mode="contain", z=7),
         decoration=dict(x=950, y=420, w=200,  h=100, mode="contain", z=8),
-        brand_name=dict(x=650, y=50,  w=300,  h=40,  mode="contain", z=3),
+        brand_name=dict(x=650, y=50,  w=300,  h=40,  mode="contain", z=10),
         legal_text=dict(x=260, y=510, w=960,  h=40,  mode="contain", z=9),
     )
 
@@ -64,7 +64,7 @@ def _template_1250x560_image_right() -> tuple[str, list[LayoutSlot]]:
         cta       =dict(x=260, y=320, w=220,  h=65,  mode="contain", z=6),
         badge     =dict(x=260, y=415, w=200,  h=65,  mode="contain", z=7),
         main_image=dict(x=780, y=80,  w=360,  h=420, mode="contain", z=2),
-        brand_name=dict(x=260, y=50,  w=300,  h=40,  mode="contain", z=3),
+        brand_name=dict(x=260, y=50,  w=300,  h=40,  mode="contain", z=10),
         legal_text=dict(x=260, y=510, w=960,  h=40,  mode="contain", z=9),
     )
 

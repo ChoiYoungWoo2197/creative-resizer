@@ -5,82 +5,81 @@ Priority order: user_override > layer_name > group_name > text_metadata > positi
 from __future__ import annotations
 import unicodedata
 
-# 15 role definitions with Korean and English aliases
+# 15 role definitions with Korean and English aliases.
+# ORDER MATTERS: more specific / compound roles must appear BEFORE general ones
+# to prevent short keywords from matching sub-strings in unrelated names.
 ROLE_ALIASES: list[tuple[str, list[str]]] = [
     ("background", [
-        "배경", "bg", "background", "bkg", "back", "backdrop",
-        "base", "ground", "베이스", "하단배경", "full_bg",
+        "배경", "bg", "background", "bkg", "backdrop",
+        "베이스", "하단배경", "full_bg", "base_bg",
     ]),
-    ("main_image", [
-        "제품", "product", "주요이미지", "모델", "model", "main",
-        "visual", "person", "item", "goods", "pack", "상품",
-        "오브젝트", "object", "subject", "메인이미지", "mainimage",
-        "main_img", "main_visual", "핵심이미지", "hand", "body",
-    ]),
-    ("title", [
-        "타이틀", "title", "headline", "제목", "카피", "copy",
-        "maintext", "main_text", "main_title", "헤드라인", "헤드",
-        "head", "주카피", "메인카피", "maincopy", "catchphrase",
-        "슬로건", "slogan", "maincopy", "대제목",
-    ]),
-    ("body_text", [
-        "텍스트", "text", "설명", "desc", "description",
-        "subcopy", "서브", "body", "subtext", "sub_text", "subhead",
-        "서브카피", "서브텍스트", "본문", "내용", "설명문구",
-        "detail", "bodycopy", "body_copy",
-    ]),
-    ("cta", [
-        "액션", "cta", "button", "버튼", "신청", "구매",
-        "btn", "apply", "buy", "order", "행동", "지금",
-        "바로가기", "더보기", "자세히", "클릭", "click",
-        "shop", "쇼핑", "purchase", "call_to_action",
-    ]),
-    ("logo", [
-        "로고", "logo", "brand", "브랜드", "ci", "bi", "emblem",
-        "브랜드로고", "brand_logo", "ci_logo", "브랜드명",
-    ]),
-    ("badge", [
-        "배지", "badge", "sticker", "sale", "discount", "혜택",
-        "event", "ribbon", "seal", "이벤트", "할인", "쿠폰",
-        "coupon", "tag", "라벨", "label", "new", "hot", "best",
-        "추천", "limited", "한정", "free", "무료",
-    ]),
-    ("legal_text", [
-        "법적", "legal", "disclaimer", "면책", "주의사항",
-        "약관", "terms", "notice", "광고", "광고문구",
-        "copyright", "저작권", "정보", "info", "footnote",
-        "각주", "미세문자", "smalltext", "small_text",
-    ]),
-    ("brand_name", [
-        "브랜드명", "brand_name", "상호명", "회사명", "company",
-        "brandname", "brand_text", "브랜드텍스트",
-    ]),
+    # Specific roles BEFORE the general roles they'd otherwise shadow
     ("product_detail", [
         "제품상세", "product_detail", "모델명", "model_name",
-        "사양", "spec", "specification", "용량", "capacity",
-        "productname", "제품명", "상품명", "item_name",
+        "사양", "specification", "용량", "capacity",
+        "productname", "상품명", "item_name",
+    ]),
+    ("brand_name", [
+        "브랜드명", "brand_name", "상호명", "회사명",
+        "brandname", "brand_text", "브랜드텍스트",
     ]),
     ("sub_logo", [
         "서브로고", "sub_logo", "파트너", "partner", "서브브랜드",
         "sub_brand", "co_brand", "협찬", "sponsor", "sublogo",
     ]),
+    ("legal_text", [
+        "법적", "legal", "disclaimer", "면책", "주의사항",
+        "약관", "terms", "copyright", "저작권", "footnote",
+        "각주", "smalltext", "small_text", "notice_text",
+    ]),
+    # General roles
+    ("main_image", [
+        "제품", "product", "주요이미지", "모델", "model", "main_img",
+        "visual", "person", "item", "goods", "pack", "상품",
+        "오브젝트", "object", "subject", "메인이미지", "mainimage",
+        "main_visual", "핵심이미지", "hand", "main_image",
+    ]),
+    ("title", [
+        "타이틀", "title", "headline", "제목", "주카피", "메인카피",
+        "maintext", "main_text", "main_title", "헤드라인", "헤드",
+        "head", "maincopy", "main_copy", "catchphrase",
+        "슬로건", "slogan", "대제목",
+    ]),
+    ("body_text", [
+        "설명", "desc", "description",
+        "subcopy", "서브카피", "서브", "subtext", "sub_text", "subhead",
+        "서브텍스트", "본문", "내용", "설명문구",
+        "bodycopy", "body_copy", "body_text",
+    ]),
+    ("cta", [
+        "액션", "cta", "button", "버튼", "신청", "구매",
+        "btn", "apply", "buy", "order", "행동", "지금",
+        "바로가기", "더보기", "자세히", "클릭", "click",
+        "쇼핑", "purchase", "call_to_action",
+    ]),
+    ("logo", [
+        "로고", "logo", "브랜드로고", "brand_logo", "ci", "bi", "emblem",
+    ]),
+    ("badge", [
+        "배지", "badge", "sticker", "sale_tag", "discount_tag", "혜택",
+        "ribbon", "seal", "이벤트태그", "할인", "쿠폰",
+        "coupon", "라벨", "limited_tag", "한정",
+    ]),
     ("scene", [
         "씬", "scene", "배경연출", "scenery", "소품", "props",
-        "연출", "staging", "lifestyle", "라이프스타일",
+        "연출", "staging", "lifestyle",
     ]),
     ("decoration", [
-        "장식", "decoration", "deco", "ornament", "shape", "pattern",
-        "effect", "icon", "star", "heart", "꾸밈", "데코",
-        "graphic", "그래픽", "accent", "flourish",
+        "장식", "decoration", "deco", "ornament", "꾸밈", "데코",
+        "graphic_accent", "flourish",
     ]),
     ("pattern", [
-        "패턴", "pattern", "texture", "텍스처", "반복",
-        "repeat", "tile", "tiles", "grid",
+        "패턴", "pattern", "texture", "텍스처", "반복패턴",
+        "repeat_tile", "tile_bg",
     ]),
     ("overlay", [
-        "오버레이", "overlay", "gradient", "그라데이션", "filter",
-        "필터", "dim", "dimming", "vignette", "비네트", "tint",
-        "half", "반투명",
+        "오버레이", "overlay", "gradient", "그라데이션",
+        "dim_layer", "vignette", "tint_layer", "반투명",
     ]),
 ]
 
