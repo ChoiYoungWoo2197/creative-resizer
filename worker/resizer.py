@@ -1592,9 +1592,45 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             out_path = os.path.join(output_dir, filename)
             debug_dir = os.path.join(output_dir, "debug_layers")
 
-            lr = psd_layer_reflow.generate_psd_layer_reflow(
-                psd_path, w, h, out_path, debug_dir
-            )
+            # Stage 20: Try Typography Pipeline first when TYPOGRAPHY_PIPELINE_ENABLED=true
+            typo_meta: dict = {}
+            typography_attempted = False
+            lr = None
+            if os.environ.get("TYPOGRAPHY_PIPELINE_ENABLED", "false").lower() == "true":
+                try:
+                    from typography.pipeline import run_typography_pipeline
+                    typo_result = run_typography_pipeline(
+                        psd_path, w, h, out_path,
+                        debug_dir=debug_dir,
+                        output_format=output_format,
+                        job_id=f"{media}_{w}x{h}",
+                    )
+                    typography_attempted = True
+                    typo_meta = typo_result
+                    if typo_result.get("success"):
+                        lr = {
+                            "success": True,
+                            "error": None,
+                            "template": typo_result.get("template"),
+                            "detectedRoles": typo_result.get("detectedRoles", []),
+                            "usedLayerRoles": typo_result.get("usedLayerRoles", []),
+                            "extractedLayerCount": typo_result.get("extractedLayerCount", 0),
+                            "layerReflowScore": typo_result.get("qualityScore", 0.0),
+                            "quality": {
+                                "safeZonePass": typo_result.get("safeZonePass", True),
+                                "requiredLayerMissing": bool(typo_result.get("missingRoles")),
+                                "overlapRisk": False,
+                            },
+                        }
+                except Exception as _typo_exc:
+                    print(f"[Resizer] Typography pipeline error: {_typo_exc}")
+                    typo_meta = {"error": str(_typo_exc)}
+
+            # Fall back to legacy layer-reflow if Typography Pipeline not enabled/succeeded
+            if lr is None:
+                lr = psd_layer_reflow.generate_psd_layer_reflow(
+                    psd_path, w, h, out_path, debug_dir
+                )
 
             layer_reflow_attempted = True
             layer_reflow_succeeded = lr.get("success", False)
@@ -1730,6 +1766,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "backgroundMode": None,
                 "candidateCount": None,
                 "selectedCandidateId": None,
+                # Stage 20 Typography Pipeline meta
+                "typographyPipelineAttempted": typography_attempted,
+                "typographyPipelineSucceeded": typo_meta.get("success", False) if typography_attempted else False,
+                "typographyTemplate": typo_meta.get("template"),
+                "typographyKoreanLayers": typo_meta.get("koreanLayers", 0),
+                "typographyDedupRemoved": typo_meta.get("dedupRemovedCount", 0),
+                "typographyCtaGroupDetected": typo_meta.get("ctaGroupDetected", False),
+                "typographyQualityScore": typo_meta.get("qualityScore", 0.0),
+                "typographyWarnings": typo_meta.get("warnings", []),
             })
         return results, []
 

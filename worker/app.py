@@ -183,6 +183,19 @@ def match_layers():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Stage 20 Typography Pipeline endpoint ────────────────────────────────────
+
+@app.route("/v1/typography/health", methods=["GET"])
+def typography_health():
+    """Stage 20 typography pipeline health check."""
+    import os
+    enabled = os.environ.get("TYPOGRAPHY_PIPELINE_ENABLED", "false").lower() == "true"
+    return jsonify({
+        "status": "ok",
+        "typographyPipelineEnabled": enabled,
+    })
+
+
 # ── Stage 19 Background Pipeline endpoints ───────────────────────────────────
 
 @app.route("/v1/background/health", methods=["GET"])

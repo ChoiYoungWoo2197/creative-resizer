@@ -212,6 +212,17 @@
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
                 ✦ AI 후보 적용됨 · {{ strengthKr(r.selectedCandidate) }}
               </div>
+              <!-- Stage 20: Typography Pipeline metadata -->
+              <div v-if="r.typographyPipelineAttempted" class="stage20-badge"
+                   :class="{ 'stage20-applied': r.typographyPipelineSucceeded }">
+                ⬡ Stage 20
+                <span class="stage20-source">{{ r.typographyTemplate || '템플릿없음' }}</span>
+                <span v-if="r.typographyKoreanLayers" class="stage20-tag s20-korean">한국어 {{ r.typographyKoreanLayers }}레이어</span>
+                <span v-if="r.typographyDedupRemoved" class="stage20-tag s20-dedup">중복제거 {{ r.typographyDedupRemoved }}</span>
+                <span v-if="r.typographyCtaGroupDetected" class="stage20-tag s20-cta">CTA그룹</span>
+                <span v-if="r.typographyQualityScore" class="stage20-score">{{ Math.round(r.typographyQualityScore) }}점</span>
+                <span v-if="!r.typographyPipelineSucceeded" class="stage20-fallback">↩ fallback</span>
+              </div>
               <!-- Stage 19: BackgroundPipeline metadata -->
               <div v-if="r.backgroundPipelineExecuted" class="stage19-badge"
                    :class="{ 'stage19-applied': !r.backgroundCompareOnly && r.appliedBackgroundSource !== 'native' }">
@@ -1307,6 +1318,50 @@ onUnmounted(stopPolling)
   color: #B91C1C; background: #FEE2E2;
   border-radius: 6px; padding: 2px 8px;
   display: inline-block;
+}
+
+/* Stage 20: Typography Pipeline badge */
+.stage20-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 600;
+  color: #374151; background: #F0F9FF;
+  border: 1px solid #BAE6FD;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 5px;
+  flex-wrap: wrap;
+}
+.stage20-badge.stage20-applied {
+  color: #1E40AF; background: #DBEAFE;
+  border-color: #93C5FD;
+}
+.stage20-source {
+  font-size: 10px; font-weight: 500;
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(0,0,0,0.08);
+}
+.stage20-tag {
+  font-size: 9px; font-weight: 700;
+  padding: 1px 5px; border-radius: 4px;
+}
+.s20-korean { background: #DCFCE7; color: #166534; }
+.s20-dedup  { background: #FEF9C3; color: #854D0E; }
+.s20-cta    { background: #F3E8FF; color: #7E22CE; }
+.stage20-score {
+  font-size: 10px; font-weight: 700;
+  color: #1E40AF; background: #DBEAFE;
+  border-radius: 4px; padding: 1px 5px;
+}
+.stage20-fallback {
+  font-size: 9px; color: #6B7280;
+}
+@media (prefers-color-scheme: dark) {
+  .stage20-badge { color: #D1D5DB; background: #0C1E30; border-color: #1E40AF; }
+  .stage20-badge.stage20-applied { color: #93C5FD; background: #1E3A5F; border-color: #3B82F6; }
+  .s20-korean { background: #052E16; color: #4ADE80; }
+  .s20-dedup  { background: #422006; color: #FDE047; }
+  .s20-cta    { background: #3B0764; color: #D8B4FE; }
+  .stage20-score { background: #1E3A5F; color: #93C5FD; }
+  .stage20-fallback { color: #6B7280; }
 }
 
 /* Stage 19: BackgroundPipeline badge */
