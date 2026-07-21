@@ -1,0 +1,43 @@
+# Stage 19 verification image — NOT for production.
+# Adds pytest and test-only deps on top of the worker runtime.
+#
+# Build context MUST be the project root (parent of worker/):
+#   docker build -t <tag> -f worker/Dockerfile.verify .
+#
+# Do NOT use this image in production or in docker-compose.yml.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Same native deps as worker/Dockerfile
+RUN apt-get update && apt-get install -y \
+    libffi-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    liblcms2-2 \
+    imagemagick \
+    libmagickwand-dev \
+    ghostscript \
+    libpng-dev \
+    libtiff-dev \
+    libwebp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ImageMagick: allow PSD read/write (same as worker)
+RUN sed -i 's/<policy domain="coder" rights="none" pattern="PS" \/>/<policy domain="coder" rights="read|write" pattern="PS" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true && \
+    sed -i 's/<policy domain="coder" rights="none" pattern="PSD" \/>/<policy domain="coder" rights="read|write" pattern="PSD" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true
+
+# Step 1: Runtime requirements (identical to production)
+COPY worker/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Step 2: Verification-only requirements (pytest etc.) — NOT in production
+COPY scripts/requirements-stage19-verify.txt .
+RUN pip install --no-cache-dir -r requirements-stage19-verify.txt
+
+# Step 3: Copy worker source
+COPY worker/ .
+
+EXPOSE 5000
+CMD ["python", "app.py"]

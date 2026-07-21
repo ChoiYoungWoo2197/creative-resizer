@@ -198,17 +198,26 @@ def scenario_f_quality_gate_hardfail() -> str:
 # ---------------------------------------------------------------------------
 
 def cmd_import_check(_args) -> int:
-    """Check all required imports; print key=value lines; exit 1 on failure."""
+    """Check all required imports; print key=value lines; exit 1 on failure.
+
+    Required (any failure → helperRuntimeReady=FAIL, exit 1):
+      pillowReady, numpyReady, pytestReady, backgroundPipelineReady,
+      localInpaintBackendReady
+
+    Optional (failure is reported but does NOT cause exit 1):
+      opencvReady, skimageReady
+    """
     results: dict[str, str] = {"pythonVersion": sys.version.split()[0]}
     failed: list[str] = []
 
-    checks = [
-        ("pillowReady",           "from PIL import Image"),
-        ("numpyReady",            "import numpy"),
-        ("pytestReady",           "import pytest"),
-        ("backgroundPipeline",    "from background import BackgroundPipeline"),
+    # ── Required packages ───────────────────────────────────────────────────
+    _required = [
+        ("pillowReady",             "from PIL import Image"),
+        ("numpyReady",              "import numpy"),
+        ("pytestReady",             "import pytest"),
+        ("backgroundPipelineReady", "from background import BackgroundPipeline"),
     ]
-    for key, stmt in checks:
+    for key, stmt in _required:
         try:
             exec(stmt, {})
             results[key] = "true"
@@ -216,12 +225,36 @@ def cmd_import_check(_args) -> int:
             results[key] = f"FAIL:{e}"
             failed.append(key)
 
-    # cv2 is optional
+    # ── Optional: OpenCV ────────────────────────────────────────────────────
     try:
         import cv2  # noqa: F401
         results["opencvReady"] = "true"
     except ImportError:
-        results["opencvReady"] = "false (optional: skimage fallback active)"
+        results["opencvReady"] = "false"
+
+    # ── Optional: scikit-image (needed as fallback if cv2 absent) ──────────
+    try:
+        from skimage.restoration import inpaint_biharmonic  # noqa: F401
+        results["skimageReady"] = "true"
+    except ImportError as e:
+        results["skimageReady"] = f"FAIL:{e}"
+
+    # ── localInpaintBackendReady = cv2 OR skimage ───────────────────────────
+    _cv2_ok = results.get("opencvReady") == "true"
+    _ski_ok = results.get("skimageReady") == "true"
+    if _cv2_ok:
+        results["localInpaintBackend"] = "opencv"
+        results["localInpaintBackendReady"] = "true"
+    elif _ski_ok:
+        results["localInpaintBackend"] = "skimage"
+        results["localInpaintBackendReady"] = "true"
+    else:
+        results["localInpaintBackend"] = "none"
+        results["localInpaintBackendReady"] = "FAIL:no_local_inpaint_backend"
+        failed.append("localInpaintBackendReady")
+
+    # ── helperRuntimeReady ─────────────────────────────────────────────────
+    results["helperRuntimeReady"] = "true" if not failed else f"FAIL:{failed}"
 
     for k, v in results.items():
         print(f"{k}={v}", flush=True)
@@ -229,7 +262,8 @@ def cmd_import_check(_args) -> int:
     if failed:
         print(f"[FAIL] Missing required packages: {failed}", file=sys.stderr, flush=True)
         return 1
-    print("[OK] All required imports available", flush=True)
+
+    print("[OK] helperRuntimeReady=true", flush=True)
     return 0
 
 
