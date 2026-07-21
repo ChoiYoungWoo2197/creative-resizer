@@ -1007,6 +1007,81 @@ def resize_object_aware_fit(img: Image.Image, dst_w: int, dst_h: int,
     return bg
 
 
+def _try_background_pipeline(
+    source_img,
+    target_w: int,
+    target_h: int,
+    job_id: str | None = None,
+    output_dir: str | None = None,
+) -> dict:
+    """Run Stage 19 BackgroundPipeline for one spec. Never raises.
+
+    Controlled by BACKGROUND_PIPELINE_ENABLED env var (default false).
+    When compare_only=false and pipeline produced a (target_w×target_h) image,
+    'resultImage' in the return dict is that PIL Image; otherwise None.
+    """
+    import os as _os
+    enabled = _os.environ.get("BACKGROUND_PIPELINE_ENABLED", "false").lower() == "true"
+    out: dict = {
+        "executed": False,
+        "enabled": enabled,
+        "compareOnly": True,
+        "resultImage": None,
+        "bestEvaluatedBackgroundSource": None,
+        "appliedBackgroundSource": "native",
+        "appliedBackgroundScore": 0.0,
+        "backgroundFallbackUsed": True,
+        "backgroundFallbackReason": "pipeline_disabled",
+        "externalInpaintAttempted": False,
+        "outpaintAttempted": False,
+        "shadowApplied": False,
+    }
+    if not enabled:
+        return out
+    try:
+        from background import BackgroundPipeline
+        from background.schemas import BackgroundRequest, BackgroundOptions
+        opts = BackgroundOptions.from_env()
+        req = BackgroundRequest(
+            source_image=source_img.convert("RGB"),
+            target_width=target_w,
+            target_height=target_h,
+            options=opts,
+            request_id=f"{job_id or 'job'}_{target_w}x{target_h}",
+        )
+        artifact_dir = output_dir or f"/tmp/stage19-{target_w}x{target_h}"
+        pipeline = BackgroundPipeline(output_dir=artifact_dir)
+        bg = pipeline.process(req)
+        pipeline_img = None
+        if not bg.background_compare_only and bg.result_image is not None:
+            if bg.result_image.size == (target_w, target_h):
+                pipeline_img = bg.result_image
+        out.update({
+            "executed": True,
+            "compareOnly": bg.background_compare_only,
+            "resultImage": pipeline_img,
+            "bestEvaluatedBackgroundSource": bg.best_evaluated_background_source,
+            "appliedBackgroundSource": bg.applied_background_source,
+            "appliedBackgroundScore": bg.best_evaluated_background_score,
+            "backgroundFallbackUsed": bg.fallback_used,
+            "backgroundFallbackReason": bg.fallback_reason,
+            "externalInpaintAttempted": bg.external_inpaint_attempted,
+            "outpaintAttempted": bg.outpaint_attempted,
+            "shadowApplied": bg.shadow_applied,
+        })
+        print(
+            f"[{job_id or 'job'}][Stage19] {target_w}x{target_h}"
+            f" executed=True compareOnly={bg.background_compare_only}"
+            f" source={bg.applied_background_source}"
+            f" outpaint={bg.outpaint_attempted}"
+            f" fallback={bg.fallback_used}"
+        )
+    except Exception as _exc:
+        out["backgroundFallbackReason"] = f"pipeline_exception:{_exc}"
+        print(f"[{job_id or 'job'}][Stage19] exception {target_w}x{target_h}: {_exc}")
+    return out
+
+
 def generate_candidates(input_path: str, output_dir: str, spec: dict,
                         resize_mode: str = "smart-fit", focal_position: str = "center",
                         strengths: list = None, detected_elements: list = None,
@@ -1765,6 +1840,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 focal_position or "center",
             )
 
+            # Stage 19: BackgroundPipeline (disabled by default; BACKGROUND_PIPELINE_ENABLED=false)
+            _bg_dir = os.path.join(output_dir, "stage19", f"{w}x{h}")
+            _pipeline_meta = _try_background_pipeline(ab_img, w, h, job_id=job_id, output_dir=_bg_dir)
+            if _pipeline_meta["executed"] and not _pipeline_meta["compareOnly"]:
+                _pi = _pipeline_meta.get("resultImage")
+                if _pi is not None:
+                    resized = _pi
+                    enhance_meta["resizeStrategy"] = "stage19-background-pipeline"
+
             if output_format in ("jpg", "jpeg"):
                 resized = resized.convert("RGB")
                 ext = "jpg"
@@ -1838,6 +1922,18 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "backgroundMode": None,
                 "candidateCount": None,
                 "selectedCandidateId": None,
+                # Stage 19 BackgroundPipeline metadata
+                "backgroundPipelineExecuted": _pipeline_meta["executed"],
+                "backgroundPipelineEnabled": _pipeline_meta["enabled"],
+                "backgroundCompareOnly": _pipeline_meta["compareOnly"],
+                "bestEvaluatedBackgroundSource": _pipeline_meta["bestEvaluatedBackgroundSource"],
+                "appliedBackgroundSource": _pipeline_meta["appliedBackgroundSource"],
+                "appliedBackgroundScore": _pipeline_meta["appliedBackgroundScore"],
+                "backgroundFallbackUsed": _pipeline_meta["backgroundFallbackUsed"],
+                "backgroundFallbackReason": _pipeline_meta["backgroundFallbackReason"],
+                "externalInpaintAttempted": _pipeline_meta["externalInpaintAttempted"],
+                "outpaintAttempted": _pipeline_meta["outpaintAttempted"],
+                "shadowApplied": _pipeline_meta["shadowApplied"],
             })
         return results, missing_ratio_types
 
@@ -1855,6 +1951,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
         name = spec.get("name", "")
 
         resized, enhance_meta = _apply_resize(img, w, h, resize_mode, smart_fit_strength, focal_position)
+
+        # Stage 19: BackgroundPipeline (disabled by default; BACKGROUND_PIPELINE_ENABLED=false)
+        _bg_dir = os.path.join(output_dir, "stage19", f"{w}x{h}")
+        _pipeline_meta = _try_background_pipeline(img, w, h, job_id=job_id, output_dir=_bg_dir)
+        if _pipeline_meta["executed"] and not _pipeline_meta["compareOnly"]:
+            _pi = _pipeline_meta.get("resultImage")
+            if _pi is not None:
+                resized = _pi
+                enhance_meta["resizeStrategy"] = "stage19-background-pipeline"
 
         if output_format in ("jpg", "jpeg"):
             resized = resized.convert("RGB")
@@ -1919,6 +2024,18 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "backgroundMode": None,
             "candidateCount": None,
             "selectedCandidateId": None,
+            # Stage 19 BackgroundPipeline metadata
+            "backgroundPipelineExecuted": _pipeline_meta["executed"],
+            "backgroundPipelineEnabled": _pipeline_meta["enabled"],
+            "backgroundCompareOnly": _pipeline_meta["compareOnly"],
+            "bestEvaluatedBackgroundSource": _pipeline_meta["bestEvaluatedBackgroundSource"],
+            "appliedBackgroundSource": _pipeline_meta["appliedBackgroundSource"],
+            "appliedBackgroundScore": _pipeline_meta["appliedBackgroundScore"],
+            "backgroundFallbackUsed": _pipeline_meta["backgroundFallbackUsed"],
+            "backgroundFallbackReason": _pipeline_meta["backgroundFallbackReason"],
+            "externalInpaintAttempted": _pipeline_meta["externalInpaintAttempted"],
+            "outpaintAttempted": _pipeline_meta["outpaintAttempted"],
+            "shadowApplied": _pipeline_meta["shadowApplied"],
         })
 
     return results, []

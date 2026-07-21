@@ -212,6 +212,18 @@
               <div v-if="r.aiCompareApplied" class="ai-applied-badge">
                 ✦ AI 후보 적용됨 · {{ strengthKr(r.selectedCandidate) }}
               </div>
+              <!-- Stage 19: BackgroundPipeline metadata -->
+              <div v-if="r.backgroundPipelineExecuted" class="stage19-badge"
+                   :class="{ 'stage19-applied': !r.backgroundCompareOnly && r.appliedBackgroundSource !== 'native' }">
+                ⬡ Stage 19
+                <span class="stage19-source">{{ r.appliedBackgroundSource || 'native' }}</span>
+                <span v-if="r.outpaintAttempted" class="stage19-tag s19-outpaint">아웃페인트</span>
+                <span v-if="r.externalInpaintAttempted" class="stage19-tag s19-ext">외부인페인트</span>
+                <span v-if="r.shadowApplied" class="stage19-tag s19-shadow">그림자</span>
+                <span v-if="r.backgroundCompareOnly" class="stage19-tag s19-compare">비교전용</span>
+                <span v-if="r.appliedBackgroundScore" class="stage19-score">{{ Math.round(r.appliedBackgroundScore) }}점</span>
+                <span v-if="r.backgroundFallbackUsed" class="stage19-fallback">↩ fallback</span>
+              </div>
             </div>
             <div class="card-actions">
               <button class="btn-dl-single" @click="handleSingleDownload(r)">↓ 다운로드</button>
@@ -1295,5 +1307,50 @@ onUnmounted(stopPolling)
   color: #B91C1C; background: #FEE2E2;
   border-radius: 6px; padding: 2px 8px;
   display: inline-block;
+}
+
+/* Stage 19: BackgroundPipeline badge */
+.stage19-badge {
+  margin-top: 3px;
+  font-size: 10px; font-weight: 600;
+  color: #374151; background: #F3F4F6;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 5px;
+  flex-wrap: wrap;
+}
+.stage19-badge.stage19-applied {
+  color: #065F46; background: #D1FAE5;
+  border-color: #6EE7B7;
+}
+.stage19-source {
+  font-size: 10px; font-weight: 500;
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(0,0,0,0.08);
+}
+.stage19-tag {
+  font-size: 9px; font-weight: 700;
+  padding: 1px 5px; border-radius: 4px;
+}
+.s19-outpaint { background: #DBEAFE; color: #1E40AF; }
+.s19-ext      { background: #EDE9FE; color: #6D28D9; }
+.s19-shadow   { background: #F3F4F6; color: #374151; }
+.s19-compare  { background: #FEF3C7; color: #92400E; }
+.stage19-score {
+  font-size: 10px; font-weight: 700;
+  color: #065F46; background: #D1FAE5;
+  border-radius: 4px; padding: 1px 5px;
+}
+.stage19-fallback {
+  font-size: 9px; color: #6B7280;
+}
+@media (prefers-color-scheme: dark) {
+  .stage19-badge { color: #D1D5DB; background: #1F2937; border-color: #374151; }
+  .stage19-badge.stage19-applied { color: #6EE7B7; background: #064E3B; border-color: #065F46; }
+  .s19-outpaint { background: #1E3A5F; color: #93C5FD; }
+  .s19-ext      { background: #2E1065; color: #C4B5FD; }
+  .s19-compare  { background: #451A03; color: #FCD34D; }
+  .stage19-score { background: #064E3B; color: #6EE7B7; }
+  .stage19-fallback { color: #6B7280; }
 }
 </style>
