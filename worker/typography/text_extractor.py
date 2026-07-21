@@ -11,6 +11,7 @@ from .schemas import TextRun, TypographyLayer
 
 
 _KOREAN_RE = re.compile(r"[가-힣ᄀ-ᇿ㄰-㆏ꥠ-꥿ힰ-퟿]")
+_COORD_SUFFIX_RE = re.compile(r"_-?\d+_-?\d+$")
 
 
 def _is_korean(text: str) -> bool:
@@ -20,6 +21,13 @@ def _is_korean(text: str) -> bool:
 def _nfc(text: str) -> str:
     """NFC-normalize Korean text. No other modification."""
     return unicodedata.normalize("NFC", text) if text else ""
+
+
+def _normalize_layer_name_text(name: str) -> str:
+    """Strip PSD coordinate suffix (_x_y) and normalize underscores to spaces."""
+    s = _COORD_SUFFIX_RE.sub("", name or "")
+    s = re.sub(r"_+", " ", s).strip()
+    return _nfc(s)
 
 
 def _extract_engine_data(layer) -> dict:
@@ -139,7 +147,22 @@ def extract_text_layers(layers: list[dict]) -> list[dict]:
     result = []
     for layer in layers:
         if not layer.get("isTextLayer") and layer.get("type") not in ("type", "text"):
-            result.append(layer)
+            # Korean raster text layers: annotate via layer name fallback
+            normalized = _normalize_layer_name_text(layer.get("name", ""))
+            if normalized and _is_korean(normalized):
+                result.append({
+                    **layer,
+                    "textContent": normalized,
+                    "textContentSource": "layer_name_fallback",
+                    "isKorean": True,
+                    "fontFamily": "",
+                    "fontSize": 0.0,
+                    "fontWeight": "normal",
+                    "fontStyle": "normal",
+                    "textRuns": [],
+                })
+            else:
+                result.append(layer)
             continue
         lo = layer.get("_layer_obj")
         text_content = layer.get("textContent", "")

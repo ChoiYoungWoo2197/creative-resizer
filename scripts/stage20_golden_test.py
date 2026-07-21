@@ -122,7 +122,17 @@ def evaluate_spec(psd_path: str, target_w: int, target_h: int, out_dir: str) -> 
                         "status": SKIP, "extra": "no_korean_in_psd"})
         print(f"  [--] [{spec_label}] G5_korean_preserved  (no Korean in PSD — skip)")
 
-    # G6: safe zone compliance
+    # G6: CTA detected (skip if no cta in PSD)
+    cta_in_roles = "cta" in detected
+    if result.get("ctaGroupDetected") or cta_in_roles:
+        check(spec_label, "G6_cta_detected", result.get("ctaGroupDetected") or cta_in_roles,
+              f"ctaGroupDetected={result.get('ctaGroupDetected')} cta_in_roles={cta_in_roles}")
+    else:
+        results.append({"spec": spec_label, "criterion": "G6_cta_detected",
+                        "status": SKIP, "extra": "no_cta_in_psd"})
+        print(f"  [--] [{spec_label}] G6_cta_detected  (no CTA in PSD — skip)")
+
+    # G7: safe zone compliance
     check(spec_label, "G7_safe_zone_pass",
           result.get("safeZonePass", True),
           f"violations={result.get('safeZoneViolations', [])}")

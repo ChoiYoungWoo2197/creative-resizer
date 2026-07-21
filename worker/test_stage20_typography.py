@@ -593,5 +593,169 @@ class TestPipelineDisabledFlag(unittest.TestCase):
         self.assertNotEqual(result["error"], "typography_pipeline_disabled")
 
 
+# ── Stage 20.1: Korean raster text extraction and role inference ──────────────
+from typography.text_extractor import _normalize_layer_name_text, extract_text_layers, count_korean_layers
+from typography.role_resolver import _infer_korean_text_role, resolve_korean_text_roles
+
+
+class TestNormalizeLayerNameText(unittest.TestCase):
+    def test_removes_positive_coord_suffix(self):
+        self.assertEqual(_normalize_layer_name_text("레이어명_69_79"), "레이어명")
+
+    def test_removes_negative_coord_suffix(self):
+        self.assertEqual(_normalize_layer_name_text("사각형_4_-43_1021"), "사각형 4")
+
+    def test_removes_both_negative(self):
+        self.assertEqual(_normalize_layer_name_text("BG_-117_-46"), "BG")
+
+    def test_normalizes_underscores_to_spaces(self):
+        result = _normalize_layer_name_text("어머님_손에_금보다_필요한_건_69_79")
+        self.assertEqual(result, "어머님 손에 금보다 필요한 건")
+
+    def test_collapses_double_underscores(self):
+        result = _normalize_layer_name_text("흑자__검버섯__기미_61_1081")
+        self.assertEqual(result, "흑자 검버섯 기미")
+
+    def test_nfc_applied(self):
+        nfd_name = unicodedata.normalize("NFD", "배경_0_0")
+        result = _normalize_layer_name_text(nfd_name)
+        self.assertEqual(result, unicodedata.normalize("NFC", "배경"))
+
+    def test_no_suffix_unchanged(self):
+        self.assertEqual(_normalize_layer_name_text("logo"), "logo")
+
+    def test_empty_string(self):
+        self.assertEqual(_normalize_layer_name_text(""), "")
+
+
+class TestKoreanRasterLayerFallback(unittest.TestCase):
+    def _raster_korean(self, name="어머님_손에_금보다_필요한_건_69_79",
+                       bbox=None, canvas_h=1000):
+        return {
+            "id": "r1", "name": name, "type": "pixel", "isTextLayer": False,
+            "bbox": bbox or {"x": 0, "y": 79, "width": 600, "height": 60},
+            "canvasWidth": 800, "canvasHeight": canvas_h,
+        }
+
+    def test_korean_raster_gets_textContent(self):
+        layers = [self._raster_korean()]
+        result = extract_text_layers(layers)
+        self.assertEqual(result[0]["textContent"], "어머님 손에 금보다 필요한 건")
+
+    def test_korean_raster_gets_is_korean_true(self):
+        layers = [self._raster_korean()]
+        result = extract_text_layers(layers)
+        self.assertTrue(result[0]["isKorean"])
+
+    def test_korean_raster_source_is_layer_name_fallback(self):
+        layers = [self._raster_korean()]
+        result = extract_text_layers(layers)
+        self.assertEqual(result[0]["textContentSource"], "layer_name_fallback")
+
+    def test_non_korean_raster_layer_unchanged(self):
+        layer = {"id": "r2", "name": "bg_main_1024_768", "type": "pixel", "isTextLayer": False}
+        result = extract_text_layers([layer])
+        self.assertNotIn("textContent", result[0])
+        self.assertNotIn("textContentSource", result[0])
+
+    def test_korean_raster_counted_in_korean_layers(self):
+        layers = extract_text_layers([self._raster_korean()])
+        self.assertEqual(count_korean_layers(layers), 1)
+
+
+class TestInferKoreanTextRole(unittest.TestCase):
+    def _layer(self, text, cy_ratio, canvas_h=1000):
+        y = int(cy_ratio * canvas_h)
+        return {
+            "textContent": text,
+            "bbox": {"x": 0, "y": y, "width": 600, "height": 60},
+            "canvasHeight": canvas_h,
+        }
+
+    def test_short_text_top_position_gives_title(self):
+        layer = self._layer("어머님 손에 금보다 필요한 건", cy_ratio=0.10)
+        self.assertEqual(_infer_korean_text_role(layer, existing_title=False), "title")
+
+    def test_long_text_bottom_position_gives_body_text(self):
+        layer = self._layer("흑자 검버섯 기미 확실하게 지속적으로 관리하세요 전문가 추천", cy_ratio=0.70)
+        self.assertEqual(_infer_korean_text_role(layer, existing_title=False), "body_text")
+
+    def test_existing_title_forces_body_text(self):
+        # Short text + top position but title already exists → body_text
+        layer = self._layer("짧은 카피", cy_ratio=0.10)
+        self.assertEqual(_infer_korean_text_role(layer, existing_title=True), "body_text")
+
+
+class TestResolveKoreanTextRoles(unittest.TestCase):
+    def _classified_with_korean_raster(self):
+        return [
+            {
+                "id": "bg", "name": "BG_-117_-46", "type": "pixel", "role": "background",
+                "roleSource": "name", "priority": "required",
+                "textContentSource": None, "isKorean": False,
+                "bbox": {"x": 0, "y": 0, "width": 800, "height": 1000}, "canvasHeight": 1000,
+            },
+            {
+                "id": "r1", "name": "어머님_손에_금보다_필요한_건_69_79", "type": "pixel",
+                "role": "unknown", "roleSource": "heuristic", "priority": "optional",
+                "textContent": "어머님 손에 금보다 필요한 건",
+                "textContentSource": "layer_name_fallback", "isKorean": True,
+                "bbox": {"x": 10, "y": 79, "width": 600, "height": 60}, "canvasHeight": 1000,
+            },
+            {
+                "id": "r2", "name": "흑자__검버섯__기미_확실하게_관리하세요_61_1081", "type": "pixel",
+                "role": "unknown", "roleSource": "heuristic", "priority": "optional",
+                "textContent": "흑자 검버섯 기미 확실하게 관리하세요",
+                "textContentSource": "layer_name_fallback", "isKorean": True,
+                "bbox": {"x": 10, "y": 1081, "width": 600, "height": 60}, "canvasHeight": 1500,
+            },
+        ]
+
+    def test_assigns_title_to_top_short_text(self):
+        result = resolve_korean_text_roles(self._classified_with_korean_raster())
+        role_r1 = next(l["role"] for l in result if l["id"] == "r1")
+        self.assertEqual(role_r1, "title")
+
+    def test_assigns_body_text_to_lower_text_when_title_exists(self):
+        result = resolve_korean_text_roles(self._classified_with_korean_raster())
+        role_r2 = next(l["role"] for l in result if l["id"] == "r2")
+        self.assertEqual(role_r2, "body_text")
+
+    def test_does_not_touch_non_fallback_layers(self):
+        result = resolve_korean_text_roles(self._classified_with_korean_raster())
+        bg = next(l for l in result if l["id"] == "bg")
+        self.assertEqual(bg["role"], "background")
+        self.assertEqual(bg["roleSource"], "name")
+
+
+class TestQualityGateErrorMessage(unittest.TestCase):
+    from typography.quality_gate import _build_error_message
+
+    def test_missing_role_only_message(self):
+        from typography.quality_gate import _build_error_message
+        msg = _build_error_message(80.0, 65.0, ["title"])
+        self.assertNotIn("< 65.0", msg)
+        self.assertIn("missing_roles", msg)
+
+    def test_score_below_threshold_only(self):
+        from typography.quality_gate import _build_error_message
+        msg = _build_error_message(50.0, 65.0, [])
+        self.assertIn("< 65.0", msg)
+        self.assertNotIn("missing_roles", msg)
+
+    def test_both_conditions_separated(self):
+        from typography.quality_gate import _build_error_message
+        msg = _build_error_message(50.0, 65.0, ["title"])
+        self.assertIn("< 65.0", msg)
+        self.assertIn("missing_roles", msg)
+        self.assertIn("|", msg)  # conditions separated
+
+    def test_score_equals_threshold_not_in_error(self):
+        from typography.quality_gate import _build_error_message
+        msg = _build_error_message(65.0, 65.0, ["title"])
+        self.assertNotIn("< 65.0", msg)
+        self.assertIn("missing_roles", msg)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

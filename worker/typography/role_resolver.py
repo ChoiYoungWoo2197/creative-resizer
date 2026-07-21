@@ -246,6 +246,68 @@ def resolve_roles(layers: list[dict], user_overrides: dict | None = None) -> lis
     return result
 
 
+def _infer_korean_text_role(layer: dict, existing_title: bool) -> str:
+    """Score title vs body_text for a Korean raster text layer.
+
+    Uses text character count and vertical position. Never blindly picks title —
+    requires the evidence to clearly outweigh body_text.
+    """
+    text = layer.get("textContent", "")
+    text_chars = len(text.replace(" ", ""))
+    bbox = layer.get("bbox", {})
+    canvas_h = layer.get("canvasHeight", 1) or 1
+    cy = (bbox.get("y", 0) + bbox.get("height", 0) / 2) / canvas_h
+
+    title_score = 0
+    body_score = 0
+
+    if text_chars <= 15:
+        title_score += 2
+    elif text_chars > 25:
+        body_score += 2
+    else:
+        body_score += 1  # 16-25 chars lean body_text
+
+    if cy < 0.35:
+        title_score += 2
+    elif cy > 0.55:
+        body_score += 2
+
+    if existing_title:
+        body_score += 5  # already have title → this must be body_text
+
+    return "title" if title_score > body_score else "body_text"
+
+
+def resolve_korean_text_roles(classified: list[dict]) -> list[dict]:
+    """Second-pass role resolution for Korean raster text layers.
+
+    Layers with textContentSource='layer_name_fallback' and isKorean=True
+    are given title or body_text based on position and text length.
+    Overrides only 'unknown' or heuristic/position assignments.
+    """
+    result = [dict(l) for l in classified]
+    has_title = any(l.get("role") == "title" for l in result)
+
+    for layer in result:
+        if layer.get("textContentSource") != "layer_name_fallback":
+            continue
+        if not layer.get("isKorean"):
+            continue
+        current_role = layer.get("role", "unknown")
+        current_source = layer.get("roleSource", "")
+        if current_role not in ("unknown",) and current_source not in ("heuristic", "position"):
+            continue
+        role = _infer_korean_text_role(layer, has_title)
+        layer["role"] = role
+        layer["priority"] = PRIORITY_MAP.get(role, "optional")
+        layer["roleSource"] = "korean_name_inference"
+        if role == "title":
+            has_title = True
+
+    return result
+
+
 def get_role_stats(classified: list[dict]) -> dict:
     total = len(classified)
     known = sum(1 for l in classified if l.get("role") != "unknown")

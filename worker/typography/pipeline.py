@@ -16,7 +16,7 @@ import time
 from PIL import Image
 
 from .schemas import TypographyResult
-from .role_resolver import resolve_roles, get_role_stats
+from .role_resolver import resolve_roles, resolve_korean_text_roles, get_role_stats
 from .text_extractor import extract_text_layers, count_korean_layers
 from .duplicate_detector import detect_duplicates, count_deduped
 from .cta_layout import detect_cta_groups
@@ -132,6 +132,12 @@ def run_typography_pipeline(
     base["koreanLayers"] = korean_count
     had_korean = korean_count > 0
 
+    # ── Step 3.5: Re-resolve Korean raster text layer roles ───────────────────
+    classified = resolve_korean_text_roles(classified)
+    # Update detected roles after re-resolution
+    stats2 = get_role_stats(classified)
+    base["detectedRoles"] = stats2["roles"]
+
     # ── Step 4: Duplicate detection ───────────────────────────────────────────
     classified = detect_duplicates(classified)
     dedup_count = count_deduped(classified)
@@ -139,7 +145,8 @@ def run_typography_pipeline(
 
     # ── Step 5: CTA group detection ───────────────────────────────────────────
     cta_groups = detect_cta_groups(classified)
-    base["ctaGroupDetected"] = len(cta_groups) > 0
+    cta_from_role = any(l.get("role") == "cta" and not l.get("dedupSkip") for l in classified)
+    base["ctaGroupDetected"] = len(cta_groups) > 0 or cta_from_role
 
     # ── Step 6: Layout template ───────────────────────────────────────────────
     template_name, slots = get_template(target_w, target_h, classified)
@@ -177,6 +184,25 @@ def run_typography_pipeline(
     if not result.success:
         base["error"] = result.error
         base["elapsedMs"] = int((time.time() - t0) * 1000)
+        # Write debug artifacts even on failure for diagnosis
+        try:
+            art_dir = debug_dir or os.path.join(os.path.dirname(os.path.abspath(output_path)), "typography_debug")
+            os.makedirs(art_dir, exist_ok=True)
+            fail_path = os.path.join(art_dir, f"failed_composite_{target_w}x{target_h}.jpg")
+            canvas.convert("RGB").save(fail_path, quality=85)
+            base["artifacts"] = {"failed_composite": fail_path}
+            write_artifacts(
+                output_dir=art_dir,
+                source_image=None,
+                result_image=None,
+                classified=classified,
+                slots=slots,
+                result_meta=base,
+                job_id=job_id,
+                artifact_level="minimal",
+            )
+        except Exception:
+            pass
         return base
 
     # ── Step 10: Save output ──────────────────────────────────────────────────

@@ -12,6 +12,15 @@ from .schemas import LayoutSlot, TypographyResult
 
 
 REQUIRED_ROLES = {"title", "main_image"}
+
+
+def _build_error_message(layout_score: float, threshold: float, missing: list[str]) -> str:
+    parts = []
+    if layout_score < threshold:
+        parts.append(f"layout_score={layout_score} < {threshold}")
+    if missing:
+        parts.append(f"missing_roles={missing}")
+    return " | ".join(parts) if parts else "quality_gate_failed"
 LAYOUT_SCORE_THRESHOLD = 65.0
 
 # Points by quality aspect
@@ -118,7 +127,7 @@ def evaluate(
 
     return TypographyResult(
         success=success,
-        error="" if success else f"layout_score={layout_score} < {LAYOUT_SCORE_THRESHOLD} or missing={missing_roles}",
+        error="" if success else _build_error_message(layout_score, LAYOUT_SCORE_THRESHOLD, missing_roles),
         detected_roles=detected_roles,
         missing_roles=missing_roles,
         safe_zone_pass=szp,
