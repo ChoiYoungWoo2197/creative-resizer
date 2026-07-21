@@ -302,8 +302,18 @@ def test_run_external_inpaint_returns_candidate():
 def test_external_provider_metadata_no_key():
     prov = ExternalInpaintProvider(api_key="")
     meta = prov.metadata()
-    assert "key" not in str(meta).lower()
-    assert "secret" not in str(meta).lower()
+    meta_str = str(meta)
+    # apiKeyConfigured / providerKeyConfigured (boolean status) are ALLOWED.
+    # What must NOT appear: field names that could expose raw key values.
+    _FORBIDDEN_KEYS = {"api_key", "apiKey", "secret", "access_token",
+                       "authorization", "bearer"}
+    for k in meta.keys():
+        assert k not in _FORBIDDEN_KEYS, f"Forbidden field name in metadata: {k!r}"
+    # No secret-like literal values
+    assert "secret" not in meta_str.lower()
+    # No bearer/authorization header leak
+    assert "bearer" not in meta_str.lower()
+    assert "authorization" not in meta_str.lower()
 
 
 def test_invalid_image_wrong_size():

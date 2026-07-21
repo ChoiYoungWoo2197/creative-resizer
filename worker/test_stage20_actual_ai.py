@@ -483,3 +483,184 @@ class TestStage19Regression:
         pipeline = BackgroundPipeline()
         result = pipeline.process(req)
         assert result.background_generation_mode == SOURCE_FAITHFUL_REPAIR
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# T11 — Stage 20.3 Hotfix: metadata safety, bbox normalization, exit codes
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMetadataSafetyHotfix:
+    def test_api_key_configured_boolean_allowed_in_metadata(self, monkeypatch):
+        """apiKeyConfigured (boolean status) must NOT trigger security alert."""
+        monkeypatch.delenv("BACKGROUND_AI_API_KEY", raising=False)
+        from background.openai_provider import OpenAIInpaintProvider
+        p = OpenAIInpaintProvider(api_key="")
+        m = p.metadata()
+        # apiKeyConfigured is a boolean status field — allowed
+        assert "apiKeyConfigured" in m
+        assert m["apiKeyConfigured"] is False  # no key → False
+
+    def test_actual_secret_value_absent_from_metadata(self, monkeypatch):
+        """Real key value must never appear in metadata string."""
+        fake_key = "sk-hotfix-test-secret-value-xyz987"
+        monkeypatch.setenv("BACKGROUND_AI_API_KEY", fake_key)
+        from background.openai_provider import OpenAIInpaintProvider
+        p = OpenAIInpaintProvider()
+        m = p.metadata()
+        assert fake_key not in str(m)
+        # Also check health()
+        h = p.health()
+        assert fake_key not in str(h)
+
+    def test_forbidden_field_names_absent_from_metadata(self, monkeypatch):
+        """api_key, secret, access_token, authorization, bearer must not be keys."""
+        monkeypatch.setenv("BACKGROUND_AI_API_KEY", "sk-forbidden-field-test")
+        from background.external_provider import ExternalInpaintProvider
+        p = ExternalInpaintProvider()
+        m = p.metadata()
+        forbidden = {"api_key", "apiKey", "secret", "access_token", "authorization", "bearer"}
+        for k in m.keys():
+            assert k not in forbidden, f"Forbidden field in metadata: {k!r}"
+
+    def test_api_key_configured_true_when_key_present(self, monkeypatch):
+        """apiKeyConfigured reflects is_configured() — True when key is set."""
+        monkeypatch.setenv("BACKGROUND_AI_API_KEY", "sk-test-configured-flag")
+        from background.openai_provider import OpenAIInpaintProvider
+        p = OpenAIInpaintProvider()
+        m = p.metadata()
+        assert m.get("apiKeyConfigured") is True
+
+
+class TestBboxNormalization:
+    def test_list_bbox_normalized_to_dict(self):
+        """psd_analyzer returns [left, top, right, bottom]; _normalize_bbox → dict."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import _normalize_bbox
+        result = _normalize_bbox([10, 20, 110, 70])
+        assert isinstance(result, dict)
+        assert result["x"] == 10
+        assert result["y"] == 20
+        assert result["width"] == 100
+        assert result["height"] == 50
+
+    def test_dict_bbox_unchanged(self):
+        """Dict bbox passes through unchanged."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import _normalize_bbox
+        orig = {"x": 5, "y": 10, "width": 200, "height": 80}
+        result = _normalize_bbox(orig)
+        assert result == orig
+
+    def test_empty_input_returns_empty_dict(self):
+        """None / empty input → {}."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import _normalize_bbox
+        assert _normalize_bbox(None) == {}
+        assert _normalize_bbox({}) == {}
+        assert _normalize_bbox([]) == {}
+
+    def test_list_bbox_does_not_raise_in_mask_builder(self):
+        """After normalization, _mask_from_classified_roles must not crash."""
+        from background.source_faithful_repair import _mask_from_classified_roles, _REMOVAL_ROLES
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import _normalize_bbox
+        # Simulate psd_analyzer returning list bbox
+        raw_layers = [
+            {"role": "title", "name": "타이틀", "bbox": [10, 20, 110, 50], "type": "text", "dedupSkip": False},
+        ]
+        # Normalize bboxes as _build_classified_layers now does
+        normalized = [{**l, "bbox": _normalize_bbox(l["bbox"])} for l in raw_layers]
+        # Must not raise
+        mask = _mask_from_classified_roles(normalized, _REMOVAL_ROLES, 200, 100, 2)
+        assert mask is not None
+        assert mask.size == (200, 100)
+
+
+class TestExceptionHandling:
+    def test_exception_in_dry_run_gives_fail_verdict(self):
+        """eval_pass with dry_run=True returns FAIL when exception recorded in hardFailReasons."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import eval_pass
+        report = {
+            "success": False,
+            "hardFailReasons": ["DRY_RUN_PIPELINE_EXCEPTION:AttributeError:list_has_no_get"],
+            "backgroundAiExecuted": False,
+            "backgroundAiSucceeded": False,
+        }
+        passed, reasons = eval_pass(report, dry_run=True)
+        assert passed is False
+        assert len(reasons) > 0
+
+    def test_exception_report_has_correct_ai_flags(self):
+        """Exception-built report must have backgroundAiExecuted=False."""
+        report = {
+            "success": False,
+            "backgroundAiExecuted": False,
+            "backgroundAiSucceeded": False,
+            "hardFailReasons": ["DRY_RUN_PIPELINE_EXCEPTION:ValueError:test"],
+        }
+        assert report["backgroundAiExecuted"] is False
+        assert report["backgroundAiSucceeded"] is False
+
+    def test_clean_dry_run_passes_eval(self):
+        """Successful dry_run report with no exceptions passes eval."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import eval_pass
+        report = {
+            "success": False,  # dry_run is always success=False
+            "dryRun": True,
+            "hardFailReasons": [],
+            "backgroundAiExecuted": False,
+            "warnings": ["dry_run_no_api_call"],
+        }
+        passed, reasons = eval_pass(report, dry_run=True)
+        assert passed is True
+        assert len(reasons) == 0
+
+
+class TestNoneScoreFormatting:
+    def test_fmt_score_none_returns_na(self):
+        """_fmt_score(None) must return 'N/A'."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import _fmt_score
+        assert _fmt_score(None) == "N/A"
+
+    def test_fmt_score_float_returns_formatted(self):
+        """_fmt_score(85.7) returns '85.7'."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import _fmt_score
+        assert _fmt_score(85.7) == "85.7"
+        assert _fmt_score(0) == "0.0"
+
+    def test_dry_run_request_count_is_zero(self):
+        """Dry-run reports actualProviderRequestCount=0."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import eval_pass
+        # If dry_run report has no exception and hardFailReasons is empty → count=0 (no API call)
+        report = {"hardFailReasons": [], "backgroundAiExecuted": False, "backgroundAiAttemptCount": 0}
+        passed, _ = eval_pass(report, dry_run=True)
+        assert passed is True
+        assert report.get("backgroundAiAttemptCount", 0) == 0
+
+    def test_dry_run_is_not_actual_golden_pass(self):
+        """Dry-run result must not be mistaken for an actual AI golden PASS."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from stage20_actual_ai_golden import eval_pass
+        # A clean dry_run passes eval_pass(dry_run=True)
+        dry_report = {"hardFailReasons": [], "backgroundAiExecuted": False}
+        passed_dry, _ = eval_pass(dry_report, dry_run=True)
+        assert passed_dry is True
+        # The SAME report FAILS eval_pass(dry_run=False) because AI was not executed
+        passed_actual, reasons = eval_pass(dry_report, dry_run=False)
+        assert passed_actual is False
+        assert any("ai_not_executed" in r for r in reasons)

@@ -83,6 +83,20 @@ def _load_psd(psd_path: str):
     return img.convert("RGB"), meta
 
 
+def _normalize_bbox(raw_bbox) -> dict:
+    """Normalize bbox to dict {x, y, width, height}.
+
+    psd_analyzer returns [left, top, right, bottom] as a list.
+    _mask_from_classified_roles expects a dict with x/y/width/height.
+    """
+    if isinstance(raw_bbox, dict):
+        return raw_bbox
+    if isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) >= 4:
+        left, top, right, bottom = int(raw_bbox[0]), int(raw_bbox[1]), int(raw_bbox[2]), int(raw_bbox[3])
+        return {"x": left, "y": top, "width": max(0, right - left), "height": max(0, bottom - top)}
+    return {}
+
+
 def _build_classified_layers(psd_path: str) -> list[dict]:
     """Build classified layer list from PSD analysis."""
     from psd_analyzer import analyze_psd_file
@@ -95,7 +109,8 @@ def _build_classified_layers(psd_path: str) -> list[dict]:
     for layer in layers_raw:
         name = layer.get("name", "")
         role = classify_role_by_name(name)
-        bbox = layer.get("bbox") or {}
+        # psd_analyzer returns bbox as [left, top, right, bottom] list — normalize to dict
+        bbox = _normalize_bbox(layer.get("bbox") or {})
         classified.append({
             "role": role,
             "name": name,
@@ -575,6 +590,14 @@ def make_contact_sheet(spec_images: dict[str, object], path: str) -> None:
 def eval_pass(report: dict, dry_run: bool) -> tuple[bool, list[str]]:
     """Return (passed, fail_reasons) for a spec report."""
     if dry_run:
+        # Exception inside run_spec must be FAIL even in dry_run mode
+        hard_fails = report.get("hardFailReasons", [])
+        exception_fails = [r for r in hard_fails if r.startswith("exception:") or r.startswith("DRY_RUN_PIPELINE_EXCEPTION:")]
+        if exception_fails:
+            return False, exception_fails
+        # Pipeline execution must have succeeded for masks/prompts
+        if report.get("dryRunPipelineError"):
+            return False, [report.get("dryRunPipelineError", "dry_run_pipeline_error")]
         return True, []
 
     fails = []
@@ -740,13 +763,22 @@ def main() -> int:
                 dry_run=args.dry_run,
             )
         except Exception as exc:
+            exc_code = f"DRY_RUN_PIPELINE_EXCEPTION:{type(exc).__name__}:{str(exc)[:80]}"
             print(f"  [FAIL] Exception: {exc}")
             report = {
-                "success": False, "spec": spec_label,
-                "targetWidth": target_w, "targetHeight": target_h,
-                "hardFailReasons": [f"exception:{str(exc)[:100]}"],
+                "success": False,
+                "spec": spec_label,
+                "targetWidth": target_w,
+                "targetHeight": target_h,
+                "backgroundAiExecuted": False,
+                "backgroundAiSucceeded": False,
+                "hardFailReasons": [exc_code],
                 "warnings": [],
+                "dryRunPipelineError": exc_code,
+                "sourceFaithfulnessScore": None,
+                "overallRepairScore": None,
             }
+            os.makedirs(spec_dir, exist_ok=True)
             _save_json(report, os.path.join(spec_dir, "report.json"))
 
         all_reports.append(report)
@@ -763,7 +795,7 @@ def main() -> int:
         status_str = "PASS" if passed else "FAIL"
         print(f"  verdict: {status_str}  aiAttempts: {attempt_count}  "
               f"aiSucceeded: {report.get('backgroundAiSucceeded')}  "
-              f"faithfulnessScore: {report.get('sourceFaithfulnessScore', 0):.1f}")
+              f"faithfulnessScore: {_fmt_score(report.get('sourceFaithfulnessScore'))}")
         if fail_reasons:
             print(f"  failReasons: {fail_reasons}")
 
@@ -824,9 +856,13 @@ def main() -> int:
     print(f"  Artifacts: {out_base}")
 
     if args.dry_run:
-        print("\n[DRY-RUN] Mask/prompt preview generated — no API calls made.")
-        print("  Run without --dry-run for actual AI golden.")
-        return 0
+        if failed_count == 0:
+            print(f"\n[DRY-RUN] All {passed_count}/{total} specs: masks/prompts generated. No API calls made.")
+            print("  Run without --dry-run for actual AI golden.")
+            return 0
+        else:
+            print(f"\n[DRY-RUN FAIL] {failed_count}/{total} spec(s) failed during mask/prompt generation.")
+            return 1
 
     if failed_count == 0:
         print(f"\n[PASS] Stage 20.3 Actual AI Golden PASSED — {passed_count}/{total} specs")
@@ -837,6 +873,16 @@ def main() -> int:
     else:
         print(f"\n[FAIL] {failed_count}/{total} specs FAILED (exit=1)")
         return 1
+
+
+def _fmt_score(value) -> str:
+    """Format a score for markdown. Returns 'N/A' when value is None."""
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return "N/A"
 
 
 def _save_summary_md(summary: dict, path: str) -> None:
@@ -861,7 +907,7 @@ def _save_summary_md(summary: dict, path: str) -> None:
         lines.append(
             f"| {sr.get('spec')} | {sr.get('success')} | "
             f"{sr.get('backgroundGenerationMode')} | {sr.get('backgroundAiSucceeded')} | "
-            f"{sr.get('sourceFaithfulnessScore', 0):.1f} | {hf} |"
+            f"{_fmt_score(sr.get('sourceFaithfulnessScore'))} | {hf} |"
         )
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)

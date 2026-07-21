@@ -180,7 +180,10 @@ if [[ -z "${_RAW_KEY}" && -f "${PROJECT_ROOT}/.env" ]]; then
 fi
 
 if [[ -n "${_RAW_KEY}" ]]; then
-    _KEY_SRC="${_KEY_SRC:-shell_env}"
+    # _KEY_SRC starts as "not_found"; override to "shell_env" if key came from shell
+    if [[ "${_KEY_SRC}" == "not_found" ]]; then
+        _KEY_SRC="shell_env"
+    fi
     KEY_LEN="${#_RAW_KEY}"
     info "BACKGROUND_AI_API_KEY: configured  keyLength=${KEY_LEN}  source=${_KEY_SRC}"
     # Write to temp file with restricted permissions
@@ -409,6 +412,7 @@ if [[ -z "${PSD_MOUNT_SRC}" ]]; then
     _GOLDEN_PSD_ARG="/nonexistent/missing.psd"
 fi
 
+DRYRUN_EXIT=0
 docker exec \
     -e PYTHONPATH=/app \
     -e GIT_SHA="${GIT_SHA}" \
@@ -418,17 +422,27 @@ docker exec \
         --specs "1250x560,1200x300,300x1200" \
         --outdir "/artifacts/dryrun" \
         --dry-run \
-    > "${DRYRUN_LOG}" 2>&1 || true  # dry-run exit code not critical
+    > "${DRYRUN_LOG}" 2>&1 || DRYRUN_EXIT=$?
 
 cat "${DRYRUN_LOG}" | tail -15
-ok "Dry-run complete — see ${ARTIFACT_DIR}/dryrun/"
+
+if [[ "${DRYRUN_EXIT}" -eq 0 ]]; then
+    ok "Dry-run complete — all specs generated masks/prompts (DryRunExit=0)"
+else
+    err "Dry-run FAILED — mask/prompt generation error (DryRunExit=${DRYRUN_EXIT})"
+    FINAL_EXIT=1
+fi
 
 if [[ "${DRY_RUN_ONLY}" == "true" ]]; then
-    warn "DRY-RUN-ONLY mode — skipping actual AI call"
-    printf "\n${YLW}[DRY-RUN]${NC} Mask/prompt preview generated. No API calls made.\n"
-    printf "          Run without --dry-run-only for actual AI golden.\n\n"
-    FINAL_EXIT=2
-    exit 2
+    if [[ "${DRYRUN_EXIT}" -eq 0 ]]; then
+        printf "\n${GRN}[DRY-RUN]${NC} Mask/prompt preview generated for all specs.\n"
+        printf "          Run without --dry-run-only for actual AI golden.\n\n"
+        exit 0
+    else
+        printf "\n${RED}[DRY-RUN FAIL]${NC} Mask/prompt generation failed (exit=${DRYRUN_EXIT}).\n"
+        printf "  cat %s\n" "${DRYRUN_LOG}"
+        exit 1
+    fi
 fi
 
 # ─── Stage 20.3 Actual AI Golden ─────────────────────────────────────────────
