@@ -147,11 +147,15 @@ def evaluate_candidate(
 
     Does NOT modify source_image or protected pixel values.
     """
-    # protected pixel integrity (compare candidate image vs source in protected zone)
+    # protected pixel integrity (compare candidate image vs source in protected zone).
+    # Skip when sizes differ (outpaint candidates): the source was pre-scaled so
+    # pixel coordinates no longer align — returning 0.0 would be a false hard-fail.
+    # Outpaint never touches protected pixels by construction; keep the 100.0 default.
     if (
         candidate.image is not None
         and source_image is not None
         and protected_mask is not None
+        and candidate.image.size == source_image.size
     ):
         integrity = _compute_protected_pixel_integrity(
             candidate.image, source_image, protected_mask

@@ -42,6 +42,29 @@ from .quality_gate import select_best_candidate, build_quality_metrics
 from .artifact_writer import write_artifacts
 
 
+def _safe_resize_to_target(img: Image.Image, tgt_w: int, tgt_h: int) -> Image.Image:
+    """Letterbox-resize img to (tgt_w, tgt_h). Never stretches.
+
+    Used to guarantee result_image is always target-sized on fallback paths,
+    which fulfils the G6 contract without applying non-uniform scale.
+    """
+    from PIL import ImageFilter
+    if img.size == (tgt_w, tgt_h):
+        return img
+    src_w, src_h = img.size
+    scale = min(tgt_w / max(src_w, 1), tgt_h / max(src_h, 1))
+    new_w = max(1, int(src_w * scale))
+    new_h = max(1, int(src_h * scale))
+    fg = img.convert("RGB").resize((new_w, new_h), Image.LANCZOS)
+    bg = img.convert("RGB").resize((tgt_w, tgt_h), Image.LANCZOS).filter(
+        ImageFilter.GaussianBlur(30)
+    )
+    x = (tgt_w - new_w) // 2
+    y = (tgt_h - new_h) // 2
+    bg.paste(fg, (x, y))
+    return bg
+
+
 class BackgroundPipeline:
     """Stage 19 Background Pipeline.
 
@@ -75,7 +98,9 @@ class BackgroundPipeline:
             result.fallback_used = True
             result.fallback_reason = "pipeline_disabled"
             result.verdict = "PARTIAL"
-            result.result_image = request.source_image
+            _tgt_w = request.target_width or request.source_image.width
+            _tgt_h = request.target_height or request.source_image.height
+            result.result_image = _safe_resize_to_target(request.source_image, _tgt_w, _tgt_h)
             result.elapsed_ms = int((time.time() - t0) * 1000)
             return result
 
@@ -86,7 +111,9 @@ class BackgroundPipeline:
             result.fallback_reason = f"pipeline_error:{exc}"
             result.verdict = "FAIL"
             result.success = False
-            result.result_image = request.source_image
+            _tgt_w = request.target_width or request.source_image.width
+            _tgt_h = request.target_height or request.source_image.height
+            result.result_image = _safe_resize_to_target(request.source_image, _tgt_w, _tgt_h)
             result.warnings.append(f"pipeline_exception:{exc}")
             result.elapsed_ms = int((time.time() - t0) * 1000)
             return result
@@ -231,12 +258,14 @@ class BackgroundPipeline:
             result.fallback_used = True
             result.fallback_reason = reject_summary or "all_candidates_rejected"
             result.applied_background_source = "native"
-            result.result_image = source
+            result.result_image = _safe_resize_to_target(source, tgt_w, tgt_h)
             result.best_evaluated_background_source = "native"
             result.best_evaluated_background_score  = 0.0
             result.success = False
             result.verdict = "PARTIAL"
             warnings.append(f"nativeFallback:{result.fallback_reason}")
+            if outpaint_candidates and not any(c.accepted for c in outpaint_candidates):
+                warnings.append("outpaint_all_candidates_rejected:external_provider_unavailable")
 
         # ── Artifacts ─────────────────────────────────────────────────────────
         artifact_paths = write_artifacts(

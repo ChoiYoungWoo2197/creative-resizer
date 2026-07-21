@@ -158,7 +158,14 @@ def _make_side_by_side(native_img, stage19_img, label_a: str, label_b: str):
 
 # ── Golden evaluation ─────────────────────────────────────────────────────────
 
-def _evaluate(native_img, stage19_img, bg_result, diff_mean: float) -> dict:
+def _evaluate(
+    native_img,
+    stage19_img,
+    bg_result,
+    diff_mean: float,
+    target_w: int,
+    target_h: int,
+) -> dict:
     verdicts: dict[str, str] = {}
 
     # G1: No product pixel change — diff mean < 5.0 (with no protectedObjects, always SKIP)
@@ -167,9 +174,11 @@ def _evaluate(native_img, stage19_img, bg_result, diff_mean: float) -> dict:
     # G2: No product loss — manual inspection
     verdicts["G2_no_product_loss"] = "MANUAL_REVIEW"
 
-    # G3: No blur band — outpaint ran and was not overridden by fallback
-    if bg_result.outpaint_attempted and not bg_result.fallback_used:
+    # G3: No blur band — outpaint ran and was accepted (not overridden by fallback)
+    if bg_result.outpaint_attempted and bg_result.outpaint_accepted:
         verdicts["G3_no_blur_band"] = "PASS"
+    elif bg_result.outpaint_attempted and not bg_result.fallback_used:
+        verdicts["G3_no_blur_band"] = "PASS"  # non-outpaint candidate accepted
     elif not bg_result.outpaint_attempted:
         verdicts["G3_no_blur_band"] = "SKIP"  # same-size target; outpaint not needed
     else:
@@ -181,11 +190,12 @@ def _evaluate(native_img, stage19_img, bg_result, diff_mean: float) -> dict:
     # G5: No seam — manual
     verdicts["G5_no_seam"] = "MANUAL_REVIEW"
 
-    # G6: Correct target size
-    if stage19_img is not None and stage19_img.size == native_img.size:
+    # G6: Correct target size — compare against (target_w, target_h), not native size
+    if stage19_img is not None and stage19_img.size == (target_w, target_h):
         verdicts["G6_correct_target_size"] = "PASS"
     else:
-        verdicts["G6_correct_target_size"] = "FAIL"
+        actual = stage19_img.size if stage19_img is not None else "None"
+        verdicts["G6_correct_target_size"] = f"FAIL(got={actual},want={target_w}x{target_h})"
 
     # G7: No non-uniform scale — manual
     verdicts["G7_no_nonuniform_scale"] = "MANUAL_REVIEW"
@@ -206,8 +216,9 @@ def _evaluate(native_img, stage19_img, bg_result, diff_mean: float) -> dict:
     verdicts["G10_not_fake_provider"] = "FAIL" if "fake" in src.lower() else "PASS"
 
     # Technical PASS: deterministic criteria only
+    g6_pass = verdicts["G6_correct_target_size"] == "PASS"
     tech_pass = (
-        verdicts["G6_correct_target_size"] == "PASS"
+        g6_pass
         and verdicts["G8_pipeline_candidate_accepted"] == "PASS"
         and verdicts["G10_not_fake_provider"] == "PASS"
         and not bg_result.fallback_used
@@ -216,10 +227,15 @@ def _evaluate(native_img, stage19_img, bg_result, diff_mean: float) -> dict:
     # Visual PASS: also requires G9 (score) — manual review items remain flagged
     visual_pass = tech_pass and verdicts["G9_visual_improvement"] == "PASS"
 
-    # Stage 20 blockers
-    stage20_blockers = []
+    # Stage 19 blockers — issues within Stage 19 scope, not deferred to Stage 20
+    stage19_blockers: list[str] = []
     if not bg_result.external_inpaint_attempted:
-        stage20_blockers.append("external_inpaint_not_attempted")
+        stage19_blockers.append("external_inpaint_not_configured")
+    if bg_result.outpaint_attempted and not bg_result.outpaint_accepted and bg_result.fallback_used:
+        stage19_blockers.append("outpaint_all_candidates_rejected")
+
+    # Stage 20 blockers — require Stage 20 work (text rendering, AI outpaint, etc.)
+    stage20_blockers: list[str] = []
     if not bg_result.outpaint_attempted:
         stage20_blockers.append("outpaint_not_attempted")
     if not any(c for c in bg_result.candidates if not c.candidate_id.startswith("native")):
@@ -229,6 +245,7 @@ def _evaluate(native_img, stage19_img, bg_result, diff_mean: float) -> dict:
         "tech_pass": tech_pass,
         "visual_pass": visual_pass,
         "verdicts": verdicts,
+        "stage19_blockers": stage19_blockers,
         "stage20_blockers": stage20_blockers,
         "pipeline": {
             "verdict": bg_result.verdict,
@@ -331,13 +348,30 @@ def _run_spec(source_img, target_w: int, target_h: int, spec_dir: str) -> dict:
         print(f"  [overlay] warning: {exc}")
 
     # 8. Evaluate
-    evaluation = _evaluate(native_img, stage19_result_img, bg_result, diff_mean)
+    evaluation = _evaluate(native_img, stage19_result_img, bg_result, diff_mean, target_w, target_h)
+
+    # Diagnostic size fields
+    best_cand_img = best_cand.image if best_cand and best_cand.image else None
+    non_uniform_detected = any(
+        c.extras.get("nonUniformScaleDetected") for c in bg_result.candidates
+    )
     evaluation.update({
         "spec": spec_label,
         "native_strategy": native_meta.get("resizeStrategy"),
         "native_blur_area_ratio": native_meta.get("blurAreaRatio"),
         "elapsed_native_ms": native_ms,
         "elapsed_stage19_ms": stage19_ms,
+        "sourceWidth": source_img.width,
+        "sourceHeight": source_img.height,
+        "targetWidth": target_w,
+        "targetHeight": target_h,
+        "candidateWidth": best_cand_img.width if best_cand_img else None,
+        "candidateHeight": best_cand_img.height if best_cand_img else None,
+        "finalWidth": stage19_result_img.width if stage19_result_img else None,
+        "finalHeight": stage19_result_img.height if stage19_result_img else None,
+        "targetSizeMatched": stage19_result_img is not None and stage19_result_img.size == (target_w, target_h),
+        "fallbackResizeMethod": bg_result.fallback_reason if bg_result.fallback_used else None,
+        "nonUniformScaleDetected": non_uniform_detected,
     })
 
     # Print per-criterion results
@@ -345,8 +379,13 @@ def _run_spec(source_img, target_w: int, target_h: int, spec_dir: str) -> dict:
         icon = "✓" if v == "PASS" else ("?" if v in ("SKIP", "MANUAL_REVIEW") else "✗")
         print(f"    {icon} {k}: {v}")
 
+    if evaluation["stage19_blockers"]:
+        print(f"  [Stage 19 blockers]")
+        for b in evaluation["stage19_blockers"]:
+            print(f"    • {b}")
+
     if evaluation["stage20_blockers"]:
-        print(f"  [Stage20 blockers]")
+        print(f"  [Stage 20 blockers]")
         for b in evaluation["stage20_blockers"]:
             print(f"    • {b}")
 
@@ -423,13 +462,18 @@ def run_golden_test(psd_path: str, specs: list[tuple[int, int]], output_dir: str
     print(f"  Errors      : {error_n}")
     print(f"  Report      : {report_path}")
 
-    # Stage 20 blocker summary across all specs
-    all_blockers: set[str] = set()
+    all_s19_blockers: set[str] = set()
+    all_s20_blockers: set[str] = set()
     for r in all_results:
-        all_blockers.update(r.get("stage20_blockers", []))
-    if all_blockers:
+        all_s19_blockers.update(r.get("stage19_blockers", []))
+        all_s20_blockers.update(r.get("stage20_blockers", []))
+    if all_s19_blockers:
+        print(f"\n[Stage 19 blockers detected]")
+        for b in sorted(all_s19_blockers):
+            print(f"  • {b}")
+    if all_s20_blockers:
         print(f"\n[Stage 20 blockers detected]")
-        for b in sorted(all_blockers):
+        for b in sorted(all_s20_blockers):
             print(f"  • {b}")
 
     return report
