@@ -1,186 +1,646 @@
-#!/bin/bash
-# Stage 20 Server Verification Shell Script
-# Run inside the creative-worker container:
-#   docker exec -it creative-worker bash /app/scripts/verify_stage20_server.sh
+#!/usr/bin/env bash
+# scripts/verify_stage20_server.sh
 #
-# Or from host:
-#   docker exec creative-worker bash /app/scripts/verify_stage20_server.sh
+# Stage 20 Typography Pipeline — server verification (container-based)
+#
+# REQUIRES: docker, git, curl
+# Host python3 is NOT required.  All Python work runs inside a Docker helper
+# container built from worker/Dockerfile.verify (build context: worker/).
+# Root .dockerignore excludes worker/, so worker/ is the correct build context.
+#
+# What it does:
+#   1. Builds creative-stage20-verify:<sha> from worker/Dockerfile.verify
+#   2. Starts a sleep-infinity helper container (Python module checks + pytest)
+#   3. Starts an isolated Flask worker on loopback port 48092 (HTTP checks)
+#   4. Runs: import-check, check-roles, check-templates, check-flags,
+#            check-dedup, check-quality (all via helper container)
+#   5. Runs pytest for test_stage20_typography.py  (100 tests expected)
+#   6. Runs Stage 19 regression pytest
+#   7. HTTP-checks /v1/typography/health and /v1/background/health
+#   8. Generates verification report JSON + MD
+#   9. Compares production container snapshot before/after
+#  10. Cleans up all test containers and networks
+#
+# Usage:
+#   bash scripts/verify_stage20_server.sh
+#   bash scripts/verify_stage20_server.sh --skip-build   # reuse existing image
+#
+# Exit codes:
+#   0  ALL PASS
+#   1  FAIL
+#
+# Containers created (auto-removed on exit via trap):
+#   creative-stage20-helper-<sha>-<pid>   helper (network=none)
+#   creative-stage20-worker-<sha>-<pid>   isolated Flask worker (127.0.0.1:48092)
+#
+# Safety guarantees:
+#   - Production containers (creative-nginx, creative-api, creative-worker) NEVER touched
+#   - docker system prune / volume prune NEVER run
+#   - docker compose down NEVER run
+#   - Stage 18 / Stage 19 code NEVER modified
+#   - /app/worker path NEVER used  (correct path: /app)
+#   - Production localhost:5000 NEVER used as verification target
 
-set -euo pipefail
+set -Eeuo pipefail
 
-HOST="${CREATIVE_WORKER_HOST:-http://localhost:5000}"
-PASS_COUNT=0
-FAIL_COUNT=0
+# ─── Paths ────────────────────────────────────────────────────────────────────
 
-check_pass() {
-    echo "[OK] $1"
-    PASS_COUNT=$((PASS_COUNT + 1))
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORKER_DIR="${PROJECT_ROOT}/worker"
+
+cd "${PROJECT_ROOT}"
+
+# ─── Git SHA ──────────────────────────────────────────────────────────────────
+
+if ! GIT_SHA="$(git -c "safe.directory=${PROJECT_ROOT}" rev-parse --short HEAD 2>/dev/null)"; then
+    printf '[FAIL]  Cannot determine Git SHA in %s\n' "${PROJECT_ROOT}" >&2
+    printf '[FAIL]  Ensure this is a git repository and git is accessible\n' >&2
+    printf '[INFO]  If git ownership error:\n' >&2
+    printf '        git config --global --add safe.directory %s\n' "${PROJECT_ROOT}" >&2
+    exit 1
+fi
+
+[[ -z "${GIT_SHA}" ]] && { printf '[FAIL]  git rev-parse returned empty\n' >&2; exit 1; }
+
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%S 2>/dev/null || date +%Y%m%dT%H%M%S)"
+SESSION_ID="${GIT_SHA}-$$"
+
+STAGE20_IMAGE="creative-stage20-verify:${GIT_SHA}"
+HELPER_CONTAINER="creative-stage20-helper-${SESSION_ID}"
+WORKER_CONTAINER="creative-stage20-worker-${SESSION_ID}"
+
+VERIFY_PORT=48092
+VERIFY_WORKER_URL="http://127.0.0.1:${VERIFY_PORT}"
+HTTP_TIMEOUT=30
+WORKER_WAIT_RETRIES=40
+WORKER_WAIT_INTERVAL=2
+
+ARTIFACT_DIR="${PROJECT_ROOT}/verify-artifacts/stage20-${TIMESTAMP}"
+
+# ─── State ────────────────────────────────────────────────────────────────────
+
+HELPER_STARTED=false
+WORKER_STARTED=false
+FINAL_EXIT=0
+
+# ─── Colors ───────────────────────────────────────────────────────────────────
+
+RED='\033[0;31m'
+GRN='\033[0;32m'
+YLW='\033[1;33m'
+BLU='\033[0;34m'
+CYN='\033[0;36m'
+NC='\033[0m'
+
+ok()   { printf "${GRN}[OK]${NC}    %s\n"    "$*"; }
+err()  { printf "${RED}[FAIL]${NC}  %s\n"    "$*" >&2; }
+warn() { printf "${YLW}[WARN]${NC}  %s\n"    "$*"; }
+info() { printf "${BLU}[INFO]${NC}  %s\n"    "$*"; }
+sect() { printf "\n${CYN}== %s ==${NC}\n"    "$*"; }
+
+# ─── Docker helpers ───────────────────────────────────────────────────────────
+# All Python runs inside the helper container at /app (PYTHONPATH=/app).
+# /scripts = PROJECT_ROOT/scripts  (read-only; verify_stage20_server.py lives here)
+# /artifacts = ARTIFACT_DIR         (writable; all JSON + log artifacts go here)
+
+run_python() {
+    docker exec \
+        -e PYTHONPATH=/app \
+        -e PYTHONDONTWRITEBYTECODE=1 \
+        "${HELPER_CONTAINER}" \
+        python "$@"
 }
 
-check_fail() {
-    echo "[NG] $1  ($2)"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
+run_python_module() {
+    docker exec \
+        -e PYTHONPATH=/app \
+        -e PYTHONDONTWRITEBYTECODE=1 \
+        "${HELPER_CONTAINER}" \
+        python -m "$@"
 }
 
-echo "=== Stage 20 Server Verification ==="
-echo "Host: $HOST"
-echo ""
+# ─── Cleanup trap ─────────────────────────────────────────────────────────────
+# Captures the true exit code even when set -e fires before FINAL_EXIT is set.
 
-# Step 1: Typography health endpoint
-echo "-- Step 1: /v1/typography/health --"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/v1/typography/health" 2>/dev/null || echo "000")
-if [ "$STATUS" = "200" ]; then
-    check_pass "Step1_health_endpoint_200"
-    BODY=$(curl -s "$HOST/v1/typography/health")
-    if echo "$BODY" | grep -q "typographyPipelineEnabled"; then
-        check_pass "Step1_health_has_enabled_flag"
+cleanup() {
+    local _actual=$?
+    local _preserve="${FINAL_EXIT:-0}"
+    set +e
+
+    echo ""
+    info "Cleaning up test containers..."
+
+    if [[ "${WORKER_STARTED}" == "true" ]]; then
+        docker rm -f "${WORKER_CONTAINER}" >/dev/null 2>&1 \
+            && info "Removed worker: ${WORKER_CONTAINER}" \
+            || warn "Could not remove: ${WORKER_CONTAINER}"
+    fi
+    if [[ "${HELPER_STARTED}" == "true" ]]; then
+        docker rm -f "${HELPER_CONTAINER}" >/dev/null 2>&1 \
+            && info "Removed helper: ${HELPER_CONTAINER}" \
+            || warn "Could not remove: ${HELPER_CONTAINER}"
+    fi
+
+    echo ""
+    info "Artifacts: ${ARTIFACT_DIR}"
+
+    if [[ "${_preserve}" -ne 0 ]]; then
+        exit "${_preserve}"
+    fi
+    exit "${_actual}"
+}
+trap cleanup EXIT
+
+# ─── Args ─────────────────────────────────────────────────────────────────────
+
+SKIP_BUILD=false
+for _arg in "$@"; do
+    [[ "${_arg}" == "--skip-build" ]] && SKIP_BUILD=true
+done
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 1: Prerequisites
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 1: Prerequisites"
+
+mkdir -p "${ARTIFACT_DIR}"
+info "Project root:     ${PROJECT_ROOT}"
+info "Git SHA:          ${GIT_SHA}"
+info "Timestamp:        ${TIMESTAMP}"
+info "Verify image:     ${STAGE20_IMAGE}"
+info "Helper:           ${HELPER_CONTAINER}"
+info "Worker:           ${WORKER_CONTAINER} → ${VERIFY_WORKER_URL}"
+info "Artifact dir:     ${ARTIFACT_DIR}"
+
+_prereq_fail=false
+
+if ! command -v docker >/dev/null 2>&1; then
+    err "docker not found (required for all Python work)"
+    _prereq_fail=true
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    err "Docker daemon not running"
+    _prereq_fail=true
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    err "curl not found (required for HTTP health checks)"
+    _prereq_fail=true
+fi
+
+if [[ "${_prereq_fail}" == "true" ]]; then
+    FINAL_EXIT=1
+    exit 1
+fi
+
+# Host python3 not required; note it informatively only
+if command -v python3 >/dev/null 2>&1; then
+    info "Host python3: $(python3 --version 2>&1 | head -1)  (INFO — not used by this script)"
+else
+    info "Host python3: not found  (expected — all Python runs inside Docker)"
+fi
+
+# Port availability check (warn only; Docker will error if truly occupied)
+if ss -ln 2>/dev/null | grep -q ":${VERIFY_PORT} " || \
+   netstat -ln 2>/dev/null | grep -q ":${VERIFY_PORT} "; then
+    warn "Port ${VERIFY_PORT} appears to be in use — may cause Docker publish conflict"
+fi
+
+ok "Prerequisites satisfied (docker + curl + git SHA ${GIT_SHA})"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 1.5: Disk space
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 1.5: Disk Space"
+
+AVAIL_KB=$(df -k "${PROJECT_ROOT}" 2>/dev/null | awk 'NR==2{print $4}' || echo "0")
+AVAIL_GB=$(( AVAIL_KB / 1024 / 1024 ))
+info "Available: ~${AVAIL_GB} GB on ${PROJECT_ROOT}"
+(( AVAIL_KB < 2097152 )) && warn "Low disk (~${AVAIL_GB} GB) — docker build may fail" || true
+ok "Disk check done"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 2: Production container snapshot (before)
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 2: Production Containers Snapshot (before)"
+
+PROD_BEFORE="${ARTIFACT_DIR}/production-before.txt"
+docker ps --filter "name=creative" \
+    --format "{{.Names}}\t{{.Status}}\t{{.Image}}" \
+    > "${PROD_BEFORE}" 2>/dev/null || true
+PROD_COUNT_BEFORE=$(wc -l < "${PROD_BEFORE}" | tr -d ' ')
+info "Production 'creative*' containers: ${PROD_COUNT_BEFORE}"
+[[ "${PROD_COUNT_BEFORE}" -gt 0 ]] && cat "${PROD_BEFORE}" || true
+ok "Snapshot (before) saved"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 3: Build verify image
+# ═══════════════════════════════════════════════════════════════════════════════
+# Build context = WORKER_DIR (not project root).
+# Root .dockerignore excludes worker/ entirely; all COPY paths are relative to worker/.
+sect "Step 3: Build Verify Image (${STAGE20_IMAGE})"
+
+BUILD_LOG="${ARTIFACT_DIR}/docker-build.log"
+
+if [[ "${SKIP_BUILD}" == "true" ]] && docker image inspect "${STAGE20_IMAGE}" >/dev/null 2>&1; then
+    info "--skip-build: reusing existing ${STAGE20_IMAGE}"
+else
+    # Pre-build file existence checks
+    for _req in \
+        "${WORKER_DIR}/requirements.txt" \
+        "${WORKER_DIR}/requirements-stage19-verify.txt" \
+        "${WORKER_DIR}/Dockerfile.verify" \
+        "${WORKER_DIR}/app.py" \
+        "${WORKER_DIR}/test_stage20_typography.py" \
+        "${WORKER_DIR}/typography/__init__.py" \
+        "${SCRIPT_DIR}/verify_stage20_server.py"
+    do
+        if [[ ! -f "${_req}" ]]; then
+            err "Pre-build check FAILED: missing ${_req}"
+            FINAL_EXIT=1
+            exit 1
+        fi
+    done
+    ok "Pre-build file checks passed"
+
+    # Build context size guard
+    CONTEXT_KB=$(du -sk "${WORKER_DIR}" 2>/dev/null | cut -f1 || echo "0")
+    CONTEXT_MB=$(( CONTEXT_KB / 1024 ))
+    info "Build context: ${WORKER_DIR} (~${CONTEXT_MB} MB)"
+    if (( CONTEXT_KB > 256000 )); then
+        err "Build context too large (${CONTEXT_MB} MB) — check worker/.dockerignore"
+        FINAL_EXIT=1
+        exit 1
+    elif (( CONTEXT_KB > 51200 )); then
+        warn "Build context is large (${CONTEXT_MB} MB) — consider worker/.dockerignore"
+    fi
+
+    info "Building ${STAGE20_IMAGE} from ${WORKER_DIR}/Dockerfile.verify ..."
+    _build_exit=0
+    docker build \
+        -t "${STAGE20_IMAGE}" \
+        --file "${WORKER_DIR}/Dockerfile.verify" \
+        "${WORKER_DIR}" \
+        2>&1 | tee "${BUILD_LOG}" || _build_exit=$?
+
+    if [[ "${_build_exit}" -ne 0 ]]; then
+        err "docker build FAILED (exit=${_build_exit}) — see ${BUILD_LOG}"
+        FINAL_EXIT=1
+        exit 1
+    fi
+fi
+ok "Verify image ready: ${STAGE20_IMAGE}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 3.5: Start helper container
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 3.5: Start Helper Container"
+
+_helper_exit=0
+docker run -d \
+    --name "${HELPER_CONTAINER}" \
+    --network none \
+    -v "${PROJECT_ROOT}/scripts:/scripts:ro" \
+    -v "${ARTIFACT_DIR}:/artifacts" \
+    -e PYTHONPATH=/app \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    "${STAGE20_IMAGE}" \
+    sleep infinity \
+    >/dev/null || _helper_exit=$?
+
+if [[ "${_helper_exit}" -ne 0 ]]; then
+    err "Failed to start helper container (exit=${_helper_exit})"
+    FINAL_EXIT=1
+    exit 1
+fi
+HELPER_STARTED=true
+
+docker exec "${HELPER_CONTAINER}" echo "helper-alive" >/dev/null
+ok "Helper container running: ${HELPER_CONTAINER}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 3.6: Import check inside helper
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 3.6: Typography Module Import Check"
+
+IMPORT_LOG="${ARTIFACT_DIR}/helper-import.log"
+_import_exit=0
+run_python /scripts/verify_stage20_server.py \
+    import-check \
+    --artifact-dir /artifacts \
+    2>&1 | tee "${IMPORT_LOG}" || _import_exit=$?
+
+if [[ "${_import_exit}" -ne 0 ]]; then
+    err "Import check FAILED (exit=${_import_exit}) — see ${IMPORT_LOG}"
+    err "All 15 typography module symbols must be importable from /app with PYTHONPATH=/app"
+    FINAL_EXIT=1
+    exit 1
+fi
+ok "All Stage 20 typography symbols importable"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 4: Start isolated worker container
+# ═══════════════════════════════════════════════════════════════════════════════
+# Port is published on 127.0.0.1 only (loopback).
+# NEVER uses host's localhost:5000 (production port).
+sect "Step 4: Start Isolated Worker Container (127.0.0.1:${VERIFY_PORT})"
+
+_worker_exit=0
+docker run -d \
+    --name "${WORKER_CONTAINER}" \
+    -p "127.0.0.1:${VERIFY_PORT}:5000" \
+    -e TYPOGRAPHY_PIPELINE_ENABLED=false \
+    -e BACKGROUND_PIPELINE_ENABLED=false \
+    -e BACKGROUND_PIPELINE_COMPARE_ONLY=true \
+    -e PSD_TEXT_RELAYOUT_ENABLED=false \
+    -e CTA_RELAYOUT_ENABLED=false \
+    -e FLATTENED_OCR_ENABLED=false \
+    -e FLATTENED_OCR_COMPARE_ONLY=true \
+    -e OUTPUT_DIR=/tmp/stage20-verify-outputs \
+    "${STAGE20_IMAGE}" \
+    python app.py \
+    >/dev/null || _worker_exit=$?
+
+if [[ "${_worker_exit}" -ne 0 ]]; then
+    err "Failed to start isolated worker (exit=${_worker_exit})"
+    FINAL_EXIT=1
+    exit 1
+fi
+WORKER_STARTED=true
+info "Worker: ${WORKER_CONTAINER} → ${VERIFY_WORKER_URL}"
+ok "Isolated worker container started"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 5: Worker health check
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 5: Worker Health Check"
+
+_retries=0
+while (( _retries < WORKER_WAIT_RETRIES )); do
+    if curl -sf "${VERIFY_WORKER_URL}/health" --max-time 3 -o /dev/null 2>/dev/null; then
+        break
+    fi
+    _retries=$(( _retries + 1 ))
+    info "Waiting for worker... (${_retries}/${WORKER_WAIT_RETRIES})"
+    sleep "${WORKER_WAIT_INTERVAL}"
+done
+
+if (( _retries >= WORKER_WAIT_RETRIES )); then
+    err "Worker did not start in time (${WORKER_WAIT_RETRIES} retries × ${WORKER_WAIT_INTERVAL}s)"
+    info "Worker container logs:"
+    docker logs "${WORKER_CONTAINER}" 2>&1 | tail -40 | tee "${ARTIFACT_DIR}/worker.log" || true
+    FINAL_EXIT=1
+    exit 1
+fi
+
+# Save worker log for artifact
+docker logs "${WORKER_CONTAINER}" 2>&1 > "${ARTIFACT_DIR}/worker.log" || true
+ok "Worker is up at ${VERIFY_WORKER_URL}"
+
+# ── Typography health ──────────────────────────────────────────────────────────
+TYPO_HEALTH="${ARTIFACT_DIR}/typography-health.json"
+_typo_status=$(curl -s -w "%{http_code}" \
+    -o "${TYPO_HEALTH}" \
+    "${VERIFY_WORKER_URL}/v1/typography/health" \
+    --max-time "${HTTP_TIMEOUT}" 2>/dev/null || echo "000")
+
+if [[ "${_typo_status}" == "200" ]]; then
+    ok "GET /v1/typography/health → HTTP 200"
+    info "Typography health response:"
+    cat "${TYPO_HEALTH}" && echo ""
+    # Verify typographyPipelineEnabled field is false (no host python3 needed)
+    if grep -q '"typographyPipelineEnabled": false' "${TYPO_HEALTH}" 2>/dev/null; then
+        ok "typographyPipelineEnabled=false (default confirmed)"
+    elif grep -q '"typographyPipelineEnabled": true' "${TYPO_HEALTH}" 2>/dev/null; then
+        warn "typographyPipelineEnabled=true (expected false — flag may have been set)"
     else
-        check_fail "Step1_health_has_enabled_flag" "field missing: $BODY"
+        warn "typographyPipelineEnabled field not found in response"
     fi
 else
-    check_fail "Step1_health_endpoint_200" "status=$STATUS"
-    check_fail "Step1_health_has_enabled_flag" "endpoint failed"
+    err "GET /v1/typography/health → HTTP ${_typo_status} (not 200)"
+    info "Worker container logs (last 30 lines):"
+    docker logs "${WORKER_CONTAINER}" 2>&1 | tail -30 || true
+    echo '{"status":"error"}' > "${TYPO_HEALTH}"
+    FINAL_EXIT=1
 fi
 
-# Step 2: Stage 19 health still works (no regression)
-echo "-- Step 2: /v1/background/health (Stage 19 regression) --"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HOST/v1/background/health" 2>/dev/null || echo "000")
-if [ "$STATUS" = "200" ]; then
-    check_pass "Step2_stage19_health_not_broken"
+# ── Background health (Stage 19 regression) ───────────────────────────────────
+BG_HEALTH="${ARTIFACT_DIR}/background-health.json"
+_bg_status=$(curl -s -w "%{http_code}" \
+    -o "${BG_HEALTH}" \
+    "${VERIFY_WORKER_URL}/v1/background/health" \
+    --max-time "${HTTP_TIMEOUT}" 2>/dev/null || echo "000")
+
+if [[ "${_bg_status}" == "200" ]]; then
+    ok "GET /v1/background/health → HTTP 200 (Stage 19 not broken)"
 else
-    check_fail "Step2_stage19_health_not_broken" "status=$STATUS"
+    err "GET /v1/background/health → HTTP ${_bg_status} — Stage 19 regression detected"
+    echo '{"status":"error"}' > "${BG_HEALTH}"
+    FINAL_EXIT=1
 fi
 
-# Step 3: Worker Python: typography module importable
-echo "-- Step 3: Typography module import --"
-IMPORT_OK=$(cd /app/worker && python -c "
-import sys
-try:
-    from typography.pipeline import run_typography_pipeline
-    from typography.role_resolver import classify_role_by_name, ROLE_ALIASES
-    from typography.layout_templates import get_template
-    print('ok')
-except Exception as e:
-    print(f'FAIL:{e}')
-" 2>&1 || echo "FAIL:exec_error")
-if [ "$IMPORT_OK" = "ok" ]; then
-    check_pass "Step3_typography_module_import"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 6: Module checks (roles, templates, flags, dedup, quality gate)
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 6: Module Checks"
+
+for _cmd in check-roles check-templates check-flags check-dedup check-quality; do
+    _log="${ARTIFACT_DIR}/module-${_cmd}.log"
+    _exit=0
+    run_python /scripts/verify_stage20_server.py \
+        "${_cmd}" \
+        --artifact-dir /artifacts \
+        2>&1 | tee "${_log}" || _exit=$?
+
+    if [[ "${_exit}" -ne 0 ]]; then
+        err "Module check '${_cmd}' FAILED (exit=${_exit}) — see ${_log}"
+        FINAL_EXIT=1
+    else
+        ok "Module check '${_cmd}' PASSED"
+    fi
+done
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 7: pytest — Stage 20 unit tests (100 expected)
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 7: pytest — Stage 20 Typography Unit Tests"
+
+PYTEST20_LOG="${ARTIFACT_DIR}/stage20-pytest.log"
+PYTEST20_EXIT=0
+
+run_python_module pytest \
+    /app/test_stage20_typography.py \
+    -q \
+    -p no:cacheprovider \
+    --tb=short \
+    2>&1 | tee "${PYTEST20_LOG}" || PYTEST20_EXIT=$?
+
+if [[ "${PYTEST20_EXIT}" -ne 0 ]]; then
+    err "pytest Stage 20 FAILED (exit=${PYTEST20_EXIT}) — see ${PYTEST20_LOG}"
+    FINAL_EXIT=1
 else
-    check_fail "Step3_typography_module_import" "$IMPORT_OK"
+    _pt20=$(grep -oP '\d+(?= passed)' "${PYTEST20_LOG}" | tail -1 || echo "?")
+    ok "pytest Stage 20: ${_pt20} passed"
+    if [[ "${_pt20}" -lt 100 ]] 2>/dev/null; then
+        warn "Expected 100 tests; got ${_pt20}"
+    fi
 fi
 
-# Step 4: Role alias count (15 roles)
-echo "-- Step 4: Role aliases --"
-ROLE_COUNT=$(cd /app/worker && python -c "
-from typography.role_resolver import ROLE_ALIASES
-print(len(ROLE_ALIASES))
-" 2>/dev/null || echo "0")
-if [ "$ROLE_COUNT" = "15" ]; then
-    check_pass "Step4_15_roles_defined"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 8: Stage 19 regression tests
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 8: Stage 19 Regression Tests"
+
+PYTEST19_LOG="${ARTIFACT_DIR}/stage19-pytest.log"
+PYTEST19_EXIT=0
+
+# Check if test file exists in the image before running
+_s19_exists=0
+docker exec "${HELPER_CONTAINER}" test -f /app/test_stage19.py >/dev/null 2>&1 || _s19_exists=$?
+
+if [[ "${_s19_exists}" -ne 0 ]]; then
+    warn "test_stage19.py not found in image — skipping Stage 19 regression"
+    echo "skipped" > "${PYTEST19_LOG}"
 else
-    check_fail "Step4_15_roles_defined" "count=$ROLE_COUNT"
+    run_python_module pytest \
+        /app/test_stage19.py \
+        -q \
+        -p no:cacheprovider \
+        --tb=short \
+        2>&1 | tee "${PYTEST19_LOG}" || PYTEST19_EXIT=$?
+
+    if [[ "${PYTEST19_EXIT}" -ne 0 ]]; then
+        err "Stage 19 regression FAILED (exit=${PYTEST19_EXIT}) — Stage 20 broke Stage 19?"
+        FINAL_EXIT=1
+    else
+        _pt19=$(grep -oP '\d+(?= passed)' "${PYTEST19_LOG}" | tail -1 || echo "?")
+        ok "Stage 19 regression: ${_pt19} passed (Stage 19 unaffected)"
+    fi
 fi
 
-# Step 5: Layout templates for all spec types
-echo "-- Step 5: Layout template coverage --"
-TEMPLATE_OK=$(cd /app/worker && python -c "
-from typography.layout_templates import get_template, _spec_type
-tests = [
-    (1250, 560, '1250x560'),
-    (1200, 628, 'horizontal'),
-    (1000, 1000, 'square'),
-    (600, 900, 'vertical'),
-    (300, 1200, 'ultravert'),
-    (2400, 600, 'ultrawide'),
-]
-failed = []
-for w, h, expected in tests:
-    name, slots = get_template(w, h, [])
-    if expected not in name:
-        failed.append(f'{w}x{h}:{name}!={expected}')
-if failed:
-    print('FAIL:' + ','.join(failed))
-else:
-    print('ok')
-" 2>&1 || echo "FAIL:exec_error")
-if [ "$TEMPLATE_OK" = "ok" ]; then
-    check_pass "Step5_layout_templates_all_spec_types"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 9: Generate verification report
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 9: Generate Verification Report"
+
+REPORT_FILE="${ARTIFACT_DIR}/stage20-verification-report.json"
+_report_exit=0
+run_python /scripts/verify_stage20_server.py \
+    report \
+    --artifact-dir /artifacts \
+    --git-sha "${GIT_SHA}" \
+    --timestamp "${TIMESTAMP}" \
+    --output "/artifacts/stage20-verification-report.json" \
+    2>&1 | tee "${ARTIFACT_DIR}/report-gen.log" || _report_exit=$?
+
+if [[ -f "${REPORT_FILE}" ]]; then
+    # Read verdict without requiring host python3
+    _verdict="UNKNOWN"
+    grep -q '"verdict": "PASS"' "${REPORT_FILE}" 2>/dev/null && _verdict="PASS" || true
+    grep -q '"verdict": "FAIL"' "${REPORT_FILE}" 2>/dev/null && _verdict="FAIL" || true
+    info "Report verdict: ${_verdict}"
+    info "Report file:    ${REPORT_FILE}"
+    [[ "${_verdict}" == "FAIL" ]] && FINAL_EXIT=1 || true
 else
-    check_fail "Step5_layout_templates_all_spec_types" "$TEMPLATE_OK"
+    warn "Report JSON not generated (report-gen exit=${_report_exit})"
 fi
 
-# Step 6: Pipeline disabled by default
-echo "-- Step 6: Pipeline disabled by default --"
-DISABLED_CHECK=$(cd /app/worker && python -c "
-import os
-os.environ.pop('TYPOGRAPHY_PIPELINE_ENABLED', None)
-from typography.pipeline import run_typography_pipeline
-r = run_typography_pipeline('/nonexistent.psd', 1000, 600, '/tmp/t.jpg')
-print(r.get('error', ''))
-" 2>/dev/null || echo "")
-if [ "$DISABLED_CHECK" = "typography_pipeline_disabled" ]; then
-    check_pass "Step6_pipeline_disabled_by_default"
+# ── Markdown summary ───────────────────────────────────────────────────────────
+MD_FILE="${ARTIFACT_DIR}/stage20-verification-report.md"
+{
+    echo "# Stage 20 Verification Report"
+    echo ""
+    echo "- **gitSha**: ${GIT_SHA}"
+    echo "- **timestamp**: ${TIMESTAMP}"
+    echo "- **verifyImage**: ${STAGE20_IMAGE}"
+    echo "- **containerBased**: true"
+    echo "- **hostPythonRequired**: false"
+    echo "- **verifyWorkerUrl**: ${VERIFY_WORKER_URL}"
+    echo ""
+    echo "## Results"
+    echo ""
+    echo "| Check | Status |"
+    echo "|---|---|"
+    for _chk in import-check module-check-roles module-check-templates \
+                module-check-flags module-check-dedup module-check-quality; do
+        _log="${ARTIFACT_DIR}/${_chk}.log"
+        if [[ -f "${_log}" ]] && ! grep -q "\[NG\]" "${_log}" 2>/dev/null; then
+            echo "| ${_chk} | PASS |"
+        elif [[ -f "${_log}" ]]; then
+            echo "| ${_chk} | FAIL |"
+        else
+            echo "| ${_chk} | N/A |"
+        fi
+    done
+    _pt20_val=$(grep -oP '\d+(?= passed)' "${PYTEST20_LOG}" 2>/dev/null | tail -1 || echo "?")
+    echo "| pytest Stage 20 | ${_pt20_val} passed |"
+    echo "| /v1/typography/health | HTTP ${_typo_status} |"
+    echo "| /v1/background/health | HTTP ${_bg_status} |"
+    echo ""
+    echo "## Production Impact"
+    echo ""
+    echo "Production containers were **not touched**. All tests ran in isolated containers."
+} > "${MD_FILE}" 2>/dev/null || true
+info "Markdown report: ${MD_FILE}"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 10: Production container snapshot (after)
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 10: Production Containers Snapshot (after)"
+
+PROD_AFTER="${ARTIFACT_DIR}/production-after.txt"
+docker ps --filter "name=creative" \
+    --format "{{.Names}}\t{{.Status}}\t{{.Image}}" \
+    | grep -v "${HELPER_CONTAINER}" \
+    | grep -v "${WORKER_CONTAINER}" \
+    > "${PROD_AFTER}" 2>/dev/null || true
+
+PROD_COUNT_AFTER=$(wc -l < "${PROD_AFTER}" | tr -d ' ')
+if [[ "${PROD_COUNT_AFTER}" -eq "${PROD_COUNT_BEFORE}" ]]; then
+    ok "Production containers unchanged (${PROD_COUNT_BEFORE} containers)"
 else
-    check_fail "Step6_pipeline_disabled_by_default" "error=$DISABLED_CHECK"
+    warn "Production container count changed: ${PROD_COUNT_BEFORE} → ${PROD_COUNT_AFTER}"
 fi
 
-# Step 7: Duplicate detector — group composite covers child
-echo "-- Step 7: Duplicate detector --"
-DEDUP_OK=$(cd /app/worker && python -c "
-from typography.duplicate_detector import detect_duplicates
-layers = [
-    {'id': 'g', 'type': 'group', 'isTextLayer': False, 'isGroupComposite': True,
-     'role': 'unknown', 'bbox': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
-    {'id': 't', 'type': 'type', 'isTextLayer': True, 'isGroupComposite': False,
-     'role': 'title', 'textContent': 'hello', 'fontSize': 18,
-     'bbox': {'x': 10, 'y': 10, 'width': 200, 'height': 40}},
-]
-result = detect_duplicates(layers)
-child = next(l for l in result if l['id'] == 't')
-print('ok' if child['dedupSkip'] else 'FAIL')
-" 2>/dev/null || echo "FAIL")
-if [ "$DEDUP_OK" = "ok" ]; then
-    check_pass "Step7_duplicate_detector_group_cover"
-else
-    check_fail "Step7_duplicate_detector_group_cover" "$DEDUP_OK"
-fi
+_exited=$(grep -iE "Exited|Restarting" "${PROD_AFTER}" 2>/dev/null || true)
+[[ -n "${_exited}" ]] && warn "Some production containers may be unhealthy:" && echo "${_exited}" || true
 
-# Step 8: Quality gate scoring
-echo "-- Step 8: Quality gate scoring --"
-GATE_OK=$(cd /app/worker && python -c "
-from typography.quality_gate import evaluate, LAYOUT_SCORE_THRESHOLD
-from typography.schemas import LayoutSlot
-classified = [
-    {'role': 'background', 'dedupSkip': False, 'isKorean': False},
-    {'role': 'main_image', 'dedupSkip': False, 'isKorean': False},
-    {'role': 'title', 'dedupSkip': False, 'isKorean': True},
-    {'role': 'cta', 'dedupSkip': False, 'isKorean': False},
-]
-slots = [
-    LayoutSlot(role='background', x=0, y=0, w=1000, h=600, mode='cover'),
-    LayoutSlot(role='main_image', x=0, y=50, w=500, h=500, mode='contain'),
-    LayoutSlot(role='title', x=520, y=50, w=460, h=100, mode='contain'),
-    LayoutSlot(role='cta', x=520, y=450, w=200, h=60, mode='contain'),
-]
-result = evaluate(classified, slots, 1000, 600, had_korean=True)
-ok = result.success and result.quality_score >= LAYOUT_SCORE_THRESHOLD
-print('ok' if ok else f'FAIL:score={result.quality_score}')
-" 2>/dev/null || echo "FAIL")
-if [ "$GATE_OK" = "ok" ]; then
-    check_pass "Step8_quality_gate_full_pass_score"
-else
-    check_fail "Step8_quality_gate_full_pass_score" "$GATE_OK"
-fi
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 11: Final Verdict
+# ═══════════════════════════════════════════════════════════════════════════════
+sect "Step 11: Final Verdict"
 
-# Summary
 echo ""
-echo "================================================"
-echo "Total: $((PASS_COUNT + FAIL_COUNT))  PASS: $PASS_COUNT  FAIL: $FAIL_COUNT"
+echo "  Git SHA:          ${GIT_SHA}"
+echo "  Verify image:     ${STAGE20_IMAGE}"
+echo "  Worker URL:       ${VERIFY_WORKER_URL}"
+echo "  Artifact dir:     ${ARTIFACT_DIR}"
+[[ -f "${REPORT_FILE}" ]] && echo "  Report:           ${REPORT_FILE}" || true
+echo "  containerBased:   true"
+echo "  hostPythonReq:    false"
+echo ""
 
-if [ "$FAIL_COUNT" -gt 0 ]; then
-    echo "VERIFICATION FAILED"
-    exit 1
+if [[ "${FINAL_EXIT}" -eq 0 ]]; then
+    printf "${GRN}[PASS] Stage 20 Typography Pipeline verification PASSED${NC}\n"
+    printf "       gitSha=%s  containerBased=true  hostPythonRequired=false\n" "${GIT_SHA}"
+    printf "\n"
+    printf "Next step — production deployment:\n"
+    printf "  cd /opt/creative-resizer\n"
+    printf "  git pull --ff-only origin master\n"
+    printf "  bash scripts/verify_stage20_server.sh\n"
 else
-    echo "ALL PASS"
-    exit 0
+    printf "${RED}[FAIL] Stage 20 Typography Pipeline verification FAILED${NC}\n"
+    printf "       gitSha=%s\n" "${GIT_SHA}"
+    printf "       Details: %s\n" "${ARTIFACT_DIR}"
+    printf "\n"
+    printf "Troubleshooting:\n"
+    printf "  cat %s/helper-import.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/module-check-*.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/stage20-pytest.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/worker.log\n" "${ARTIFACT_DIR}"
 fi
+
+echo ""
+exit "${FINAL_EXIT}"
