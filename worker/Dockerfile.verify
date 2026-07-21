@@ -1,8 +1,11 @@
 # Stage 19 verification image — NOT for production.
 # Adds pytest and test-only deps on top of the worker runtime.
 #
-# Build context MUST be the project root (parent of worker/):
-#   docker build -t <tag> -f worker/Dockerfile.verify .
+# Build context MUST be the worker directory (not project root):
+#   docker build -t <tag> -f worker/Dockerfile.verify worker/
+#
+# Root .dockerignore excludes worker/ entirely, so project root cannot be
+# used as build context. All COPY paths are relative to the worker directory.
 #
 # Do NOT use this image in production or in docker-compose.yml.
 
@@ -29,15 +32,18 @@ RUN sed -i 's/<policy domain="coder" rights="none" pattern="PS" \/>/<policy doma
     sed -i 's/<policy domain="coder" rights="none" pattern="PSD" \/>/<policy domain="coder" rights="read|write" pattern="PSD" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true
 
 # Step 1: Runtime requirements (identical to production)
-COPY worker/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Step 2: Verification-only requirements (pytest etc.) — NOT in production
-COPY scripts/requirements-stage19-verify.txt .
+COPY requirements-stage19-verify.txt .
 RUN pip install --no-cache-dir -r requirements-stage19-verify.txt
 
 # Step 3: Copy worker source
-COPY worker/ .
+COPY . .
+
+# Make background package importable from /app in all exec contexts
+ENV PYTHONPATH=/app
 
 EXPOSE 5000
 CMD ["python", "app.py"]

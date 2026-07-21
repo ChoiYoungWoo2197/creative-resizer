@@ -5,7 +5,8 @@
 #
 # REQUIRES: docker, git, curl
 # Host python3 is NOT required. All Python work runs inside a Docker helper
-# container built from worker/Dockerfile.verify (build context: project root).
+# container built from worker/Dockerfile.verify (build context: worker/).
+# Root .dockerignore excludes worker/, so worker/ is the correct build context.
 #
 # Usage:
 #   bash scripts/verify_stage19_server.sh
@@ -97,12 +98,13 @@ info() { printf "${BLUE}[INFO]${NC}  %s\n" "$*"; }
 sect() { printf "\n${CYAN}== %s ==${NC}\n" "$*"; }
 
 # ─── Docker helper wrappers ───────────────────────────────────────────────────
-# /workspace  = PROJECT_ROOT (read-only)
+# /scripts    = PROJECT_ROOT/scripts (read-only; verify_stage19_server.py here)
+# /app        = worker source COPY'd during docker build (background package)
 # /artifacts  = ARTIFACT_DIR (writable)
 
 run_python() {
     docker exec \
-        -e PYTHONPATH=/workspace/worker:/workspace \
+        -e PYTHONPATH=/app \
         -e PYTHONDONTWRITEBYTECODE=1 \
         "${HELPER_CONTAINER}" \
         python "$@"
@@ -110,7 +112,7 @@ run_python() {
 
 run_python_stdin() {
     docker exec -i \
-        -e PYTHONPATH=/workspace/worker:/workspace \
+        -e PYTHONPATH=/app \
         -e PYTHONDONTWRITEBYTECODE=1 \
         "${HELPER_CONTAINER}" \
         python -
@@ -118,7 +120,7 @@ run_python_stdin() {
 
 run_python_module() {
     docker exec \
-        -e PYTHONPATH=/workspace/worker:/workspace \
+        -e PYTHONPATH=/app \
         -e PYTHONDONTWRITEBYTECODE=1 \
         "${HELPER_CONTAINER}" \
         python -m "$@"
@@ -269,9 +271,9 @@ ok "Snapshot (before) saved"
 # ═══════════════════════════════════════════════════════════════════════════════
 # Step 3: Build verify image
 # ═══════════════════════════════════════════════════════════════════════════════
-# Uses worker/Dockerfile.verify with PROJECT_ROOT as build context so that
-# both worker/ and scripts/ directories are accessible inside the Dockerfile.
-# This image adds pytest to the worker runtime without touching production deps.
+# Build context is WORKER_DIR, not PROJECT_ROOT. The root .dockerignore excludes
+# worker/ entirely, so using project root as context would cause COPY to fail.
+# All COPY instructions in Dockerfile.verify are relative to the worker dir.
 sect "Step 3: Build Verify Image (${STAGE19_IMAGE})"
 
 BUILD_LOG="${ARTIFACT_DIR}/docker-build.log"
@@ -279,12 +281,40 @@ BUILD_LOG="${ARTIFACT_DIR}/docker-build.log"
 if [[ "${SKIP_BUILD}" == "true" ]] && docker image inspect "${STAGE19_IMAGE}" >/dev/null 2>&1; then
     info "--skip-build: reusing ${STAGE19_IMAGE}"
 else
-    info "Building from ${PROJECT_ROOT}/worker/Dockerfile.verify ..."
+    # Pre-build file existence checks (fail fast before docker build)
+    for _req_file in \
+        "${WORKER_DIR}/requirements.txt" \
+        "${WORKER_DIR}/requirements-stage19-verify.txt" \
+        "${WORKER_DIR}/Dockerfile.verify" \
+        "${WORKER_DIR}/app.py" \
+        "${SCRIPT_DIR}/verify_stage19_server.py"
+    do
+        if [[ ! -f "${_req_file}" ]]; then
+            err "Pre-build check FAILED: missing ${_req_file}"
+            FINAL_EXIT=1
+            exit 1
+        fi
+    done
+    ok "Pre-build file checks passed"
+
+    # Context size guard — worker dir must be small (source only, no model caches)
+    CONTEXT_SIZE_KB=$(du -sk "${WORKER_DIR}" 2>/dev/null | cut -f1 || echo "0")
+    CONTEXT_SIZE_MB=$(( CONTEXT_SIZE_KB / 1024 ))
+    info "Build context: ${WORKER_DIR} (~${CONTEXT_SIZE_MB} MB)"
+    if (( CONTEXT_SIZE_KB > 256000 )); then
+        err "Build context too large (${CONTEXT_SIZE_MB} MB) — check worker/.dockerignore"
+        FINAL_EXIT=1
+        exit 1
+    elif (( CONTEXT_SIZE_KB > 51200 )); then
+        warn "Build context is large (${CONTEXT_SIZE_MB} MB) — review worker/.dockerignore"
+    fi
+
+    info "Building from ${WORKER_DIR}/Dockerfile.verify ..."
     _build_exit=0
     docker build \
         -t "${STAGE19_IMAGE}" \
         --file "${WORKER_DIR}/Dockerfile.verify" \
-        "${PROJECT_ROOT}" \
+        "${WORKER_DIR}" \
         2>&1 | tee "${BUILD_LOG}" || _build_exit=$?
 
     if [[ "${_build_exit}" -ne 0 ]]; then
@@ -304,7 +334,7 @@ _helper_exit=0
 docker run -d \
     --name "${HELPER_CONTAINER}" \
     --network none \
-    -v "${PROJECT_ROOT}:/workspace:ro" \
+    -v "${PROJECT_ROOT}/scripts:/scripts:ro" \
     -v "${ARTIFACT_DIR}:/artifacts" \
     "${STAGE19_IMAGE}" \
     sleep infinity \
@@ -329,7 +359,7 @@ sect "Step 3.6: Helper Import Check"
 IMPORT_LOG="${ARTIFACT_DIR}/import-check.log"
 _import_exit=0
 run_python \
-    /workspace/scripts/verify_stage19_server.py \
+    /scripts/verify_stage19_server.py \
     import-check \
     2>&1 | tee "${IMPORT_LOG}" || _import_exit=$?
 
@@ -417,7 +447,7 @@ sect "Step 6: Generate Fixtures"
 
 _fix_exit=0
 run_python \
-    /workspace/scripts/verify_stage19_server.py \
+    /scripts/verify_stage19_server.py \
     generate-fixtures \
     --artifact-dir /artifacts || _fix_exit=$?
 
@@ -440,7 +470,7 @@ sect "Step 7: Build Request JSONs (A-E)"
 for SC in A B C D E; do
     _req_exit=0
     run_python \
-        /workspace/scripts/verify_stage19_server.py \
+        /scripts/verify_stage19_server.py \
         build-request \
         --scenario "${SC}" \
         --artifact-dir /artifacts || _req_exit=$?
@@ -496,7 +526,7 @@ info "Scenario F: direct quality gate test (no HTTP)"
 SC_F_LOG="${ARTIFACT_DIR}/scenario-f-direct.log"
 _scf_exit=0
 run_python \
-    /workspace/scripts/verify_stage19_server.py \
+    /scripts/verify_stage19_server.py \
     evaluate \
     --scenario F \
     --artifact-dir /artifacts \
@@ -518,7 +548,7 @@ for SC in A B C D E; do
     EVAL_LOG="${ARTIFACT_DIR}/eval-${SC,,}.log"
     _eval_exit=0
     run_python \
-        /workspace/scripts/verify_stage19_server.py \
+        /scripts/verify_stage19_server.py \
         evaluate \
         --scenario "${SC}" \
         --response-file "/artifacts/response-${SC,,}.json" \
@@ -573,7 +603,7 @@ PYTEST_LOG="${ARTIFACT_DIR}/pytest-stage19.log"
 PYTEST_EXIT=0
 
 run_python_module pytest \
-    /workspace/worker/test_stage19.py \
+    /app/test_stage19.py \
     -q \
     -p no:cacheprovider \
     --tb=short \
@@ -594,7 +624,7 @@ PYTEST18_LOG="${ARTIFACT_DIR}/pytest-stage18-regression.log"
 PYTEST18_EXIT=0
 
 run_python_module pytest \
-    /workspace/worker/test_stage19.py \
+    /app/test_stage19.py \
     -q \
     -p no:cacheprovider \
     --tb=short \
@@ -616,7 +646,7 @@ sect "Step 11: Generate Final Report"
 
 REPORT_FILE="${ARTIFACT_DIR}/stage19-verification-report.json"
 run_python \
-    /workspace/scripts/verify_stage19_server.py \
+    /scripts/verify_stage19_server.py \
     report \
     --artifact-dir /artifacts \
     --git-sha "${GIT_SHA}" \
