@@ -24,6 +24,16 @@ class BackgroundOptions:
     mask_source: str = "applied"           # "applied" | "best_evaluated"
     artifact_level: str = "standard"       # "none" | "standard" | "full"
 
+    # Stage 20.2 source-faithful repair policy flags
+    source_faithful_repair_enabled: bool = False
+    background_generation_mode: str = ""          # "" | "source_faithful_repair" | "generative_background"
+    smart_fit_allowed: bool = False
+    blur_fill_allowed: bool = False
+    mirror_fill_allowed: bool = False
+    stretch_fill_allowed: bool = False
+    background_ai_max_attempts: int = 3
+    background_ai_approximate_allowed: bool = True
+
     @classmethod
     def from_env(cls) -> "BackgroundOptions":
         import os
@@ -35,6 +45,8 @@ class BackgroundOptions:
                 return int(os.environ.get(key, default))
             except (ValueError, TypeError):
                 return default
+        def _str(key: str, default: str) -> str:
+            return os.environ.get(key, default)
 
         return cls(
             enabled=_bool("BACKGROUND_PIPELINE_ENABLED", False),
@@ -45,6 +57,14 @@ class BackgroundOptions:
             allow_shadow=_bool("BACKGROUND_SHADOW_ENABLED", False),
             max_candidates=_int("BACKGROUND_MAX_CANDIDATES", 4),
             timeout_seconds=_int("BACKGROUND_REQUEST_TIMEOUT_SECONDS", 180),
+            # Stage 20.2
+            source_faithful_repair_enabled=_bool("BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED", False),
+            background_generation_mode=_str("BACKGROUND_GENERATION_MODE", ""),
+            smart_fit_allowed=_bool("BACKGROUND_SMART_FIT_ALLOWED", False),
+            blur_fill_allowed=_bool("BACKGROUND_BLUR_FILL_ALLOWED", False),
+            mirror_fill_allowed=_bool("BACKGROUND_MIRROR_FILL_ALLOWED", False),
+            stretch_fill_allowed=_bool("BACKGROUND_STRETCH_FILL_ALLOWED", False),
+            background_ai_max_attempts=_int("BACKGROUND_AI_MAX_ATTEMPTS", 3),
         )
 
 
@@ -143,6 +163,44 @@ class BackgroundResult:
     elapsed_ms: int = 0
     # output image
     result_image: Any = None
+
+    # ── Stage 20.2 fields ─────────────────────────────────────────────────────
+    background_generation_mode: str = ""
+    prompt_version: str = ""
+    needs_background_generation: bool = False
+    background_ai_required: bool = False
+    background_ai_executed: bool = False
+    background_ai_provider: str = ""
+    background_ai_model: str = ""
+    background_ai_request_id: str = ""
+    background_ai_attempt_count: int = 0
+    background_ai_succeeded: bool = False
+    background_ai_candidate_count: int = 0
+    background_ai_accepted_count: int = 0
+    original_psd_background_used: bool = False
+    generation_allowed_mask_ratio: float = 0.0
+    removal_mask_ratio: float = 0.0
+    outpaint_mask_ratio: float = 0.0
+    immutable_mask_ratio: float = 0.0
+    smart_fit_allowed: bool = False
+    smart_fit_used: bool = False
+    smart_fit_fallback_used: bool = False
+    blur_fill_used: bool = False
+    mirror_fill_used: bool = False
+    stretch_fill_used: bool = False
+    native_fallback_used: bool = False
+    protected_object_mutation_detected: bool = False
+    visible_hand_mutation_count: int = 0
+    generated_text_detected: bool = False
+    generated_logo_detected: bool = False
+    generated_product_detected: bool = False
+    unexpected_generated_hand_detected: bool = False
+    generated_person_detected: bool = False
+    source_faithfulness_score: float = 0.0
+    scene_continuity_score: float = 0.0
+    overall_repair_score: float = 0.0
+    sfr_failure_reason: str = ""
+    hard_fail_reasons: list = field(default_factory=list)
 
 
 # ── Mask metadata ─────────────────────────────────────────────────────────────

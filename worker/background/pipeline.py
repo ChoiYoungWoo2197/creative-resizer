@@ -40,6 +40,9 @@ from .outpaint import generate_outpaint_candidates
 from .harmonizer import generate_shadow_candidates
 from .quality_gate import select_best_candidate, build_quality_metrics
 from .artifact_writer import write_artifacts
+from .smart_fit_guard import build_no_smart_fit_fields, NATIVE_BACKGROUND_FALLBACK_FORBIDDEN
+from .mode_selector import select_background_mode, SOURCE_FAITHFUL_REPAIR
+from .source_faithful_repair import run_source_faithful_repair
 
 
 def _safe_resize_to_target(img: Image.Image, tgt_w: int, tgt_h: int) -> Image.Image:
@@ -130,6 +133,32 @@ class BackgroundPipeline:
         tgt_h = request.target_height or source.height
         warnings: list[str] = []
         all_candidates: list[BackgroundCandidate] = []
+
+        # ── Stage 20.2: Smart Fit policy fields (always False) ─────────────────
+        no_sf = build_no_smart_fit_fields()
+        result.smart_fit_allowed = no_sf["smartFitAllowed"]
+        result.smart_fit_used = no_sf["smartFitUsed"]
+        result.smart_fit_fallback_used = no_sf["smartFitFallbackUsed"]
+        result.blur_fill_used = no_sf["blurFillUsed"]
+        result.mirror_fill_used = no_sf["mirrorFillUsed"]
+        result.stretch_fill_used = no_sf["stretchFillUsed"]
+        result.native_fallback_used = no_sf["nativeFallbackUsed"]
+
+        # ── Stage 20.2: Mode selection ─────────────────────────────────────────
+        classified = request.layout_candidate.get("classifiedLayers", [])
+        mode, mode_reason = select_background_mode(
+            classified,
+            source_image=source,
+            forced_mode=opts.background_generation_mode or "",
+        )
+        result.background_generation_mode = mode
+        warnings.append(f"backgroundMode:{mode}({mode_reason})")
+
+        # ── Stage 20.2: Source Faithful Repair path ────────────────────────────
+        if opts.source_faithful_repair_enabled and mode == SOURCE_FAITHFUL_REPAIR:
+            return self._run_source_faithful_repair(
+                request, result, t0, tgt_w, tgt_h, classified, warnings
+            )
 
         # ── Step 1: Mask Build ─────────────────────────────────────────────────
         mask_result = build_masks(
@@ -254,11 +283,10 @@ class BackgroundPipeline:
             result.success = True
             result.verdict = "PASS"
         else:
-            # all candidates failed → native fallback
+            # all candidates failed
             result.fallback_used = True
             result.fallback_reason = reject_summary or "all_candidates_rejected"
             result.applied_background_source = "native"
-            result.result_image = _safe_resize_to_target(source, tgt_w, tgt_h)
             result.best_evaluated_background_source = "native"
             result.best_evaluated_background_score  = 0.0
             result.success = False
@@ -266,8 +294,17 @@ class BackgroundPipeline:
             warnings.append(f"nativeFallback:{result.fallback_reason}")
             if outpaint_candidates and not any(c.accepted for c in outpaint_candidates):
                 warnings.append("outpaint_all_candidates_rejected:external_provider_unavailable")
+            # Use letterbox blur only when NOT in source_faithful_repair mode
+            if mode == SOURCE_FAITHFUL_REPAIR:
+                # Smart Fit / blur-fill forbidden — return error without fallback image
+                result.sfr_failure_reason = NATIVE_BACKGROUND_FALLBACK_FORBIDDEN
+                result.hard_fail_reasons.append(NATIVE_BACKGROUND_FALLBACK_FORBIDDEN)
+                result.result_image = None
+                warnings.append(f"{NATIVE_BACKGROUND_FALLBACK_FORBIDDEN}:sfr_mode_no_blur_fallback")
+            else:
+                result.result_image = _safe_resize_to_target(source, tgt_w, tgt_h)
 
-        # ── Artifacts ─────────────────────────────────────────────────────────
+        # ── Artifacts (Stage 19 path) ─────────────────────────────────────────
         artifact_paths = write_artifacts(
             output_dir=self._output_dir,
             artifact_level=opts.artifact_level,
@@ -288,5 +325,95 @@ class BackgroundPipeline:
             elapsed_ms=int((time.time() - t0) * 1000),
         )
         result.artifacts = artifact_paths
+        result.elapsed_ms = int((time.time() - t0) * 1000)
+        return result
+
+    def _run_source_faithful_repair(
+        self,
+        request: BackgroundRequest,
+        result: BackgroundResult,
+        t0: float,
+        tgt_w: int,
+        tgt_h: int,
+        classified_layers: list[dict],
+        warnings: list[str],
+    ) -> BackgroundResult:
+        """Stage 20.2: Source Faithful Repair path.
+
+        Uses AI to repair only removal + outpaint areas.
+        Smart Fit / blur-fill NEVER used as fallback.
+        """
+        opts = request.options
+        source = request.source_image
+
+        # Build provider
+        provider = None
+        try:
+            provider = ProviderFactory.create(
+                enable_external=opts.allow_external_inpaint,
+                use_fake_for_test=False,
+            )
+        except Exception as exc:
+            warnings.append(f"provider_build_failed:{exc}")
+
+        sfr = run_source_faithful_repair(
+            source_image=source,
+            classified_layers=classified_layers,
+            target_w=tgt_w,
+            target_h=tgt_h,
+            provider=provider,
+            max_attempts=opts.background_ai_max_attempts,
+            request_id=request.request_id,
+            output_dir=self._output_dir,
+            canvas_w=source.width,
+            canvas_h=source.height,
+        )
+
+        # Map SFR result → BackgroundResult
+        result.background_generation_mode = sfr.background_generation_mode
+        result.prompt_version = sfr.prompt_version
+        result.needs_background_generation = sfr.needs_background_generation
+        result.background_ai_required = sfr.background_ai_required
+        result.background_ai_executed = sfr.background_ai_executed
+        result.background_ai_provider = sfr.background_ai_provider
+        result.background_ai_model = sfr.background_ai_model
+        result.background_ai_request_id = request.request_id
+        result.background_ai_attempt_count = sfr.background_ai_attempt_count
+        result.background_ai_succeeded = sfr.background_ai_succeeded
+        result.background_ai_candidate_count = sfr.background_ai_candidate_count
+        result.background_ai_accepted_count = sfr.background_ai_accepted_count
+        result.applied_background_source = sfr.applied_background_source
+        result.original_psd_background_used = sfr.original_psd_background_used
+        result.generation_allowed_mask_ratio = sfr.generation_allowed_mask_ratio
+        result.removal_mask_ratio = sfr.removal_mask_ratio
+        result.outpaint_mask_ratio = sfr.outpaint_mask_ratio
+        result.immutable_mask_ratio = sfr.immutable_mask_ratio
+        result.protected_object_mutation_detected = sfr.protected_object_mutation_detected
+        result.visible_hand_mutation_count = sfr.visible_hand_mutation_count
+        result.generated_text_detected = sfr.generated_text_detected
+        result.generated_logo_detected = sfr.generated_logo_detected
+        result.generated_product_detected = sfr.generated_product_detected
+        result.unexpected_generated_hand_detected = sfr.unexpected_generated_hand_detected
+        result.generated_person_detected = sfr.generated_person_detected
+        result.source_faithfulness_score = sfr.source_faithfulness_score
+        result.scene_continuity_score = sfr.scene_continuity_score
+        result.overall_repair_score = sfr.overall_repair_score
+        result.sfr_failure_reason = sfr.failure_reason
+        result.hard_fail_reasons = sfr.hard_fail_reasons
+        result.warnings = warnings + sfr.warnings
+        result.success = sfr.success
+        result.verdict = sfr.verdict
+        result.result_image = sfr.repair_image
+        result.fallback_used = not sfr.success
+        result.fallback_reason = sfr.failure_reason if not sfr.success else ""
+
+        result.metrics.update({
+            "sourceFaithfulnessScore": sfr.source_faithfulness_score,
+            "sceneContinuityScore": sfr.scene_continuity_score,
+            "overallRepairScore": sfr.overall_repair_score,
+            "aiAttemptCount": sfr.background_ai_attempt_count,
+            "generationAllowedMaskRatio": sfr.generation_allowed_mask_ratio,
+            "immutableMaskRatio": sfr.immutable_mask_ratio,
+        })
         result.elapsed_ms = int((time.time() - t0) * 1000)
         return result
