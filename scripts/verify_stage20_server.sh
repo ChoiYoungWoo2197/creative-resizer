@@ -463,30 +463,126 @@ for _cmd in check-roles check-templates check-flags check-dedup check-quality; d
 done
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Step 7: pytest — Stage 20 unit tests (100 expected)
+# Step 7: pytest — Stage 20.1 Typography unit tests (≥123 expected)
 # ═══════════════════════════════════════════════════════════════════════════════
-sect "Step 7: pytest — Stage 20 Typography Unit Tests"
+# Exit-code policy: redirect output to file, then capture $? immediately.
+# This avoids the | tee pipe masking pytest's exit code regardless of pipefail.
+sect "Step 7: pytest — Stage 20.1 Typography Unit Tests"
 
 PYTEST20_LOG="${ARTIFACT_DIR}/stage20-pytest.log"
 PYTEST20_EXIT=0
 
-run_python_module pytest \
-    /app/test_stage20_typography.py \
-    -q \
-    -p no:cacheprovider \
-    --tb=short \
-    2>&1 | tee "${PYTEST20_LOG}" || PYTEST20_EXIT=$?
+docker exec \
+    -e PYTHONPATH=/app \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    "${HELPER_CONTAINER}" \
+    python -m pytest /app/test_stage20_typography.py \
+        -q -p no:cacheprovider --tb=short \
+    > "${PYTEST20_LOG}" 2>&1 || PYTEST20_EXIT=$?
+
+cat "${PYTEST20_LOG}" | tail -20
 
 if [[ "${PYTEST20_EXIT}" -ne 0 ]]; then
-    err "pytest Stage 20 FAILED (exit=${PYTEST20_EXIT}) — see ${PYTEST20_LOG}"
+    err "pytest Stage 20.1 FAILED (exit=${PYTEST20_EXIT}) — see ${PYTEST20_LOG}"
     FINAL_EXIT=1
 else
     _pt20=$(grep -oP '\d+(?= passed)' "${PYTEST20_LOG}" | tail -1 || echo "?")
-    ok "pytest Stage 20: ${_pt20} passed"
-    if [[ "${_pt20}" -lt 100 ]] 2>/dev/null; then
-        warn "Expected 100 tests; got ${_pt20}"
+    ok "pytest Stage 20.1: ${_pt20} passed"
+    if (( ${_pt20:-0} < 100 )) 2>/dev/null; then
+        warn "Expected ≥100 tests; got ${_pt20:-?}"
     fi
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 7.5: pytest — Stage 20.2 Source Faithful Repair unit tests (≥57 expected)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Packages live at /app/background/ and /app/typography/ (PYTHONPATH=/app).
+# test_stage20_2.py uses sys.path.insert(0, dirname(__file__)) — no worker. prefix.
+sect "Step 7.5: pytest — Stage 20.2 Source Faithful Repair Unit Tests"
+
+PYTEST20_2_LOG="${ARTIFACT_DIR}/stage20-2-pytest.log"
+STAGE20_2_TEST_EXIT=0
+
+_s20_2_exists=0
+docker exec "${HELPER_CONTAINER}" test -f /app/test_stage20_2.py >/dev/null 2>&1 || _s20_2_exists=$?
+
+if [[ "${_s20_2_exists}" -ne 0 ]]; then
+    err "test_stage20_2.py not found in image — cannot run Stage 20.2 tests"
+    echo "missing" > "${PYTEST20_2_LOG}"
+    STAGE20_2_TEST_EXIT=1
+    FINAL_EXIT=1
+else
+    # Import smoke — must succeed before running full test suite
+    _import_smoke=0
+    docker exec \
+        -e PYTHONPATH=/app \
+        "${HELPER_CONTAINER}" \
+        python -c "
+import background
+import background.smart_fit_guard
+import background.mode_selector
+import background.prompt_builder
+import background.source_faithful_repair
+import typography
+import typography.text_extractor
+import typography.role_resolver
+print('Stage20.2 import smoke: OK')
+" > "${ARTIFACT_DIR}/stage20-2-import-smoke.log" 2>&1 || _import_smoke=$?
+
+    if [[ "${_import_smoke}" -ne 0 ]]; then
+        err "Stage 20.2 import smoke FAILED — see ${ARTIFACT_DIR}/stage20-2-import-smoke.log"
+        cat "${ARTIFACT_DIR}/stage20-2-import-smoke.log" >&2
+        STAGE20_2_TEST_EXIT=1
+        FINAL_EXIT=1
+    else
+        ok "Stage 20.2 import smoke: OK"
+    fi
+
+    # Run the actual tests — redirect to file to preserve exit code
+    docker exec \
+        -e PYTHONPATH=/app \
+        -e PYTHONDONTWRITEBYTECODE=1 \
+        "${HELPER_CONTAINER}" \
+        python -m pytest /app/test_stage20_2.py \
+            -q -p no:cacheprovider --tb=short \
+        > "${PYTEST20_2_LOG}" 2>&1 || STAGE20_2_TEST_EXIT=$?
+
+    cat "${PYTEST20_2_LOG}" | tail -20
+
+    _pt20_2=$(grep -oP '\d+(?= passed)' "${PYTEST20_2_LOG}" | tail -1 || echo "?")
+    _ft20_2=$(grep -oP '\d+(?= failed)' "${PYTEST20_2_LOG}" | tail -1 || echo "0")
+
+    if [[ "${STAGE20_2_TEST_EXIT}" -ne 0 ]]; then
+        err "pytest Stage 20.2 FAILED (exit=${STAGE20_2_TEST_EXIT}, passed=${_pt20_2:-?}, failed=${_ft20_2:-?}) — see ${PYTEST20_2_LOG}"
+        FINAL_EXIT=1
+    else
+        ok "pytest Stage 20.2: ${_pt20_2:-?} passed"
+        if (( ${_pt20_2:-0} < 57 )) 2>/dev/null; then
+            warn "Expected ≥57 tests; got ${_pt20_2:-?}"
+        fi
+    fi
+fi
+
+# ─── Stage 20.2 Module checks ─────────────────────────────────────────────────
+for _cmd in check-smart-fit-guard check-mode-selector check-source-faithful-repair check-sfr-masks check-prompt-builder; do
+    _log="${ARTIFACT_DIR}/module-${_cmd}.log"
+    _exit=0
+    docker exec \
+        -e PYTHONPATH=/app \
+        -e PYTHONDONTWRITEBYTECODE=1 \
+        "${HELPER_CONTAINER}" \
+        python /scripts/verify_stage20_server.py \
+            "${_cmd}" \
+            --artifact-dir /artifacts \
+        > "${_log}" 2>&1 || _exit=$?
+
+    if [[ "${_exit}" -ne 0 ]]; then
+        err "Stage 20.2 module check '${_cmd}' FAILED (exit=${_exit}) — see ${_log}"
+        FINAL_EXIT=1
+    else
+        ok "Stage 20.2 module check '${_cmd}' PASSED"
+    fi
+done
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Step 8: Stage 19 regression tests
@@ -496,7 +592,6 @@ sect "Step 8: Stage 19 Regression Tests"
 PYTEST19_LOG="${ARTIFACT_DIR}/stage19-pytest.log"
 PYTEST19_EXIT=0
 
-# Check if test file exists in the image before running
 _s19_exists=0
 docker exec "${HELPER_CONTAINER}" test -f /app/test_stage19.py >/dev/null 2>&1 || _s19_exists=$?
 
@@ -504,12 +599,15 @@ if [[ "${_s19_exists}" -ne 0 ]]; then
     warn "test_stage19.py not found in image — skipping Stage 19 regression"
     echo "skipped" > "${PYTEST19_LOG}"
 else
-    run_python_module pytest \
-        /app/test_stage19.py \
-        -q \
-        -p no:cacheprovider \
-        --tb=short \
-        2>&1 | tee "${PYTEST19_LOG}" || PYTEST19_EXIT=$?
+    docker exec \
+        -e PYTHONPATH=/app \
+        -e PYTHONDONTWRITEBYTECODE=1 \
+        "${HELPER_CONTAINER}" \
+        python -m pytest /app/test_stage19.py \
+            -q -p no:cacheprovider --tb=short \
+        > "${PYTEST19_LOG}" 2>&1 || PYTEST19_EXIT=$?
+
+    cat "${PYTEST19_LOG}" | tail -10
 
     if [[ "${PYTEST19_EXIT}" -ne 0 ]]; then
         err "Stage 19 regression FAILED (exit=${PYTEST19_EXIT}) — Stage 20 broke Stage 19?"
@@ -622,8 +720,21 @@ echo "  containerBased:   true"
 echo "  hostPythonReq:    false"
 echo ""
 
+# ── Summary table ──────────────────────────────────────────────────────────────
+_pt20_val=$(grep -oP '\d+(?= passed)' "${PYTEST20_LOG}" 2>/dev/null | tail -1 || echo "?")
+_pt20_2_val=$(grep -oP '\d+(?= passed)' "${PYTEST20_2_LOG}" 2>/dev/null | tail -1 || echo "?")
+_pt19_val=$(grep -oP '\d+(?= passed)' "${PYTEST19_LOG}" 2>/dev/null | tail -1 || echo "?")
+
+printf "  %-30s : %s\n" "Git SHA" "${GIT_SHA}"
+printf "  %-30s : %s\n" "Stage 20.1 Typography tests" "${_pt20_val} passed  (exit=${PYTEST20_EXIT})"
+printf "  %-30s : %s\n" "Stage 20.2 SFR tests" "${_pt20_2_val} passed  (exit=${STAGE20_2_TEST_EXIT})"
+printf "  %-30s : %s\n" "Stage 19 regression" "${_pt19_val} passed  (exit=${PYTEST19_EXIT})"
+printf "  %-30s : %s\n" "FINAL_EXIT_CODE" "${FINAL_EXIT}"
+echo ""
+
 if [[ "${FINAL_EXIT}" -eq 0 ]]; then
-    printf "${GRN}[PASS] Stage 20 Typography Pipeline verification PASSED${NC}\n"
+    printf "${GRN}[PASS] Stage 20 verification PASSED${NC}\n"
+    printf "       Canonical package root: /app  (background/, typography/)\n"
     printf "       gitSha=%s  containerBased=true  hostPythonRequired=false\n" "${GIT_SHA}"
     printf "\n"
     printf "Next step — production deployment:\n"
@@ -631,14 +742,16 @@ if [[ "${FINAL_EXIT}" -eq 0 ]]; then
     printf "  git pull --ff-only origin master\n"
     printf "  bash scripts/verify_stage20_server.sh\n"
 else
-    printf "${RED}[FAIL] Stage 20 Typography Pipeline verification FAILED${NC}\n"
+    printf "${RED}[FAIL] Stage 20 verification FAILED (FINAL_EXIT=${FINAL_EXIT})${NC}\n"
     printf "       gitSha=%s\n" "${GIT_SHA}"
     printf "       Details: %s\n" "${ARTIFACT_DIR}"
     printf "\n"
     printf "Troubleshooting:\n"
-    printf "  cat %s/helper-import.log\n" "${ARTIFACT_DIR}"
-    printf "  cat %s/module-check-*.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/stage20-2-import-smoke.log\n" "${ARTIFACT_DIR}"
     printf "  cat %s/stage20-pytest.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/stage20-2-pytest.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/module-check-smart-fit-guard.log\n" "${ARTIFACT_DIR}"
+    printf "  cat %s/helper-import.log\n" "${ARTIFACT_DIR}"
     printf "  cat %s/worker.log\n" "${ARTIFACT_DIR}"
 fi
 
