@@ -109,24 +109,28 @@ class BackgroundPipeline:
             canvas_w=source.width,
             canvas_h=source.height,
             protected_objects=request.protected_objects,
+            removal_objects=request.removal_objects or None,
             external_removal_mask=request.removal_mask,
             target_w=tgt_w,
             target_h=tgt_h,
         )
         warnings.extend(mask_result.warnings)
         result.metrics.update({
-            "removalMaskAreaRatio":   mask_result.removal_mask_area_ratio,
-            "protectedMaskAreaRatio": mask_result.protected_mask_area_ratio,
-            "outpaintMaskAreaRatio":  mask_result.outpaint_mask_area_ratio,
-            "maskDilationPx":         mask_result.mask_dilation_px,
-            "maskFeatherPx":          mask_result.mask_feather_px,
+            "removalMaskAreaRatio":    mask_result.removal_mask_area_ratio,
+            "protectedMaskAreaRatio":  mask_result.protected_mask_area_ratio,
+            "outpaintMaskAreaRatio":   mask_result.outpaint_mask_area_ratio,
+            "maskDilationPx":          mask_result.mask_dilation_px,
+            "maskFeatherPx":           mask_result.mask_feather_px,
+            "protectedOverlapPixels":  mask_result.protected_overlap_pixels,
         })
 
         # ── Step 2A: Local Inpaint ─────────────────────────────────────────────
         local_candidates: list[BackgroundCandidate] = []
+        _local_eligible = False
         if opts.allow_local_inpaint and mask_result.removal_mask is not None:
             area = mask_result.removal_mask_area_ratio
-            if should_use_local(area):
+            _local_eligible = should_use_local(area)
+            if _local_eligible:
                 result.local_inpaint_attempted = True
                 local_candidates = generate_local_candidates(
                     source,
@@ -136,6 +140,8 @@ class BackgroundPipeline:
                 all_candidates.extend(local_candidates)
             elif should_promote_to_external(area):
                 warnings.append(f"localInpaintSkipped:areaTooLarge({area:.3f})")
+        result.metrics["localInpaintEligible"] = _local_eligible
+        result.metrics["localCandidateCount"] = len(local_candidates)
 
         # ── Step 2B: External Inpaint ──────────────────────────────────────────
         if opts.allow_external_inpaint and mask_result.removal_mask is not None:

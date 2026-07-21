@@ -56,6 +56,7 @@ class BackgroundRequest:
     protected_objects: list[dict] = field(default_factory=list)
     protected_masks: list[dict] = field(default_factory=list)
     removal_mask: Any = None                   # PIL L-mode or None
+    removal_objects: list[dict] = field(default_factory=list)  # explicit removal targets
     layout_candidate: dict = field(default_factory=dict)
     safe_zone: dict = field(default_factory=dict)
     options: BackgroundOptions = field(default_factory=BackgroundOptions)

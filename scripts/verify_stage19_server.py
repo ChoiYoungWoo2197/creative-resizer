@@ -300,6 +300,17 @@ def cmd_generate_fixtures(args) -> int:
     img.save(os.path.join(adir, "gradient.png"))
     print(f"[OK] gradient.b64 ({len(b64)} chars)", flush=True)
 
+    # Gradient 120x80 image — Scenario C local inpaint fixture
+    # 120×80=9600px; 5×5 CTA + 2px dilation = 9×9=81px → ratio 0.0084 < 0.025
+    img = Image.new("RGB", (120, 80))
+    img.putdata([(i % 256, (i * 3) % 256, (i * 7) % 256) for i in range(120 * 80)])
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    with open(os.path.join(adir, "gradient_120x80.b64"), "w") as f:
+        f.write(b64)
+    print(f"[OK] gradient_120x80.b64 ({len(b64)} chars)", flush=True)
+
     print(f"[OK] generate-fixtures -> {adir}", flush=True)
     return 0
 
@@ -318,6 +329,14 @@ def cmd_build_request(args) -> int:
 
     solid_b64 = open(os.path.join(adir, "solid.b64")).read().strip()
     gradient_b64 = open(os.path.join(adir, "gradient.b64")).read().strip()
+    # Scenario C uses 120×80 so removal mask ratio stays well below 0.025.
+    # 5×5 CTA + 2px dilation = 9×9 = 81px; 81/9600 = 0.0084 < 0.025.
+    _grad120_path = os.path.join(adir, "gradient_120x80.b64")
+    gradient_120x80_b64 = (
+        open(_grad120_path).read().strip()
+        if os.path.exists(_grad120_path)
+        else gradient_b64  # fallback (should not happen after generate-fixtures)
+    )
 
     requests: dict[str, dict] = {
         "A": {
@@ -335,14 +354,20 @@ def cmd_build_request(args) -> int:
             "requestId": "verify-stage19-B",
         },
         "C": {
-            "sourceImageBase64": gradient_b64,
+            # 120×80 source; product protected at center; small CTA removal at corner.
+            # removalObjects separates the inpaint target from the protected product,
+            # keeping protectedOverlapPixels=0 and removalMaskAreaRatio=0.0084.
+            "sourceImageBase64": gradient_120x80_b64,
             "options": {
                 "enabled": True,
                 "compareOnly": True,
                 "allowLocalInpaint": True,
             },
             "protectedObjects": [
-                {"role": "product", "bbox": {"x": 10, "y": 10, "width": 5, "height": 5}}
+                {"role": "product", "bbox": {"x": 40, "y": 25, "width": 20, "height": 30}}
+            ],
+            "removalObjects": [
+                {"role": "cta", "bbox": {"x": 10, "y": 10, "width": 5, "height": 5}}
             ],
             "requestId": "verify-stage19-C",
         },
@@ -415,6 +440,7 @@ _SCENARIO_ASSERTIONS: dict[str, list[tuple]] = {
     ],
     "C": [
         ("localInpaintAttempted", True),
+        ("localInpaintEligible",  True),
     ],
     "D": [
         ("outpaintAttempted", True),
@@ -473,6 +499,9 @@ def cmd_evaluate(args) -> int:
         "appliedBackgroundSource": response.get("appliedBackgroundSource"),
         "fallbackReason": response.get("fallbackReason"),
         "localInpaintAttempted": response.get("localInpaintAttempted"),
+        "localInpaintEligible": response.get("localInpaintEligible"),
+        "localCandidateCount": response.get("localCandidateCount"),
+        "protectedOverlapPixels": response.get("protectedOverlapPixels"),
         "outpaintAttempted": response.get("outpaintAttempted"),
         "shadowApplied": response.get("shadowApplied"),
         "backgroundCompareOnly": response.get("backgroundCompareOnly"),

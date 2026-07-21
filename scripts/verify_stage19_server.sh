@@ -453,13 +453,15 @@ run_python \
 
 if [[ "${_fix_exit}" -ne 0 ]] || \
    [[ ! -f "${ARTIFACT_DIR}/solid.b64" ]] || \
-   [[ ! -f "${ARTIFACT_DIR}/gradient.b64" ]]; then
+   [[ ! -f "${ARTIFACT_DIR}/gradient.b64" ]] || \
+   [[ ! -f "${ARTIFACT_DIR}/gradient_120x80.b64" ]]; then
     err "Fixture generation failed (exit=${_fix_exit})"
     FINAL_EXIT=1
     exit 1
 fi
-info "solid.b64:    $(wc -c < "${ARTIFACT_DIR}/solid.b64" | tr -d ' ') chars"
-info "gradient.b64: $(wc -c < "${ARTIFACT_DIR}/gradient.b64" | tr -d ' ') chars"
+info "solid.b64:           $(wc -c < "${ARTIFACT_DIR}/solid.b64" | tr -d ' ') chars"
+info "gradient.b64:        $(wc -c < "${ARTIFACT_DIR}/gradient.b64" | tr -d ' ') chars"
+info "gradient_120x80.b64: $(wc -c < "${ARTIFACT_DIR}/gradient_120x80.b64" | tr -d ' ') chars"
 ok "Fixtures generated"
 
 # ═══════════════════════════════════════════════════════════════════════════════
