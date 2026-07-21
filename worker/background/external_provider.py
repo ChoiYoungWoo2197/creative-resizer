@@ -214,13 +214,17 @@ class FakeBackgroundProvider(BackgroundGenerationProvider):
         return (r, g, b)
 
 
-# ── HTTP provider stub ────────────────────────────────────────────────────────
+# ── HTTP provider — delegates to OpenAI ──────────────────────────────────────
 
 class ExternalInpaintProvider(BackgroundGenerationProvider):
     """HTTP-based external AI inpaint/outpaint.
 
-    Reads config from env vars. Stubs the call if api_key is not set.
+    Delegates to OpenAIInpaintProvider when BACKGROUND_AI_API_KEY is set.
     API key is NEVER logged or stored in artifacts.
+
+    Env vars:
+      BACKGROUND_AI_API_KEY  — required for real inference
+      BACKGROUND_AI_MODEL    — default: gpt-image-1
     """
 
     def __init__(
@@ -230,20 +234,19 @@ class ExternalInpaintProvider(BackgroundGenerationProvider):
         timeout: int = 120,
         max_retries: int = 1,
     ) -> None:
-        self._api_key  = api_key or os.environ.get("BACKGROUND_AI_API_KEY", "")
-        self._model    = model or os.environ.get("BACKGROUND_AI_MODEL", "")
-        self._timeout  = timeout
+        from .openai_provider import OpenAIInpaintProvider
+        self._openai = OpenAIInpaintProvider(
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+        )
         self._max_retries = max_retries
-        self._available = bool(self._api_key)
+        self._available = self._openai.is_configured()
 
     def health(self) -> dict:
-        return {
-            "available": self._available,
-            "provider": "external_http",
-            "model": self._model,
-            "realInference": self._available,
-            "apiKeyConfigured": self._available,
-        }
+        h = self._openai.health()
+        h["provider"] = "external_http"
+        return h
 
     def inpaint(
         self,
@@ -254,8 +257,7 @@ class ExternalInpaintProvider(BackgroundGenerationProvider):
     ) -> Image.Image | None:
         if not self._available:
             return None
-        # stub — real HTTP integration added when provider is confirmed
-        return None
+        return self._openai.inpaint(image=image, mask=mask, prompt=prompt, options=options)
 
     def outpaint(
         self,
@@ -267,15 +269,18 @@ class ExternalInpaintProvider(BackgroundGenerationProvider):
     ) -> Image.Image | None:
         if not self._available:
             return None
-        return None
+        tw, th = target_size
+        # Resize source to target, build full-canvas generation mask, call inpaint
+        src_resized = image.resize((tw, th), Image.LANCZOS)
+        mask_resized = mask.resize((tw, th), Image.LANCZOS)
+        return self._openai.inpaint(
+            image=src_resized, mask=mask_resized, prompt=prompt, options=options
+        )
 
     def metadata(self) -> dict:
-        return {
-            "provider": "external_http",
-            "model": self._model,
-            "realInference": self._available,
-            # API key intentionally not included
-        }
+        m = self._openai.metadata()
+        m["provider"] = "external_http"
+        return m
 
 
 # ── fallback chain ────────────────────────────────────────────────────────────
