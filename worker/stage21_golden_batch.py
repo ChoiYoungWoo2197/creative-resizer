@@ -739,11 +739,13 @@ def main() -> None:
                 print(f"[BATCH] Invalid spec format: {s!r} (expected WxH, e.g. 1250x560)", file=sys.stderr)
                 sys.exit(2)
 
+    _mode = "actual-ai" if not dry_run else "dry-run"
+    _spec_labels = [f"{s['width']}x{s['height']}" for s in target_specs]
     print(
         f"[BATCH] Starting Stage 21 golden batch"
-        f" mode={'actual-ai' if not dry_run else 'dry-run'}"
+        f" mode={_mode}"
         f" psds={psd_names}"
-        f" specs={[f'{s[\"width\"]}x{s[\"height\"]}' for s in target_specs]}",
+        f" specs={_spec_labels}",
         flush=True,
     )
 
