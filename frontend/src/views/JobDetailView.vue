@@ -26,7 +26,7 @@
           <div class="job-title">{{ job.advertiser }} — {{ job.campaignName }}</div>
           <div class="job-meta">
             <span class="badge-media" v-for="m in job.targetMedia" :key="m">{{ mediaLabel(m) }}</span>
-            <span class="meta-item">{{ job.resizeMode }}</span>
+            <span class="meta-item">{{ resizeModeLabel(job.resizeMode) }}</span>
             <span class="meta-item">{{ job.outputFormat?.toUpperCase() }}</span>
             <span class="meta-item">{{ fmtDate(job.createdAt) }}</span>
           </div>
@@ -235,6 +235,19 @@
                 <span v-if="r.appliedBackgroundScore" class="stage19-score">{{ Math.round(r.appliedBackgroundScore) }}점</span>
                 <span v-if="r.backgroundFallbackUsed" class="stage19-fallback">↩ fallback</span>
               </div>
+              <!-- Stage 20.3: Render Provenance (요청 모드 vs 실제 적용 모드) -->
+              <div v-if="r.renderProvenance" class="provenance-row">
+                <span v-if="r.renderProvenance.forcedSmartFit" class="provenance-forced">
+                  ⚠ 강제 스마트 맞춤 (요청: {{ resizeModeLabel(r.renderProvenance.requestedResizeMode) }})
+                </span>
+                <span v-if="r.renderProvenance.blurFillUsed" class="provenance-blur">
+                  ◈ 블러 배경 적용됨
+                </span>
+                <span v-if="r.renderProvenance.effectiveResizeMode && r.renderProvenance.effectiveResizeMode !== r.renderProvenance.requestedResizeMode"
+                      class="provenance-mode">
+                  실제: {{ resizeModeLabel(r.renderProvenance.effectiveResizeMode) }}
+                </span>
+              </div>
             </div>
             <div class="card-actions">
               <button class="btn-dl-single" @click="handleSingleDownload(r)">↓ 다운로드</button>
@@ -357,6 +370,14 @@ const STATUS_LABELS = {
 
 const mediaLabel = (m) => MEDIA_LABELS[m] || m
 const statusLabel = (s) => STATUS_LABELS[s] || s
+
+const RESIZE_MODE_LABELS = {
+  'smart-fit': '스마트 맞춤',
+  'cover': '꽉 채우기',
+  'contain': '전체 보이기',
+  'blur-bg': '블러 배경',
+}
+const resizeModeLabel = (v) => RESIZE_MODE_LABELS[v] ?? v ?? '-'
 
 function fmtDate(dt) {
   if (!dt) return ''
@@ -1407,5 +1428,35 @@ onUnmounted(stopPolling)
   .s19-compare  { background: #451A03; color: #FCD34D; }
   .stage19-score { background: #064E3B; color: #6EE7B7; }
   .stage19-fallback { color: #6B7280; }
+}
+
+/* Stage 20.3: Render Provenance row */
+.provenance-row {
+  margin-top: 4px;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10px;
+}
+.provenance-forced {
+  padding: 2px 6px; border-radius: 4px;
+  background: #FEF3C7; color: #92400E;
+  border: 1px solid #FCD34D;
+  font-weight: 600;
+}
+.provenance-blur {
+  padding: 2px 6px; border-radius: 4px;
+  background: #FEE2E2; color: #991B1B;
+  border: 1px solid #FCA5A5;
+  font-weight: 600;
+}
+.provenance-mode {
+  padding: 2px 6px; border-radius: 4px;
+  background: #EEF2FF; color: #3730A3;
+  border: 1px solid #A5B4FC;
+}
+@media (prefers-color-scheme: dark) {
+  .provenance-forced { background: #451A03; color: #FCD34D; border-color: #92400E; }
+  .provenance-blur   { background: #450A0A; color: #FCA5A5; border-color: #991B1B; }
+  .provenance-mode   { background: #1E1B4B; color: #A5B4FC; border-color: #3730A3; }
 }
 </style>

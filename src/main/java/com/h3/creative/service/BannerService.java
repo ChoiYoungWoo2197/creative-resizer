@@ -314,6 +314,7 @@ public class BannerService {
                         br.setHeadlineScaled(r.getHeadlineScaled());
                         br.setHeadlineOverflowFixed(r.getHeadlineOverflowFixed());
                         br.setBlurFallbackUsed(r.getBlurFallbackUsed());
+                        br.setRenderProvenance(r.getRenderProvenance());
                         return br;
                     }).toList()
                     : List.of();

@@ -514,15 +514,21 @@ def _apply_resize(img: Image.Image, w: int, h: int,
                   resize_mode: str, smart_fit_strength: str, focal_position: str) -> tuple:
     """리사이징 적용 통합 헬퍼. wide-banner 조건이면 enhanced 처리.
     반환: (resized_image, enhance_meta)
+    enhance_meta["blurFillUsed"]: True = smart-fit blur 배경이 최종 출력에 적용됨
     """
     if resize_mode == "smart-fit" and is_wide_banner_case(img.width, img.height, w, h):
-        return resize_wide_banner_smart_fit(img, w, h, smart_fit_strength)
+        resized, meta = resize_wide_banner_smart_fit(img, w, h, smart_fit_strength)
+        # wide-banner: quality≥50이면 crop-only(blur 없음), 미달이면 내부에서 resize_smart_fit fallback
+        meta["blurFillUsed"] = meta.get("candidateScore") is None or meta.get("candidateScore", 50) < 50
+        return resized, meta
 
     if resize_mode == "smart-fit":
         resized = resize_smart_fit(img, w, h, smart_fit_strength, focal_position)
+        blur_used = True  # resize_smart_fit()는 항상 blur 배경 사용
     else:
         resize_fn = RESIZE_FUNCS.get(resize_mode, resize_cover)
         resized = resize_fn(img, w, h)
+        blur_used = False
 
     return resized, {
         "resizeStrategy": resize_mode,
@@ -533,6 +539,7 @@ def _apply_resize(img: Image.Image, w: int, h: int,
         "subjectScale":   None,
         "qualityGate":    None,
         "qualityLabel":   None,
+        "blurFillUsed":   blur_used,
     }
 
 
@@ -1572,7 +1579,25 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "inpaintApplied":          _poc_inpaint_meta.get("inpaintApplied"),
                 "cleanBackgroundUsed":     _poc_inpaint_meta.get("cleanBackgroundUsed"),
                 "pocFallbackUsed":         _poc_seg_meta.get("maskFallbackUsed"),
+                # Stage 20.3: 렌더 프로브넌스
+                "renderProvenance": {
+                    "requestedResizeMode": resize_mode,
+                    "effectiveResizeMode": "psd-object-layout-reflow" if obj_reflow_succeeded else "smart-fit",
+                    "blurFillUsed": not obj_reflow_succeeded,
+                    "forcedSmartFit": not obj_reflow_succeeded,
+                    "sourceType": "psd",
+                    "psdMode": "object-reflow",
+                    "backgroundPipelineUsed": False,
+                    "sourceFaithfulRepairUsed": False,
+                },
             })
+
+            print(
+                f"[RENDER_PROVENANCE] spec={name} size={w}x{h}"
+                f" sourceType=psd psdMode=object-reflow requestedMode={resize_mode}"
+                f" effectiveMode={'psd-object-layout-reflow' if obj_reflow_succeeded else 'smart-fit'}"
+                f" blurFill={not obj_reflow_succeeded} objReflowSucceeded={obj_reflow_succeeded}"
+            )
         return results, []
 
     # PSD 레이어 재배치 모드 (4차-2)
@@ -1720,6 +1745,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 valid = False
                 validation_message = "PSD final image extraction failed"
 
+            _lr_eff_mode = enhance_meta.get("resizeStrategy") or ("psd-layer-reflow" if layer_reflow_succeeded else "smart-fit")
+            _lr_blur = not layer_reflow_succeeded  # fallback → smart-fit → blur
+            print(
+                f"[RENDER_PROVENANCE] spec={name} size={w}x{h}"
+                f" sourceType=psd psdMode=layer-reflow requestedMode={resize_mode}"
+                f" effectiveMode={_lr_eff_mode} blurFill={_lr_blur}"
+                f" layerReflowSucceeded={layer_reflow_succeeded}"
+            )
+
             results.append({
                 "media": media,
                 "name": name,
@@ -1775,6 +1809,17 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "typographyCtaGroupDetected": typo_meta.get("ctaGroupDetected", False),
                 "typographyQualityScore": typo_meta.get("qualityScore", 0.0),
                 "typographyWarnings": typo_meta.get("warnings", []),
+                # Stage 20.3: 렌더 프로브넌스
+                "renderProvenance": {
+                    "requestedResizeMode": resize_mode,
+                    "effectiveResizeMode": _lr_eff_mode,
+                    "blurFillUsed": _lr_blur,
+                    "forcedSmartFit": not layer_reflow_succeeded,  # fallback 시 smart-fit 강제
+                    "sourceType": "psd",
+                    "psdMode": "layer-reflow",
+                    "backgroundPipelineUsed": False,
+                    "sourceFaithfulRepairUsed": False,
+                },
             })
         return results, []
 
@@ -1878,7 +1923,9 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
 
             print(f"[PSD_LOAD] source loaded width={source_w} height={source_h} source={render_source}")
 
+            # artboard 모드일 때 smart-fit 강제(기존 동작 유지); 사용자가 다른 모드 선택해도 artboard는 smart-fit
             eff_mode = resize_mode if actual_render_mode != "artboard" else "smart-fit"
+            _forced_sf = (eff_mode != resize_mode)
             resized, enhance_meta = _apply_resize(
                 ab_img, w, h, eff_mode,
                 smart_fit_strength or "balanced",
@@ -1893,6 +1940,16 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 if _pi is not None:
                     resized = _pi
                     enhance_meta["resizeStrategy"] = "stage19-background-pipeline"
+                    enhance_meta["blurFillUsed"] = False
+
+            _psd_ab_eff_mode = enhance_meta.get("resizeStrategy") or eff_mode
+            _psd_ab_blur = enhance_meta.get("blurFillUsed", eff_mode == "smart-fit")
+            print(
+                f"[RENDER_PROVENANCE] spec={name} size={w}x{h}"
+                f" sourceType=psd psdMode=artboard-first requestedMode={resize_mode}"
+                f" effectiveMode={_psd_ab_eff_mode} blurFill={_psd_ab_blur}"
+                f" forcedSmartFit={_forced_sf}"
+            )
 
             if output_format in ("jpg", "jpeg"):
                 resized = resized.convert("RGB")
@@ -1979,6 +2036,17 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
                 "externalInpaintAttempted": _pipeline_meta["externalInpaintAttempted"],
                 "outpaintAttempted": _pipeline_meta["outpaintAttempted"],
                 "shadowApplied": _pipeline_meta["shadowApplied"],
+                # Stage 20.3: 렌더 프로브넌스
+                "renderProvenance": {
+                    "requestedResizeMode": resize_mode,
+                    "effectiveResizeMode": _psd_ab_eff_mode,
+                    "blurFillUsed": _psd_ab_blur,
+                    "forcedSmartFit": _forced_sf,
+                    "sourceType": "psd",
+                    "psdMode": "artboard-first",
+                    "backgroundPipelineUsed": _pipeline_meta["executed"] and not _pipeline_meta["compareOnly"],
+                    "sourceFaithfulRepairUsed": False,
+                },
             })
         return results, missing_ratio_types
 
@@ -2005,6 +2073,15 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             if _pi is not None:
                 resized = _pi
                 enhance_meta["resizeStrategy"] = "stage19-background-pipeline"
+                enhance_meta["blurFillUsed"] = False
+
+        _eff_mode = enhance_meta.get("resizeStrategy") or resize_mode
+        _blur_used = enhance_meta.get("blurFillUsed", resize_mode == "smart-fit")
+        print(
+            f"[RENDER_PROVENANCE] spec={name} size={w}x{h}"
+            f" sourceType={source_type} requestedMode={resize_mode}"
+            f" effectiveMode={_eff_mode} blurFill={_blur_used}"
+        )
 
         if output_format in ("jpg", "jpeg"):
             resized = resized.convert("RGB")
@@ -2081,6 +2158,17 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
             "externalInpaintAttempted": _pipeline_meta["externalInpaintAttempted"],
             "outpaintAttempted": _pipeline_meta["outpaintAttempted"],
             "shadowApplied": _pipeline_meta["shadowApplied"],
+            # Stage 20.3: 렌더 프로브넌스 (요청 모드 vs 실제 모드 추적)
+            "renderProvenance": {
+                "requestedResizeMode": resize_mode,
+                "effectiveResizeMode": _eff_mode,
+                "blurFillUsed": _blur_used,
+                "forcedSmartFit": False,
+                "sourceType": source_type,
+                "psdMode": None,
+                "backgroundPipelineUsed": _pipeline_meta["executed"] and not _pipeline_meta["compareOnly"],
+                "sourceFaithfulRepairUsed": False,
+            },
         })
 
     return results, []

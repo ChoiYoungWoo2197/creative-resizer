@@ -120,5 +120,10 @@ public class WorkerResponse {
         private Boolean headlineScaled;
         private Boolean headlineOverflowFixed;
         private Boolean blurFallbackUsed;
+
+        // Stage 20.3: 렌더 프로브넌스 (요청 모드 vs 실제 적용 모드 추적)
+        // requestedResizeMode / effectiveResizeMode / blurFillUsed / forcedSmartFit
+        // sourceType / psdMode / backgroundPipelineUsed / sourceFaithfulRepairUsed
+        private java.util.Map<String, Object> renderProvenance;
     }
 }

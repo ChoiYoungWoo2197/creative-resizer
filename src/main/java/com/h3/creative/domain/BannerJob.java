@@ -159,5 +159,8 @@ public class BannerJob {
         private String selectedCandidate;       // safe / balanced / fill
         private String selectedCandidateFilePath;
         private Boolean aiCompareApplied;
+
+        // Stage 20.3: 렌더 프로브넌스 (요청 모드 vs 실제 적용 모드 추적)
+        private java.util.Map<String, Object> renderProvenance;
     }
 }

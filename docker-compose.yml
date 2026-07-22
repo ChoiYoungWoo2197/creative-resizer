@@ -48,6 +48,28 @@ services:
     environment:
       - OUTPUT_DIR=/app/storage/outputs
       - ZIP_DIR=/app/storage/zips
+      # ── Stage 19 Background Pipeline ──────────────────────────────
+      # Stage 20.3 SFR(Source-Faithful Repair)을 활성화하려면 아래 플래그를 true로 설정하고
+      # BACKGROUND_AI_API_KEY 환경변수를 .env 파일에 추가해야 합니다.
+      # 현재 기본값: 모두 false → smart-fit resize 그대로 사용됨 (Stage 20.3 비활성)
+      - BACKGROUND_PIPELINE_ENABLED=false
+      - BACKGROUND_PIPELINE_COMPARE_ONLY=true
+      - BACKGROUND_LOCAL_INPAINT_ENABLED=true
+      - BACKGROUND_EXTERNAL_INPAINT_ENABLED=false
+      # Stage 20.2 Smart Fit 정책 (항상 false — 변경 금지)
+      - BACKGROUND_SMART_FIT_ALLOWED=false
+      - BACKGROUND_BLUR_FILL_ALLOWED=false
+      - BACKGROUND_MIRROR_FILL_ALLOWED=false
+      - BACKGROUND_STRETCH_FILL_ALLOWED=false
+      # Stage 20.3 Source-Faithful Repair (OpenAI gpt-image-1)
+      # 활성화 조건: BACKGROUND_PIPELINE_ENABLED=true + BACKGROUND_EXTERNAL_INPAINT_ENABLED=true
+      #              + BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED=true
+      #              + BACKGROUND_AI_API_KEY 설정 (docker-compose.override.yml 또는 .env)
+      - BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED=false
+      - BACKGROUND_GENERATION_MODE=
+      - BACKGROUND_AI_MAX_ATTEMPTS=3
+      # Typography Pipeline (Stage 20.1)
+      - TYPOGRAPHY_PIPELINE_ENABLED=false
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped
