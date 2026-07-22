@@ -1,12 +1,19 @@
 """Stage 20.3 AI-Only Rendering 단위 테스트.
 
 검증 항목:
+  T0: normalize_provider_result() 계약 테스트 (핵심 회귀 방지)
+      - (Image, "openai") tuple → 정상 unpack
+      - plain Image → ("unknown") 처리
+      - None → (None, "none")
+      - 잘못된 3개 tuple → TypeError
+      - dict 반환 → TypeError
   T1: resize_mode='ai-auto' → _generate_ai_only() 라우팅
   T2: AI_ONLY_RENDERING=true env var → _generate_ai_only() 라우팅
   T3: Fail-closed — provider None → RuntimeError
   T4: renderProvenance 필드 정확성 (renderPolicy / effectiveRenderer / etc.)
   T5: 결과 이미지 크기가 spec과 일치
   T6: 복수 spec 처리 (7 입력 유형 × 3 규격)
+  T7: TupleReturningProvider (ProviderFallbackChain 동일 계약) — 실제 운영 경로 검증
 
 실행:
   cd worker
@@ -22,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PIL import Image
 from resizer import _generate_ai_only
+from background.external_provider import normalize_provider_result
 
 # ─── 공통 규격 (3종) ───────────────────────────────────────────────────────────
 
@@ -43,6 +51,53 @@ def check(label: str, condition: bool):
     else:
         PASS += 1
     print(f"  [{status}] {label}")
+
+
+# ─── normalize_provider_result 계약 테스트 (T0) ──────────────────────────────
+
+print("\n=== [T0] normalize_provider_result() 계약 테스트 ===")
+_dummy_img = Image.new("RGB", (10, 10), (100, 100, 100))
+
+# Case 1: plain Image → (image, "unknown")
+img, name = normalize_provider_result(_dummy_img)
+check("plain Image → image is Image", isinstance(img, Image.Image))
+check("plain Image → provider_name == 'unknown'", name == "unknown")
+
+# Case 2: (Image, "openai") → correct unpack
+img2, name2 = normalize_provider_result((_dummy_img, "openai"))
+check("(Image, str) → image is Image", isinstance(img2, Image.Image))
+check("(Image, str) → provider_name == 'openai'", name2 == "openai")
+
+# Case 3: None → (None, "none")
+img3, name3 = normalize_provider_result(None)
+check("None → image is None", img3 is None)
+check("None → provider_name == 'none'", name3 == "none")
+
+# Case 4: (None, "none") → (None, "none")
+img4, name4 = normalize_provider_result((None, "none"))
+check("(None, 'none') → image is None", img4 is None)
+check("(None, 'none') → provider_name == 'none'", name4 == "none")
+
+# Case 5: 잘못된 3개 tuple → TypeError
+try:
+    normalize_provider_result((_dummy_img, "openai", "extra"))
+    check("3-tuple → TypeError 발생", False)
+except TypeError as e:
+    check(f"3-tuple → TypeError: {str(e)[:40]}", "INVALID_TUPLE_LENGTH" in str(e))
+
+# Case 6: dict 반환 → TypeError
+try:
+    normalize_provider_result({"image": _dummy_img})
+    check("dict → TypeError 발생", False)
+except TypeError as e:
+    check(f"dict → TypeError: {str(e)[:40]}", "INVALID_RESULT_TYPE" in str(e))
+
+# Case 7: (str, "openai") → TypeError (tuple이지만 image가 string)
+try:
+    normalize_provider_result(("not_an_image", "openai"))
+    check("(str, str) → TypeError 발생", False)
+except TypeError as e:
+    check(f"(str, str) → TypeError: {str(e)[:40]}", "INVALID_IMAGE_TYPE" in str(e))
 
 
 # ─── FakeProvider: 네트워크 없이 PIL Image 반환 ────────────────────────────────
@@ -280,6 +335,63 @@ for (label, src_w, src_h, src_type, fmt) in INPUT_TYPES:
     finally:
         shutil.rmtree(tmp_out, ignore_errors=True)
         os.unlink(tmp_src)
+
+# ─── T7: TupleReturningProvider (ProviderFallbackChain 동일 계약) ─────────────
+
+print("\n=== [T7] TupleReturningProvider (ProviderFallbackChain) production path ===")
+
+
+class TupleReturningProvider:
+    """ProviderFallbackChain과 동일한 (Image | None, str) 계약을 반환하는 가짜 provider.
+
+    실제 운영에서 ProviderFactory.create(enable_external=True)는 ProviderFallbackChain을
+    반환하며, 그 inpaint()는 (Image, provider_name) tuple을 반환한다.
+    이 provider는 해당 계약을 시뮬레이션하여 normalize_provider_result()가
+    source_faithful_repair.py에서 정상 처리되는지 검증한다.
+    """
+
+    def metadata(self):
+        return {"providerName": "fake-chain", "modelName": "fake-chain-1"}
+
+    def inpaint(self, image: Image.Image, mask: Image.Image, prompt: str, options: dict):
+        import numpy as np
+        w, h = image.size
+        arr = np.random.randint(30, 200, (h, w, 3), dtype=np.uint8)
+        result_img = Image.fromarray(arr, "RGB")
+        return (result_img, "fake-chain")  # tuple 반환 — ProviderFallbackChain 계약
+
+
+tmp_img7 = make_tmp_png(1200, 628)
+tmp_dir7 = tempfile.mkdtemp()
+
+try:
+    results, missing = _generate_ai_only(
+        psd_path=tmp_img7,
+        specs=[SPECS[0]],
+        resize_mode="ai-auto",
+        output_format="png",
+        output_dir=tmp_dir7,
+        source_type="image",
+        job_id="t7",
+        _provider_override=TupleReturningProvider(),
+    )
+    check("T7: TupleProvider → 결과 1개 반환", len(results) == 1)
+    r7 = results[0]
+    check("T7: valid == True", r7.get("valid") is True)
+    prov7 = r7.get("renderProvenance", {})
+    check("T7: renderPolicy == 'ai-only'", prov7.get("renderPolicy") == "ai-only")
+    check("T7: backgroundAiProvider == 'fake-chain'",
+          prov7.get("backgroundAiProvider") == "fake-chain")
+    check("T7: backgroundAiSucceeded == True", prov7.get("backgroundAiSucceeded") is True)
+    check("T7: failClosed == True", prov7.get("failClosed") is True)
+    check("T7: 출력 파일 존재", os.path.isfile(r7.get("filePath", "")))
+except Exception as e:
+    check(f"T7: 예외 없음 (got {type(e).__name__}: {e})", False)
+finally:
+    shutil.rmtree(tmp_dir7, ignore_errors=True)
+    if os.path.exists(tmp_img7):
+        os.unlink(tmp_img7)
+
 
 # ─── 결과 ─────────────────────────────────────────────────────────────────────
 

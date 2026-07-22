@@ -283,6 +283,46 @@ class ExternalInpaintProvider(BackgroundGenerationProvider):
         return m
 
 
+# ── provider result normalizer ────────────────────────────────────────────────
+
+def normalize_provider_result(
+    value: "Image.Image | None | tuple",
+) -> "tuple[Image.Image | None, str]":
+    """Normalize provider.inpaint() / outpaint() result to (image, provider_name).
+
+    Different providers have different return contracts:
+      - BackgroundGenerationProvider subclasses → Image | None
+      - ProviderFallbackChain → (Image | None, str)
+
+    This function is the single boundary where all provider results are unified.
+    Call it immediately after every provider.inpaint() / provider.outpaint() call.
+
+    Raises:
+      TypeError with AI_PROVIDER_INVALID_* prefix for unrecognized types.
+    """
+    if value is None:
+        return None, "none"
+
+    if isinstance(value, tuple):
+        if len(value) != 2:
+            raise TypeError(
+                f"AI_PROVIDER_INVALID_TUPLE_LENGTH:{len(value)}"
+            )
+        image, provider_name = value
+        if image is not None and not isinstance(image, Image.Image):
+            raise TypeError(
+                f"AI_PROVIDER_INVALID_IMAGE_TYPE:{type(image).__name__}"
+            )
+        return image, str(provider_name)
+
+    if not isinstance(value, Image.Image):
+        raise TypeError(
+            f"AI_PROVIDER_INVALID_RESULT_TYPE:{type(value).__name__}"
+        )
+
+    return value, "unknown"
+
+
 # ── fallback chain ────────────────────────────────────────────────────────────
 
 class ProviderFallbackChain:

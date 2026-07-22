@@ -28,6 +28,7 @@ from .smart_fit_guard import (
     build_no_smart_fit_fields,
 )
 from .mode_selector import SOURCE_FAITHFUL_REPAIR
+from .external_provider import normalize_provider_result
 
 # Pixel mutation threshold — diff > this value counts as mutated
 _MUTATION_THRESHOLD = 30
@@ -474,21 +475,25 @@ def run_source_faithful_repair(
 
         t_attempt = time.time()
         ai_raw: Image.Image | None = None
+        actual_provider_name: str = res.background_ai_provider
         try:
             # Resize source to target size for AI call
             ai_source = source_image.resize((target_w, target_h), Image.LANCZOS)
             ai_mask = gen_allowed.resize((target_w, target_h), Image.LANCZOS) if gen_allowed else None
-            ai_raw = provider.inpaint(
+            raw_result = provider.inpaint(
                 image=ai_source,
                 mask=ai_mask or Image.new("L", (target_w, target_h), 255),
                 prompt=prompt,
                 options={"request_id": request_id, "attempt": attempt_idx + 1},
             )
+            # Normalize: ProviderFallbackChain returns (Image, provider_name),
+            # single providers return Image | None. Unified via normalize_provider_result().
+            ai_raw, actual_provider_name = normalize_provider_result(raw_result)
         except Exception as exc:
             attempt_log["rejectionReasons"].append(f"provider_error:{exc}")
 
         attempt_log["elapsedMs"] = int((time.time() - t_attempt) * 1000)
-        attempt_log["provider"] = res.background_ai_provider
+        attempt_log["provider"] = actual_provider_name or res.background_ai_provider
         attempt_log["model"] = res.background_ai_model
         res.background_ai_candidate_count += 1
 
