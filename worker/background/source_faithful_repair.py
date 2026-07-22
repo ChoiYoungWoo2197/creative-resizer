@@ -32,6 +32,8 @@ from .prompt_builder import (
     build_prompt,
     get_attempt_version,
     LATEST_VERSION,
+    prompt_contains_mother_hand_terms,
+    prompt_sha256 as _prompt_sha256_fn,
 )
 from .smart_fit_guard import (
     SMART_FIT_FORBIDDEN,
@@ -489,13 +491,56 @@ def run_source_faithful_repair(
             prompt = ""
             res.warnings.append(f"prompt_build_failed:{e}")
 
+        # Prompt provenance
+        _p_sha256 = _prompt_sha256_fn(prompt) if prompt else ""
+        _p_has_mother_hand = prompt_contains_mother_hand_terms(prompt) if prompt else False
+
+        _job_id_log = render_ctx.job_id if render_ctx else ""
+        _spec_id_log = render_ctx.spec_id if render_ctx else ""
+        print(
+            f"[SFR_PROMPT_PROVENANCE]"
+            f" job_id={_job_id_log}"
+            f" spec_id={_spec_id_log}"
+            f" attempt={attempt_idx + 1}"
+            f" promptVersion={attempt_version}"
+            f" promptSha256={_p_sha256[:16]}"
+            f" promptContainsMotherHandTerms={_p_has_mother_hand}",
+            flush=True,
+        )
+
+        if render_ctx is not None:
+            render_ctx.record_prompt_provenance(
+                prompt_sha256_hex=_p_sha256,
+                version=attempt_version,
+                contains_mother_hand=_p_has_mother_hand,
+            )
+
         attempt_log: dict = {
             "attempt": attempt_idx + 1,
             "promptVersion": attempt_version,
+            "promptSha256": _p_sha256[:16],
+            "promptContainsMotherHandTerms": _p_has_mother_hand,
             "elapsedMs": 0,
             "success": False,
             "rejectionReasons": [],
         }
+
+        # Guard: mother-hand specific prompt must never reach the provider
+        if _p_has_mother_hand:
+            _mh_msg = (
+                f"MOTHER_HAND_TERMS_IN_PROMPT:version={attempt_version}"
+                f":attempt={attempt_idx + 1}"
+            )
+            print(
+                f"[SFR_PROMPT_GUARD_FAIL] {_mh_msg}"
+                f" job_id={_job_id_log} spec_id={_spec_id_log}",
+                flush=True,
+            )
+            attempt_log["rejectionReasons"].append(_mh_msg)
+            res.warnings.append(_mh_msg)
+            res.hard_fail_reasons.append(_mh_msg)
+            res.attempts.append(attempt_log)
+            continue  # skip provider call — contaminated prompt must not reach AI
 
         if provider is None:
             attempt_log["rejectionReasons"].append("provider_not_configured")

@@ -2,10 +2,18 @@
 
 Prompts are versioned via PROMPT_VERSIONS dict. Never hard-code prompts inline
 in pipeline code — always build via build_prompt().
+
+VERSION HISTORY
+  v1 (DEPRECATED): mother-hand-product.psd golden fixture — scene-specific,
+      contains elderly/caregiving/beige/hands terms. Do NOT use in production.
+  v2 (CURRENT):    Source-neutral. Works for any PSD. No scene-specific terms.
 """
 from __future__ import annotations
 
-# ── Prompt templates ──────────────────────────────────────────────────────────
+import hashlib
+
+# ── v1 prompts (DEPRECATED — mother-hand golden fixture, do NOT use) ──────────
+# Kept in registry for backward-compat. LATEST_VERSION must never point here.
 
 _SOURCE_FAITHFUL_REPAIR_V1 = """\
 Edit the provided reference image directly.
@@ -130,7 +138,6 @@ When uncertain, preserve the source image rather than inventing
 new visual content.\
 """
 
-# Attempt 2: more conservative prompt
 _SOURCE_FAITHFUL_REPAIR_V1_CONSERVATIVE = """\
 Edit the provided reference image.
 Generate new pixels ONLY inside the provided mask regions.
@@ -141,7 +148,6 @@ Match original color, lighting, texture, and focus.
 Output exact size: {target_width} x {target_height}.\
 """
 
-# Attempt 3: minimal restoration prompt
 _SOURCE_FAITHFUL_REPAIR_V1_MINIMAL = """\
 Minimally restore the masked regions using only adjacent pixel information.
 Match exact surrounding texture, color, and lighting.
@@ -149,42 +155,175 @@ Do not add any new objects, text, hands, logos, or products.
 No scene redesign. Output: {target_width} x {target_height}.\
 """
 
+# ── v2 prompts (CURRENT — source-neutral, safe for any PSD) ──────────────────
+
+_SOURCE_FAITHFUL_REPAIR_V2 = """\
+Edit the provided reference image directly.
+
+This is a source-faithful background extension and repair task.
+Do not redesign, restyle, or recreate the scene.
+
+PRIMARY GOAL
+
+Extend the canvas and repair masked regions while preserving
+the current source image's visual environment as faithfully as possible.
+
+PIXEL GENERATION RULE
+
+Generate new pixels ONLY:
+1. Inside the provided mask regions (previously covered by removed elements).
+2. In additional canvas areas required to reach the target dimensions.
+
+Preserve every pixel outside these regions exactly as provided.
+
+PRESERVE EXACTLY
+
+- All pixels outside the generation mask.
+- The current scene, visual setting, and subject matter.
+- The original camera angle, viewpoint, and subject scale.
+- The original lighting direction, intensity, shadows, and highlights.
+- The original color palette, saturation, tonal range, and color temperature.
+- The original background texture, material, and photographic grain.
+- The original depth of field and optical focus characteristics.
+- All visible subjects already present in the source image.
+
+DO NOT GENERATE
+
+- New people, hands, fingers, arms, faces, or any body parts.
+- New products, packaging, containers, tubes, or product-like objects.
+- Text, letters, Korean characters, numbers, logos, labels, icons,
+  badges, symbols, or watermarks.
+- Decorative props, objects, or scene elements not already present
+  in or directly adjacent to the source image.
+- A different scene type, environment, or setting than what the source shows.
+- Synthetic blur fills, mirrored edges, tiled patterns, or stretched fragments.
+- Any element that was not part of the original source image's context.
+
+RECONSTRUCTION RULE
+
+Where generation mask covers previously removed elements:
+- Continue the surrounding visual environment seamlessly.
+- Match adjacent color, texture, lighting, focus level, grain, and perspective.
+- Do not change the scene type or introduce new visual subjects.
+- Do not leave seams, flat fill patches, or visible repair marks.
+
+CANVAS EXTENSION
+
+- Output exact {target_width} x {target_height} pixels.
+- If extending beyond the original source boundary, continue only the
+  existing background environment visible in the source image.
+- Maintain current subject position, scale, and framing.
+- Do not crop, reframe, or reposition subjects.
+
+OUTPUT REQUIREMENTS
+
+- Exact dimensions: {target_width} x {target_height}.
+- Seamless, photorealistic, and visually consistent with the source.
+- Only the masked generation and extension regions are modified.
+- Suitable as a clean base plate for later compositing of product,
+  text, logo, and CTA elements.
+
+When uncertain, preserve the source image rather than generating
+new visual content.\
+"""
+
+_SOURCE_FAITHFUL_REPAIR_V2_CONSERVATIVE = """\
+Edit the provided reference image.
+Generate new pixels ONLY inside the provided mask regions.
+Do not repaint any unmasked area.
+Do not generate new people, hands, products, text, or logos.
+Inside the mask: restore using nearest surrounding pixels.
+Match original color, lighting, texture, depth of field, and focus.
+Do not add any element not present in the adjacent unmasked area.
+Output exact size: {target_width} x {target_height}.\
+"""
+
+_SOURCE_FAITHFUL_REPAIR_V2_MINIMAL = """\
+Minimally restore the masked regions using only adjacent pixel information.
+Match exact surrounding texture, color, and lighting.
+Do not add any new objects, text, hands, products, logos, or people.
+No scene redesign. Output: {target_width} x {target_height}.\
+"""
+
 # ── Prompt registry ───────────────────────────────────────────────────────────
 
 PROMPT_VERSIONS: dict[str, str] = {
+    # v2 (CURRENT — source-neutral)
+    "source-faithful-repair-v2": _SOURCE_FAITHFUL_REPAIR_V2,
+    "source-faithful-repair-v2-conservative": _SOURCE_FAITHFUL_REPAIR_V2_CONSERVATIVE,
+    "source-faithful-repair-v2-minimal": _SOURCE_FAITHFUL_REPAIR_V2_MINIMAL,
+    # v1 (DEPRECATED — mother-hand fixture, production use forbidden)
     "source-faithful-repair-v1": _SOURCE_FAITHFUL_REPAIR_V1,
     "source-faithful-repair-v1-conservative": _SOURCE_FAITHFUL_REPAIR_V1_CONSERVATIVE,
     "source-faithful-repair-v1-minimal": _SOURCE_FAITHFUL_REPAIR_V1_MINIMAL,
 }
 
-LATEST_VERSION = "source-faithful-repair-v1"
-
-# Per-attempt version progression
-ATTEMPT_VERSION_SEQUENCE = [
+DEPRECATED_VERSIONS = frozenset({
     "source-faithful-repair-v1",
     "source-faithful-repair-v1-conservative",
     "source-faithful-repair-v1-minimal",
+})
+
+LATEST_VERSION = "source-faithful-repair-v2"
+
+# Per-attempt version progression (v2 sequence)
+ATTEMPT_VERSION_SEQUENCE = [
+    "source-faithful-repair-v2",
+    "source-faithful-repair-v2-conservative",
+    "source-faithful-repair-v2-minimal",
 ]
 
-# ── Spec-specific augmentations ───────────────────────────────────────────────
+# ── Spec-specific augmentations (source-neutral — no scene-specific terms) ───
+# IMPORTANT: Augmentations must NOT reference any scene-specific elements
+# (hands, elderly, beige, domestic, caregiving, sleeves, etc.)
 
 _SPEC_AUGMENTATIONS: dict[tuple[int, int], str] = {
     (1250, 560): (
-        "Extend only the surrounding domestic background horizontally "
-        "where required. Keep the hands at their original scale and position."
+        "Extend only the existing background environment horizontally "
+        "to reach the target width. Maintain the current subjects at their "
+        "original scale and position."
     ),
     (1200, 300): (
-        "Create a very wide source-faithful extension using only the "
-        "existing beige domestic environment as reference. "
-        "Do not invent additional objects or redesign the room."
+        "Create a very wide source-faithful horizontal extension "
+        "using only the existing visual environment as reference. "
+        "Do not introduce new objects or change the scene."
     ),
     (300, 1200): (
-        "Extend only the surrounding background vertically. "
-        "Maintain the original hands, sleeves, scale, lighting, and "
-        "photographic perspective without creating a new scene."
+        "Extend only the existing background environment vertically. "
+        "Maintain the original subjects, lighting, and photographic "
+        "perspective without altering the scene."
     ),
 }
 
+# ── Mother-hand term detection ────────────────────────────────────────────────
+# These terms indicate the prompt is scene-specific to mother-hand-product.psd.
+# A production prompt must NEVER contain these terms for a non-matching source.
+
+_MOTHER_HAND_TERMS = frozenset({
+    "caregiving",
+    "caregiv",
+    "elderly hand",
+    "warm beige",
+    "domestic background",
+    "cream sleeve",
+    "age spot",
+    "caregiving scene",
+    "elderly skin",
+    "caregiving photograph",
+})
+
+
+def prompt_contains_mother_hand_terms(prompt_str: str) -> bool:
+    """Return True if prompt_str contains mother-hand-product.psd specific terms.
+
+    A True result means the prompt was written for a specific source scene
+    and must not be used with a different source PSD.
+    """
+    low = prompt_str.lower()
+    return any(term in low for term in _MOTHER_HAND_TERMS)
+
+
+# ── Prompt builder ────────────────────────────────────────────────────────────
 
 def build_prompt(
     prompt_version: str,
@@ -195,7 +334,18 @@ def build_prompt(
     """Build a versioned prompt string with target dimensions substituted.
 
     Raises ValueError for unknown prompt_version.
+    Logs a deprecation warning for v1 versions.
     """
+    if prompt_version in DEPRECATED_VERSIONS:
+        import sys
+        print(
+            f"[PROMPT_BUILDER_WARN] DEPRECATED prompt version {prompt_version!r} — "
+            f"use {LATEST_VERSION!r} instead. "
+            f"v1 prompts contain scene-specific mother-hand terms.",
+            file=sys.stderr,
+            flush=True,
+        )
+
     template = PROMPT_VERSIONS.get(prompt_version)
     if template is None:
         raise ValueError(f"Unknown prompt version: {prompt_version!r}. "
@@ -212,3 +362,8 @@ def get_attempt_version(attempt_index: int) -> str:
     """Return prompt version for attempt_index (0-based). Clamps to last version."""
     idx = min(attempt_index, len(ATTEMPT_VERSION_SEQUENCE) - 1)
     return ATTEMPT_VERSION_SEQUENCE[idx]
+
+
+def prompt_sha256(prompt_str: str) -> str:
+    """SHA-256 of prompt bytes (first 16 chars of hex for logging)."""
+    return hashlib.sha256(prompt_str.encode("utf-8")).hexdigest()

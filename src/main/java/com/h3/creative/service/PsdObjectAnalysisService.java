@@ -156,9 +156,27 @@ public class PsdObjectAnalysisService {
 
         Map<String, Object> msgResp = (Map<String, Object>) choices.get(0).get("message");
         String content = (String) msgResp.get("content");
-        log.info("OpenAI 객체 맵 응답 raw: {}", content);
+        log.info("OpenAI 객체 맵 응답 raw length: {}", content != null ? content.length() : "null");
 
-        Map<String, Object> result = objectMapper.readValue(content, Map.class);
+        // Guard: empty or null response — return empty list instead of 500 MismatchedInputException
+        if (content == null || content.trim().isEmpty()) {
+            log.warn("OBJECT_ANALYSIS_EMPTY_RESPONSE: OpenAI returned null or empty content");
+            return List.of();
+        }
+
+        // Strip code fences if present (e.g. ```json ... ```)
+        String jsonContent = content.trim();
+        if (jsonContent.startsWith("```")) {
+            jsonContent = jsonContent.replaceAll("(?s)^```[a-zA-Z]*\\s*", "").replaceAll("(?s)```\\s*$", "").trim();
+        }
+
+        if (!jsonContent.startsWith("{") && !jsonContent.startsWith("[")) {
+            log.warn("OBJECT_ANALYSIS_INVALID_JSON_START: content does not start with {{ or [ — content_prefix={}",
+                    jsonContent.substring(0, Math.min(50, jsonContent.length())));
+            return List.of();
+        }
+
+        Map<String, Object> result = objectMapper.readValue(jsonContent, Map.class);
         Object objects = result.get("objects");
         if (!(objects instanceof List)) return List.of();
         return (List<Map<String, Object>>) objects;

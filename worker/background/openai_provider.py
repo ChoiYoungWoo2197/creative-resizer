@@ -168,6 +168,7 @@ class OpenAIInpaintProvider:
             return None
         opts = options or {}
         timeout = opts.get("timeout_seconds", self._timeout)
+        request_id = opts.get("request_id", "")
         try:
             return self._call_api(
                 image=image,
@@ -176,6 +177,7 @@ class OpenAIInpaintProvider:
                 target_w=image.width,
                 target_h=image.height,
                 timeout=timeout,
+                request_id=request_id,
             )
         except Exception as exc:
             print(f"[OpenAI] inpaint error: {type(exc).__name__}: {str(exc)[:120]}")
@@ -281,10 +283,29 @@ class OpenAIInpaintProvider:
         target_w: int,
         target_h: int,
         timeout: int,
+        request_id: str = "",
     ) -> Image.Image | None:
         """Execute multipart POST to OpenAI /v1/images/edits."""
         image_bytes = _to_png_bytes_rgba(image)
         mask_bytes = _gen_allowed_to_openai_mask_bytes(mask)
+
+        # P0: HTTP request payload provenance — log before sending (no key/prompt content)
+        http_img_sha256 = hashlib.sha256(image_bytes).hexdigest()
+        http_mask_sha256 = hashlib.sha256(mask_bytes).hexdigest()
+        prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        print(
+            f"[HTTP_PROVIDER_REQUEST]"
+            f" provider={self.PROVIDER_NAME}"
+            f" model={self._model}"
+            f" requestId={request_id}"
+            f" httpRequestImageSha256={http_img_sha256[:16]}"
+            f" httpMaskSha256={http_mask_sha256[:16]}"
+            f" promptSha256={prompt_sha256[:16]}"
+            f" imageSizeBytes={len(image_bytes)}"
+            f" maskSizeBytes={len(mask_bytes)}"
+            f" targetSize={target_w}x{target_h}",
+            flush=True,
+        )
 
         fields = {
             "model": self._model,
@@ -309,12 +330,24 @@ class OpenAIInpaintProvider:
             method="POST",
         )
 
+        t0 = time.time()
         with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status_code = resp.status
             response_data = json.loads(resp.read().decode("utf-8"))
+        elapsed_ms = int((time.time() - t0) * 1000)
 
         # Parse response — gpt-image-1 returns b64_json, dall-e-2 may return url
         data_items = response_data.get("data", [])
         if not data_items:
+            print(
+                f"[HTTP_PROVIDER_RESPONSE]"
+                f" provider={self.PROVIDER_NAME}"
+                f" requestId={request_id}"
+                f" statusCode={status_code}"
+                f" elapsedMs={elapsed_ms}"
+                f" dataItems=0",
+                flush=True,
+            )
             return None
 
         item = data_items[0]
@@ -329,6 +362,20 @@ class OpenAIInpaintProvider:
                 img_bytes = r.read()
 
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+        # P0: HTTP response provenance
+        resp_sha256 = hashlib.sha256(img_bytes).hexdigest()
+        print(
+            f"[HTTP_PROVIDER_RESPONSE]"
+            f" provider={self.PROVIDER_NAME}"
+            f" requestId={request_id}"
+            f" statusCode={status_code}"
+            f" elapsedMs={elapsed_ms}"
+            f" httpResponseImageSha256={resp_sha256[:16]}"
+            f" responseSizeBytes={len(img_bytes)}"
+            f" responseImageSize={img.size}",
+            flush=True,
+        )
 
         # Resize to target if API returned a different size
         if img.size != (target_w, target_h):

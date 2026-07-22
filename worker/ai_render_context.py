@@ -70,6 +70,11 @@ class AiRenderContext:
     ai_background_sha256: str = ""
     final_artifact_sha256: str = ""
 
+    # Prompt provenance (filled in SFR attempt loop)
+    prompt_sha256: str = ""
+    prompt_version: str = ""
+    prompt_contains_mother_hand_terms: bool = False
+
     # Attempt logs (list of per-attempt dicts, appended by SFR)
     attempt_provenance: list = field(default_factory=list)
 
@@ -138,6 +143,17 @@ class AiRenderContext:
         self.final_artifact_sha256 = h
         return h
 
+    def record_prompt_provenance(
+        self,
+        prompt_sha256_hex: str,
+        version: str,
+        contains_mother_hand: bool,
+    ) -> None:
+        """Store prompt provenance fields from the SFR attempt loop."""
+        self.prompt_sha256 = prompt_sha256_hex
+        self.prompt_version = version
+        self.prompt_contains_mother_hand_terms = contains_mother_hand
+
     # ── Debug artifacts ───────────────────────────────────────────────────────
 
     def save_debug_artifact(
@@ -175,4 +191,7 @@ class AiRenderContext:
             "aiBackgroundSha256": self.ai_background_sha256[:16] if self.ai_background_sha256 else "",
             "finalArtifactSha256": self.final_artifact_sha256[:16] if self.final_artifact_sha256 else "",
             "workDir": self.work_dir,
+            "promptSha256": self.prompt_sha256[:16] if self.prompt_sha256 else "",
+            "promptVersion": self.prompt_version,
+            "promptContainsMotherHandTerms": self.prompt_contains_mother_hand_terms,
         }

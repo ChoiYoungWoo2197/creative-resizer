@@ -789,6 +789,125 @@ check("T43: assert_source_integrity does NOT raise on correct source", no_error)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# T44-T52: Prompt provenance + mother-hand guard
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n--- T44-T52: Prompt provenance + mother-hand guard ---")
+
+from background.prompt_builder import (
+    prompt_contains_mother_hand_terms,
+    prompt_sha256 as _prompt_sha256,
+    build_prompt,
+    LATEST_VERSION,
+    DEPRECATED_VERSIONS,
+)
+
+# T44: caregiving term is detected
+check("T44: 'caregiving' detected as mother-hand term",
+      prompt_contains_mother_hand_terms("preserving the original caregiving photograph"))
+
+# T45: 'elderly hand' detected
+check("T45: 'elderly hand' detected as mother-hand term",
+      prompt_contains_mother_hand_terms("the elderly hand and the supporting adult hands"))
+
+# T46: LATEST_VERSION (v2) prompt is mother-hand free
+_v2_prompt_1200_628 = build_prompt(LATEST_VERSION, 1200, 628)
+check("T46: LATEST_VERSION prompt (1200x628) has no mother-hand terms",
+      not prompt_contains_mother_hand_terms(_v2_prompt_1200_628),
+      f"LATEST_VERSION={LATEST_VERSION!r}")
+
+# T47: 1250x560 spec augmentation (was 'hands at their original scale') is now neutral
+_v2_prompt_1250_560 = build_prompt(LATEST_VERSION, 1250, 560)
+check("T47: 1250x560 v2 augmentation is mother-hand free",
+      not prompt_contains_mother_hand_terms(_v2_prompt_1250_560))
+check("T47b: 1250x560 v2 does NOT contain old 'hands at their original scale' phrase",
+      "hands at their original scale" not in _v2_prompt_1250_560.lower())
+
+# T48: 1200x300 spec augmentation (was 'beige domestic environment') is now neutral
+_v2_prompt_1200_300 = build_prompt(LATEST_VERSION, 1200, 300)
+check("T48: 1200x300 v2 does NOT contain 'domestic background'",
+      "domestic background" not in _v2_prompt_1200_300.lower())
+check("T48b: 1200x300 v2 does NOT contain 'beige'",
+      "beige" not in _v2_prompt_1200_300.lower())
+
+# T49: v1 IS detected as deprecated and contains mother-hand terms
+_v1_prompt = build_prompt("source-faithful-repair-v1", 1200, 628)
+check("T49: v1 prompt contains mother-hand terms (as expected — it is deprecated)",
+      prompt_contains_mother_hand_terms(_v1_prompt))
+check("T49b: v1 is in DEPRECATED_VERSIONS",
+      "source-faithful-repair-v1" in DEPRECATED_VERSIONS)
+
+# T50: SFR hard-fails when v1 prompt is used (mother-hand guard fires, skips provider)
+_img_t50 = _solid_img((100, 150, 200), (80, 80))
+_sfr_t50 = run_source_faithful_repair(
+    source_image=_img_t50, classified_layers=[],
+    target_w=120, target_h=80,
+    provider=FakeBackgroundProvider(),
+    prompt_version="source-faithful-repair-v1",
+    max_attempts=1,
+)
+_t50_guard_fired = any(
+    "MOTHER_HAND_TERMS_IN_PROMPT" in r
+    for a in _sfr_t50.attempts
+    for r in a.get("rejectionReasons", [])
+)
+check("T50: v1 prompt triggers mother-hand guard (rejectionReasons contains MOTHER_HAND_TERMS)",
+      _t50_guard_fired,
+      f"attempts={_sfr_t50.attempts}")
+check("T50b: SFR with v1 does NOT succeed (provider call skipped)",
+      not _sfr_t50.success,
+      f"sfr_t50.success={_sfr_t50.success}")
+
+# T51: attempt_log contains promptSha256 for v2 run
+_img_t51 = _solid_img((80, 160, 40), (80, 80))
+_sfr_t51 = run_source_faithful_repair(
+    source_image=_img_t51, classified_layers=[],
+    target_w=120, target_h=80,
+    provider=FakeBackgroundProvider(),
+    prompt_version="source-faithful-repair-v2",
+    max_attempts=1,
+)
+check("T51: v2 attempt_log contains promptSha256",
+      bool(_sfr_t51.attempts) and bool(_sfr_t51.attempts[0].get("promptSha256")),
+      f"attempts={_sfr_t51.attempts}")
+
+# T52: v2 attempt_log promptContainsMotherHandTerms is False
+check("T52: v2 attempt promptContainsMotherHandTerms == False",
+      bool(_sfr_t51.attempts) and _sfr_t51.attempts[0].get("promptContainsMotherHandTerms") == False,
+      f"attempts={_sfr_t51.attempts}")
+
+# T53: promptSha256 differs between different target sizes (since prompt includes dimensions)
+_sha_1200_628 = _prompt_sha256(build_prompt(LATEST_VERSION, 1200, 628))
+_sha_1250_560 = _prompt_sha256(build_prompt(LATEST_VERSION, 1250, 560))
+check("T53: same prompt version + different size -> different promptSha256",
+      _sha_1200_628 != _sha_1250_560,
+      f"sha_1200_628={_sha_1200_628[:8]} sha_1250_560={_sha_1250_560[:8]}")
+
+# T54: render_ctx.prompt_sha256 is populated after v2 SFR run
+_img_t54 = _solid_img((200, 80, 80), (80, 80))
+_ctx_t54 = AiRenderContext(
+    job_id="t54",
+    spec_id="120x80",
+    composite_sha256=_sha(_img_t54),
+    work_dir=tempfile.mkdtemp(),
+)
+_sfr_t54 = run_source_faithful_repair(
+    source_image=_img_t54, classified_layers=[],
+    target_w=120, target_h=80,
+    provider=FakeBackgroundProvider(),
+    prompt_version="source-faithful-repair-v2",
+    max_attempts=1,
+    render_ctx=_ctx_t54,
+)
+check("T54: render_ctx.prompt_sha256 is set after SFR",
+      bool(_ctx_t54.prompt_sha256),
+      f"prompt_sha256={_ctx_t54.prompt_sha256!r}")
+check("T54b: render_ctx.prompt_contains_mother_hand_terms is False for v2",
+      _ctx_t54.prompt_contains_mother_hand_terms == False,
+      f"got={_ctx_t54.prompt_contains_mother_hand_terms}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Result
 # ══════════════════════════════════════════════════════════════════════════════
 
