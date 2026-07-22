@@ -1,7 +1,10 @@
 import base64
 import io
 import os
+import sys
 import tempfile
+import threading
+import time
 import zipfile
 from flask import Flask, request, jsonify
 import psd_tools
@@ -9,12 +12,17 @@ import resizer
 import psd_analyzer
 import layer_object_matcher
 
-print(f"[PSD] psd-tools version: {getattr(psd_tools, '__version__', 'unknown')}")
+print(f"[PSD] psd-tools version: {getattr(psd_tools, '__version__', 'unknown')}", flush=True)
 
 app = Flask(__name__)
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/app/storage/outputs")
 ZIP_DIR = os.environ.get("ZIP_DIR", "/app/storage/zips")
+
+# ── 중복 실행 방지: jobId 단위 idempotency ───────────────────────────────────
+# Java API가 timeout으로 실패 처리 후 재요청해도 동일 jobId는 한 번만 처리한다.
+_active_jobs: set = set()
+_active_jobs_lock = threading.Lock()
 
 
 @app.route("/health", methods=["GET"])
@@ -54,7 +62,19 @@ def generate():
     if not psd_path or not os.path.exists(psd_path):
         return jsonify({"error": "psd_path not found"}), 400
 
+    # ── 중복 실행 방지 ──────────────────────────────────────────────────────────
+    # Java API timeout 이후 재요청 시 동일 jobId가 동시에 두 번 처리되는 것을 차단.
+    # 409: 이미 처리 중. 클라이언트는 Job 상태를 polling해서 완료를 기다려야 한다.
+    if job_id:
+        with _active_jobs_lock:
+            if job_id in _active_jobs:
+                print(f"[GENERATE_DUPLICATE] jobId={job_id} already processing — returning 409", flush=True)
+                return jsonify({"error": f"jobId={job_id} is already being processed"}), 409
+            _active_jobs.add(job_id)
+
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
+    t_start = time.time()
+    print(f"[AI_ONLY_START] jobId={job_id} specCount={len(specs)} resizeMode={resize_mode}", flush=True)
 
     try:
         result_items, missing_ratio_types = resizer.generate(
@@ -65,6 +85,13 @@ def generate():
         )
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)
+        elapsed_ms = int((time.time() - t_start) * 1000)
+        success_count = sum(1 for r in result_items if r.get("valid"))
+        print(
+            f"[AI_ONLY_END] jobId={job_id} elapsedMs={elapsed_ms}"
+            f" successCount={success_count} totalCount={len(result_items)}",
+            flush=True,
+        )
         return jsonify({
             "jobId": job_id,
             "zipPath": zip_path,
@@ -73,7 +100,13 @@ def generate():
             "missingRatioTypes": missing_ratio_types,
         })
     except Exception as e:
+        elapsed_ms = int((time.time() - t_start) * 1000)
+        print(f"[AI_ONLY_ERROR] jobId={job_id} elapsedMs={elapsed_ms} error={e}", flush=True)
         return jsonify({"error": str(e)}), 500
+    finally:
+        if job_id:
+            with _active_jobs_lock:
+                _active_jobs.discard(job_id)
 
 
 @app.route("/compare", methods=["POST"])

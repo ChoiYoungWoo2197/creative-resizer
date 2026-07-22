@@ -1113,7 +1113,14 @@ def _generate_ai_only(
     from background.source_faithful_repair import run_source_faithful_repair
     from background.external_provider import ProviderFactory
 
-    print(f"[{job_id or 'job'}][AI_ONLY] source_type={source_type} specs={len(specs)}")
+    jid = job_id or "job"
+    import time as _time
+    t_all = _time.time()
+    print(
+        f"[AI_ONLY_START] jobId={jid} specCount={len(specs)}"
+        f" source_type={source_type} resizeMode={resize_mode}",
+        flush=True,
+    )
 
     provider = _provider_override
     if provider is None:
@@ -1127,13 +1134,21 @@ def _generate_ai_only(
     img, source_meta = load_source_image(psd_path)
     max_attempts = int(os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "3"))
     results = []
+    actual_provider_request_count = 0
 
-    for spec in specs:
+    for spec_idx, spec in enumerate(specs):
         media = spec["media"]
         w = spec["width"]
         h = spec["height"]
         slug = spec.get("slug", "")
         name = spec.get("name", "")
+
+        t_spec = _time.time()
+        print(
+            f"[AI_SPEC_START] jobId={jid} specIndex={spec_idx + 1}/{len(specs)}"
+            f" spec={name} size={w}x{h} maxAttempts={max_attempts}",
+            flush=True,
+        )
 
         sfr_dir = os.path.join(output_dir, "stage20_3", f"{w}x{h}")
         sfr = run_source_faithful_repair(
@@ -1143,15 +1158,19 @@ def _generate_ai_only(
             target_h=h,
             provider=provider,
             max_attempts=max_attempts,
-            request_id=f"{job_id or 'job'}_{w}x{h}",
+            request_id=f"{jid}_{w}x{h}",
             output_dir=sfr_dir,
         )
+        actual_provider_request_count += sfr.background_ai_attempt_count
 
+        spec_elapsed_ms = int((_time.time() - t_spec) * 1000)
         print(
-            f"[{job_id or 'job'}][AI_ONLY] spec={name} {w}x{h}"
+            f"[AI_SPEC_END] jobId={jid} spec={name} size={w}x{h}"
             f" verdict={sfr.verdict} success={sfr.success}"
             f" provider={sfr.background_ai_provider} attempts={sfr.background_ai_attempt_count}"
             f" faithfulness={sfr.source_faithfulness_score:.1f}"
+            f" elapsedMs={spec_elapsed_ms}",
+            flush=True,
         )
 
         if not sfr.success or sfr.repair_image is None:
@@ -1261,6 +1280,13 @@ def _generate_ai_only(
             },
         })
 
+    total_elapsed_ms = int((_time.time() - t_all) * 1000)
+    print(
+        f"[AI_ONLY_END] jobId={jid} elapsedMs={total_elapsed_ms}"
+        f" successCount={len(results)} specCount={len(specs)}"
+        f" actualProviderRequestCount={actual_provider_request_count}",
+        flush=True,
+    )
     return results, []
 
 

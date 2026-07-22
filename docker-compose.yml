@@ -36,6 +36,11 @@ services:
       - RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - RABBITMQ_VHOST=${RABBITMQ_VHOST}
+      # Worker HTTP timeout 설정
+      # /generate는 최대 9회 AI 호출(3 spec × 3 attempt) → 900s 필요
+      - WORKER_CONNECT_TIMEOUT_SECONDS=20
+      - WORKER_ANALYSIS_READ_TIMEOUT_SECONDS=120
+      - WORKER_GENERATE_READ_TIMEOUT_SECONDS=900
     volumes:
       - ./logs:/logs
       - /opt/creative-resizer/storage:/app/storage

@@ -476,6 +476,12 @@ def run_source_faithful_repair(
         t_attempt = time.time()
         ai_raw: Image.Image | None = None
         actual_provider_name: str = res.background_ai_provider
+        print(
+            f"[AI_PROVIDER_START] requestId={request_id}"
+            f" attempt={attempt_idx + 1}/{max_attempts}"
+            f" provider={actual_provider_name} target={target_w}x{target_h}",
+            flush=True,
+        )
         try:
             # Resize source to target size for AI call
             ai_source = source_image.resize((target_w, target_h), Image.LANCZOS)
@@ -492,10 +498,18 @@ def run_source_faithful_repair(
         except Exception as exc:
             attempt_log["rejectionReasons"].append(f"provider_error:{exc}")
 
-        attempt_log["elapsedMs"] = int((time.time() - t_attempt) * 1000)
+        attempt_elapsed_ms = int((time.time() - t_attempt) * 1000)
+        attempt_log["elapsedMs"] = attempt_elapsed_ms
         attempt_log["provider"] = actual_provider_name or res.background_ai_provider
         attempt_log["model"] = res.background_ai_model
         res.background_ai_candidate_count += 1
+        print(
+            f"[AI_PROVIDER_END] requestId={request_id}"
+            f" attempt={attempt_idx + 1}/{max_attempts}"
+            f" provider={actual_provider_name} elapsedMs={attempt_elapsed_ms}"
+            f" success={ai_raw is not None}",
+            flush=True,
+        )
 
         if ai_raw is None:
             attempt_log["rejectionReasons"].append("provider_returned_none")

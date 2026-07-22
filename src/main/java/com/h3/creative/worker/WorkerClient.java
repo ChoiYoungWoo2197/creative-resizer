@@ -3,8 +3,8 @@ package com.h3.creative.worker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -12,15 +12,23 @@ import org.springframework.web.client.RestTemplate;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class WorkerClient {
 
+    /** 분석용 (120s read): analyze-psd, extract-artboard, match-layers, compare */
     private final RestTemplate restTemplate;
+
+    /** /generate 전용 (900s read): AI 이미지 생성 최대 9회 외부 호출 */
+    private final RestTemplate generateRestTemplate;
 
     @Value("${creative.worker.url}")
     private String workerUrl;
 
-    // WorkerResponse 전용 ObjectMapper — raw body를 직접 파싱해 진단 로그 확보
+    @Value("${creative.worker.generate-read-timeout-seconds:900}")
+    private int generateReadTimeoutSeconds;
+
+    @Value("${creative.worker.analysis-read-timeout-seconds:120}")
+    private int analysisReadTimeoutSeconds;
+
     private static final ObjectMapper WORKER_MAPPER;
     static {
         WORKER_MAPPER = new ObjectMapper();
@@ -28,27 +36,39 @@ public class WorkerClient {
         WORKER_MAPPER.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
+    public WorkerClient(RestTemplate restTemplate,
+                        @Qualifier("generateRestTemplate") RestTemplate generateRestTemplate) {
+        this.restTemplate = restTemplate;
+        this.generateRestTemplate = generateRestTemplate;
+    }
+
     public WorkerResponse generate(WorkerRequest request) {
         String url = workerUrl + "/generate";
-        log.info("Calling worker: {} jobId={}", url, request.getJobId());
+        log.info("[AI_ONLY_CALL] jobId={} url={} readTimeoutSec={}",
+                request.getJobId(), url, generateReadTimeoutSeconds);
 
         String rawBody = null;
+        long t0 = System.currentTimeMillis();
         try {
-            // String.class로 raw body를 먼저 확보 → 역직렬화 실패 시 진단 로그 출력 가능
-            ResponseEntity<String> rawResponse = restTemplate.postForEntity(url, request, String.class);
+            ResponseEntity<String> rawResponse =
+                    generateRestTemplate.postForEntity(url, request, String.class);
             rawBody = rawResponse.getBody();
             if (rawBody == null) {
                 throw new IllegalStateException("Worker returned empty response");
             }
-            return WORKER_MAPPER.readValue(rawBody, WorkerResponse.class);
+            WorkerResponse res = WORKER_MAPPER.readValue(rawBody, WorkerResponse.class);
+            log.info("[AI_ONLY_DONE] jobId={} elapsedMs={}", request.getJobId(),
+                    System.currentTimeMillis() - t0);
+            return res;
         } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - t0;
             if (rawBody != null) {
-                // 역직렬화 실패: raw body(최대 1000자) 로그 출력 → 계약 불일치 파악
                 log.error("Worker response parse failed jobId={} rawBody(1000)={}",
                         request.getJobId(),
                         rawBody.substring(0, Math.min(1000, rawBody.length())));
             }
-            log.error("Worker call failed jobId={} error={}", request.getJobId(), e.getMessage());
+            log.error("Worker call failed jobId={} elapsedMs={} error={}",
+                    request.getJobId(), elapsed, e.getMessage());
             WorkerResponse error = new WorkerResponse();
             error.setJobId(request.getJobId());
             error.setError(e.getMessage());

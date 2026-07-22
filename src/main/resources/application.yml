@@ -28,6 +28,9 @@ creative:
     zip-dir: /app/storage/zips
   worker:
     url: http://banner-worker:5000
+    connect-timeout-seconds: ${WORKER_CONNECT_TIMEOUT_SECONDS:20}
+    analysis-read-timeout-seconds: ${WORKER_ANALYSIS_READ_TIMEOUT_SECONDS:120}
+    generate-read-timeout-seconds: ${WORKER_GENERATE_READ_TIMEOUT_SECONDS:900}
   openai:
     api-key: ${OPENAI_API_KEY:}
     analysis-model: ${OPENAI_ANALYSIS_MODEL:gpt-5-mini}
