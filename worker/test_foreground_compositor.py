@@ -309,6 +309,176 @@ check("T20: background_ai_attempt_count=1", sfr.background_ai_attempt_count == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# T21-T28: _validate_roles() contradiction validator
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n=== [T21-T28] _validate_roles contradiction validator ===")
+
+from layer_role_classifier import classify_layers, _validate_roles, _text_layer_fallback_role
+
+CANVAS = {"canvasWidth": 1000, "canvasHeight": 600}
+
+
+def _make_classified(layer_type, role, name, x=100, y=100, w=300, h=100, text_content=None):
+    """Helper: build a pre-classified layer dict for validator testing."""
+    layer = {
+        "name": name,
+        "type": layer_type,
+        "role": role,
+        "priority": "required",
+        "bbox": {"x": x, "y": y, "width": w, "height": h},
+        "depth": 0,
+        "id": f"{name}_{x}_{y}",
+        **CANVAS,
+    }
+    if text_content is not None:
+        layer["textContent"] = text_content
+    return layer
+
+
+# T21: V1 — text layer + human_subject → reclassify (not human_subject)
+t21_headline = _make_classified("type", "human_subject",
+                                "어머님 손에 금보다 필요한 건?",
+                                x=100, y=50, w=600, h=80,
+                                text_content="어머님 손에 금보다 필요한 건?")
+result21 = _validate_roles([t21_headline])
+check("T21: text+human_subject -> not human_subject", result21[0]["role"] != "human_subject")
+check("T21: text+human_subject reclassified to title (upper text)", result21[0]["role"] == "title",
+      f"got {result21[0]['role']}")
+
+# T22: V1 — text layer + logo (position-based) → title/body_text
+t22_logo_text = _make_classified("type", "logo", "사각형 5 텍스트",
+                                 x=50, y=20, w=80, h=30)
+result22 = _validate_roles([t22_logo_text])
+check("T22: text+logo -> not logo", result22[0]["role"] != "logo")
+
+# T23: V2 — long text in cta → body_text
+long_cta_text = "흑자, 검버섯, 기미 확실하게 관리하세요! 전문 솔루션으로 피부 고민 해결"
+t23 = _make_classified("type", "cta", long_cta_text,
+                       x=50, y=480, w=700, h=60,
+                       text_content=long_cta_text)
+result23 = _validate_roles([t23])
+check("T23: long text in cta -> body_text", result23[0]["role"] == "body_text",
+      f"got {result23[0]['role']}")
+
+# T23b: 실제 운영 버그 케이스 — '흑자, 검버섯, 기미 확실하게 관리하세요!'
+real_long = "흑자, 검버섯, 기미 확실하게 관리하세요!"
+t23b = _make_classified("type", "cta", real_long,
+                        x=50, y=420, w=700, h=60,
+                        text_content=real_long)
+result23b = _validate_roles([t23b])
+check("T23b: '흑자...관리하세요!' CTA -> body_text", result23b[0]["role"] == "body_text",
+      f"got {result23b[0]['role']}")
+
+# T24: V3 — shape + human_subject → decorative
+t24 = _make_classified("shape", "human_subject", "shape_person", x=200, y=100, w=200, h=300)
+result24 = _validate_roles([t24])
+check("T24: shape+human_subject -> decorative", result24[0]["role"] == "decorative",
+      f"got {result24[0]['role']}")
+
+# T25: V4 — 사각형 name → decorative (not background, not cta)
+t25 = _make_classified("shape", "logo", "사각형 5", x=400, y=10, w=60, h=30)
+result25 = _validate_roles([t25])
+check("T25: '사각형 5' -> decorative", result25[0]["role"] == "decorative",
+      f"got {result25[0]['role']}")
+
+# T25b: rectangle → decorative
+t25b = _make_classified("shape", "logo", "rect_background_blur", x=0, y=0, w=400, h=400)
+result25b = _validate_roles([t25b])
+check("T25b: 'rect_...' -> decorative", result25b[0]["role"] == "decorative",
+      f"got {result25b[0]['role']}")
+
+# T26: V5 — shape + logo + no explicit logo keyword → decorative
+t26 = _make_classified("shape", "logo", "사각형 5", x=50, y=10, w=80, h=40)
+result26 = _validate_roles([t26])
+check("T26: shape+logo no keyword -> decorative", result26[0]["role"] == "decorative",
+      f"got {result26[0]['role']}")
+
+# T26b: shape + logo + explicit logo keyword → kept as logo
+t26b = _make_classified("shape", "logo", "logo_circle", x=50, y=10, w=80, h=40)
+result26b = _validate_roles([t26b])
+check("T26b: shape+logo WITH keyword -> stays logo", result26b[0]["role"] == "logo",
+      f"got {result26b[0]['role']}")
+
+# T27: full classify_layers with mother-hand ad simulation
+print("\n--- T27: mother-hand-product PSD simulation ---")
+
+def _make_raw_layer(layer_type, name, x, y, w, h, text_content=None):
+    layer = {
+        "name": name,
+        "type": layer_type,
+        "bbox": {"x": x, "y": y, "width": w, "height": h},
+        "depth": 0,
+        "visible": True,
+        "opacity": 100,
+        "isTextLayer": layer_type == "type",
+        "isGroupComposite": False,
+        "textContent": text_content,
+        "previewPath": None,
+        "_layer_obj": None,
+        "canvasWidth": 1000,
+        "canvasHeight": 600,
+        "id": f"{name}_{x}_{y}",
+    }
+    return layer
+
+mother_hand_layers = [
+    # 배경 이미지
+    _make_raw_layer("pixel", "배경", 0, 0, 1000, 600),
+    # 인물(실제 픽셀 레이어 — 손 이미지)
+    _make_raw_layer("pixel", "손 이미지", 0, 100, 500, 500),
+    # 제품 이미지
+    _make_raw_layer("smartobject", "제품", 500, 150, 400, 350),
+    # 헤드라인 텍스트 — '손' 때문에 잘못 분류되던 버그 케이스
+    _make_raw_layer("type", "어머님 손에 금보다 필요한 건?",
+                    100, 50, 600, 80,
+                    text_content="어머님 손에 금보다 필요한 건?"),
+    # 본문 설명 텍스트
+    _make_raw_layer("type", "흑자, 검버섯, 기미 확실하게 관리하세요!",
+                    100, 400, 700, 60,
+                    text_content="흑자, 검버섯, 기미 확실하게 관리하세요!"),
+    # 데코 사각형
+    _make_raw_layer("shape", "사각형 5", 400, 20, 80, 40),
+]
+
+classified27 = classify_layers(mother_hand_layers)
+role_map = {l["name"]: l["role"] for l in classified27}
+
+check("T27: '배경' -> background", role_map.get("배경") == "background",
+      f"got {role_map.get('배경')}")
+check("T27: '손 이미지'(pixel) -> human_subject", role_map.get("손 이미지") == "human_subject",
+      f"got {role_map.get('손 이미지')}")
+check("T27: '제품'(smartobj) -> product", role_map.get("제품") == "product",
+      f"got {role_map.get('제품')}")
+check("T27: '어머님 손에...'(text) -> title (not human_subject!)",
+      role_map.get("어머님 손에 금보다 필요한 건?") == "title",
+      f"got {role_map.get('어머님 손에 금보다 필요한 건?')}")
+check("T27: '흑자...'(text) -> body_text (not cta!)",
+      role_map.get("흑자, 검버섯, 기미 확실하게 관리하세요!") == "body_text",
+      f"got {role_map.get('흑자, 검버섯, 기미 확실하게 관리하세요!')}")
+check("T27: '사각형 5'(shape) -> decorative (not logo!)",
+      role_map.get("사각형 5") == "decorative",
+      f"got {role_map.get('사각형 5')}")
+
+# T27 summary: humanSubjectPreserved would be True only for pixel "손 이미지", not text
+human_subjects = [l for l in classified27 if l["role"] == "human_subject"]
+text_human_subjects = [l for l in classified27 if l["role"] == "human_subject" and l["type"] == "type"]
+check("T27: no text layer classified as human_subject", len(text_human_subjects) == 0,
+      f"found {text_human_subjects}")
+check("T27: pixel 손 이미지 is still human_subject", len(human_subjects) >= 1)
+
+# T28: _text_layer_fallback_role edge cases
+check("T28: short text at bottom (cy=0.85) -> cta",
+      _text_layer_fallback_role("신청하기", 0.85) == "cta")
+check("T28: long text -> body_text",
+      _text_layer_fallback_role("흑자, 검버섯, 기미 확실하게 관리하세요!", 0.75) == "body_text")
+check("T28: short headline at top (cy=0.10) -> title",
+      _text_layer_fallback_role("어머님 손에 금보다 필요한 건?", 0.10) == "title")
+check("T28: short text at mid-bottom (cy=0.70) -> body_text",
+      _text_layer_fallback_role("관리하세요", 0.70) == "body_text")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Result
 # ══════════════════════════════════════════════════════════════════════════════
 
