@@ -104,13 +104,13 @@ _REMOVAL_ROLES = frozenset({
     "product_detail", "legal_text", "brand_name", "decoration",
     "overlay",
 })
-# main_image roles that are products (not hands)
-_PRODUCT_ROLES = frozenset({"main_image"})
+# Stage 21: product + main_image → removal mask (AI fills background, compositor re-places them)
+_PRODUCT_ROLES = frozenset({"product", "main_image"})
 
-# Roles whose source pixels must not be changed
+# Stage 21: human_subject added — AI must never overwrite visible person/hand pixels
 _IMMUTABLE_ROLES = frozenset({
     "person", "person_or_hand", "person_face",
-    # main_image is also immutable AFTER it has been identified as hands
+    "human_subject",
 })
 
 
@@ -572,6 +572,10 @@ def run_source_faithful_repair(
             attempt_log["accepted"] = True
 
         res.attempts.append(attempt_log)
+
+        # Early stop: first accepted result is sufficient (saves AI provider calls)
+        if attempt_log.get("accepted"):
+            break
 
     # ── Step 6: Finalize result ───────────────────────────────────────────────
     res.background_ai_attempt_count = len(res.attempts)

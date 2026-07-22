@@ -195,10 +195,11 @@ public class BannerService {
                 })
                 .toList();
 
-        // 4차-9: object-reflow 모드면 PsdObjectAnalysis 로드 → Map 스냅샷으로 전달
+        // Stage 21: object-reflow 모드 또는 ai-auto 모드일 때 PsdObjectAnalysis 로드 → Map 스냅샷으로 전달
         Map<String, Object> objectAnalysisSnapshot = null;
         boolean objectReflowEnabled = Boolean.TRUE.equals(message.getObjectReflowEnabled());
-        if (objectReflowEnabled && message.getObjectAnalysisId() != null) {
+        boolean isAiAutoMode = "ai-auto".equals(message.getResizeMode());
+        if ((objectReflowEnabled || isAiAutoMode) && message.getObjectAnalysisId() != null) {
             try {
                 PsdObjectAnalysis oa = psdObjectAnalysisMongoService.findById(message.getObjectAnalysisId());
                 if (oa != null) {

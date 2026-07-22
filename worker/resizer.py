@@ -1132,6 +1132,34 @@ def _generate_ai_only(
             raise RuntimeError("AI_ONLY_RENDERING: no AI provider (BACKGROUND_AI_API_KEY not set)")
 
     img, source_meta = load_source_image(psd_path)
+
+    # Stage 21: Parse + classify PSD layers for foreground compositing.
+    # Only attempted when source_type=="psd". PNG/JPG inputs skip this path.
+    psd_layers_classified: list = []
+    psd_canvas_w: int = img.width
+    psd_canvas_h: int = img.height
+    if source_type == "psd":
+        try:
+            from psd_compat import open_psd_safe_with_patch
+            psd_obj, psd_open_meta = open_psd_safe_with_patch(psd_path)
+            if psd_obj is not None and psd_open_meta.get("success"):
+                from psd_layer_parser import parse_psd_layers
+                from layer_role_classifier import classify_layers
+                psd_canvas_w = psd_obj.width
+                psd_canvas_h = psd_obj.height
+                tmp_layer_dir = os.path.join(output_dir, "stage21_layers", jid)
+                raw_layers = parse_psd_layers(psd_obj, tmp_layer_dir)
+                psd_layers_classified = classify_layers(raw_layers)
+                detected_roles = sorted({l.get("role") for l in psd_layers_classified})
+                print(
+                    f"[STAGE21] PSD layers parsed count={len(psd_layers_classified)}"
+                    f" roles={detected_roles}",
+                    flush=True,
+                )
+        except Exception as _psd_err:
+            print(f"[STAGE21] PSD layer parse failed, foreground compositor disabled: {_psd_err}", flush=True)
+            psd_layers_classified = []
+
     max_attempts = int(os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "3"))
     results = []
     actual_provider_request_count = 0
@@ -1153,7 +1181,7 @@ def _generate_ai_only(
         sfr_dir = os.path.join(output_dir, "stage20_3", f"{w}x{h}")
         sfr = run_source_faithful_repair(
             source_image=img,
-            classified_layers=[],
+            classified_layers=psd_layers_classified,  # Stage 21: removal + immutable masks
             target_w=w,
             target_h=h,
             provider=provider,
@@ -1182,6 +1210,31 @@ def _generate_ai_only(
         result_img = sfr.repair_image
         if result_img.size != (w, h):
             result_img = result_img.resize((w, h), Image.LANCZOS)
+
+        # Stage 21: Foreground compositor — place product/logo/text/CTA over AI background
+        fg_result = None
+        if psd_layers_classified:
+            try:
+                from foreground.layer_extractor import extract_foreground_layers
+                from foreground.compositor import composite_foreground
+                fg_layers = extract_foreground_layers(
+                    psd_layers=psd_layers_classified,
+                    canvas_w=psd_canvas_w,
+                    canvas_h=psd_canvas_h,
+                    target_w=w,
+                    target_h=h,
+                )
+                fg_result = composite_foreground(result_img, fg_layers)
+                if fg_result.success and fg_result.composite_image is not None:
+                    result_img = fg_result.composite_image
+                    print(
+                        f"[STAGE21] foreground composited spec={name} {w}x{h}"
+                        f" placed={fg_result.placed_roles}",
+                        flush=True,
+                    )
+            except Exception as _fg_err:
+                print(f"[STAGE21] foreground compositor error spec={name}: {_fg_err}", flush=True)
+                fg_result = None
 
         if output_format in ("jpg", "jpeg"):
             result_img = result_img.convert("RGB")
@@ -1220,13 +1273,13 @@ def _generate_ai_only(
             "fallbackErrors": source_meta.get("fallbackErrors", []),
             "sourceWidth": source_meta.get("sourceWidth"),
             "sourceHeight": source_meta.get("sourceHeight"),
-            "layerReflowAttempted": False,
-            "layerReflowSucceeded": False,
+            "layerReflowAttempted": fg_result is not None,
+            "layerReflowSucceeded": fg_result is not None and fg_result.success,
             "layerReflowError": None,
-            "layerReflowExtractedLayerCount": 0,
-            "layerReflowDetectedRoles": [],
-            "layerReflowTemplate": None,
-            "usedLayerRoles": [],
+            "layerReflowExtractedLayerCount": fg_result.layer_count if fg_result else 0,
+            "layerReflowDetectedRoles": fg_result.placed_roles if fg_result else [],
+            "layerReflowTemplate": "deterministic-original-positions" if fg_result and fg_result.success else None,
+            "usedLayerRoles": fg_result.placed_roles if fg_result else [],
             "resizeStrategy": "source-faithful-ai-repair",
             "candidateType": None,
             "candidateScore": None,
@@ -1277,6 +1330,17 @@ def _generate_ai_only(
                 "sourceFaithfulRepairUsed": True,
                 "failClosed": True,
                 "verdict": sfr.verdict,
+                # Stage 21: Foreground compositor provenance
+                "foregroundCompositor": "deterministic-layer-compositor" if fg_result and fg_result.success else None,
+                "productPlaced": fg_result.product_placed if fg_result else False,
+                "logoPlaced": fg_result.logo_placed if fg_result else False,
+                "headlinePlaced": fg_result.headline_placed if fg_result else False,
+                "bodyTextPlaced": fg_result.body_text_placed if fg_result else False,
+                "ctaPresent": bool(psd_layers_classified and any(l.get("role") == "cta" for l in psd_layers_classified)),
+                "ctaPlaced": fg_result.cta_placed if fg_result else False,
+                "humanSubjectPreserved": fg_result.human_subject_preserved if fg_result else False,
+                "visibleHandMutationCount": sfr.visible_hand_mutation_count,
+                "backgroundCacheHit": False,
             },
         })
 

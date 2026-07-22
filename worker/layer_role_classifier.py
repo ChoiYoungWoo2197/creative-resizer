@@ -1,36 +1,47 @@
 """4차-5: 레이어 역할 분류기.
 이름 기반 룰 + 위치/크기 기반 보완 룰.
-역할 enum: background / main_image / title / body_text / cta / logo / badge / decorative / unknown
+역할 enum: background / human_subject / product / main_image / title / body_text / cta / logo / badge / decorative / unknown
+
+Stage 21: main_image를 human_subject(인물/모델)와 product(제품/상품)로 분리.
+human_subject는 SFR _IMMUTABLE_ROLES에 포함되어 AI가 덮어쓰지 않는다.
 """
 
 # 이름 기반 룰 (순서 중요: 먼저 매칭된 것 선택)
 NAME_RULES = [
-    ("background", ["배경",   "bg",        "background", "bkg",    "back",    "backdrop"]),
-    ("title",      ["타이틀", "title",      "headline",   "제목",   "카피",    "copy",
-                    "maintext", "main_text", "main_title"]),
-    ("body_text",  ["텍스트", "text",       "설명",       "desc",   "description",
-                    "subcopy",  "서브",      "body",       "subtext", "sub_text", "subhead"]),
-    ("cta",        ["액션",   "cta",        "button",     "버튼",   "신청",    "구매",
-                    "btn",     "apply",      "buy",        "order"]),
-    ("main_image", ["제품",   "product",    "주요이미지", "모델",   "main",    "image",
-                    "visual",  "person",     "model",      "item",   "goods",   "pack"]),
-    ("logo",       ["로고",   "logo",       "brand",      "브랜드", "ci",      "bi",     "emblem"]),
-    ("badge",      ["배지",   "badge",      "sticker",    "sale",   "discount","혜택",
-                    "event",   "ribbon",     "seal",       "이벤트"]),
-    ("decorative", ["장식",   "decoration", "deco",       "ornament","shape",  "pattern",
-                    "effect",  "icon",       "star",       "heart"]),
+    ("background",    ["배경",   "bg",        "background", "bkg",    "back",    "backdrop"]),
+    ("title",         ["타이틀", "title",      "headline",   "제목",   "카피",    "copy",
+                       "maintext", "main_text", "main_title"]),
+    ("body_text",     ["텍스트", "text",       "설명",       "desc",   "description",
+                       "subcopy",  "서브",      "body",       "subtext", "sub_text", "subhead"]),
+    ("cta",           ["액션",   "cta",        "button",     "버튼",   "신청",    "구매",
+                       "btn",     "apply",      "buy",        "order"]),
+    # Stage 21: 인물/모델 → human_subject (SFR immutable 대상)
+    ("human_subject", ["모델",   "person",     "model",      "인물",   "손",      "hand",
+                       "피부",   "사람",       "human"]),
+    # Stage 21: 제품/상품 → product (SFR removal 대상 → 배경 생성 후 재합성)
+    ("product",       ["제품",   "product",    "패키지",     "pack",   "goods",   "item",
+                       "상품"]),
+    # main_image: visual / image / main 키워드 → 역할 불명 시각 요소
+    ("main_image",    ["주요이미지", "main",   "image",      "visual"]),
+    ("logo",          ["로고",   "logo",       "brand",      "브랜드", "ci",      "bi",     "emblem"]),
+    ("badge",         ["배지",   "badge",      "sticker",    "sale",   "discount","혜택",
+                       "event",   "ribbon",     "seal",       "이벤트"]),
+    ("decorative",    ["장식",   "decoration", "deco",       "ornament","shape",  "pattern",
+                       "effect",  "icon",       "star",       "heart"]),
 ]
 
 PRIORITY_MAP = {
-    "background": "required",
-    "main_image": "required",
-    "title":      "required",
-    "cta":        "important",
-    "logo":       "important",
-    "body_text":  "important",
-    "badge":      "important",
-    "decorative": "optional",
-    "unknown":    "optional",
+    "background":    "required",
+    "human_subject": "required",
+    "product":       "required",
+    "main_image":    "required",
+    "title":         "required",
+    "cta":           "important",
+    "logo":          "important",
+    "body_text":     "important",
+    "badge":         "important",
+    "decorative":    "optional",
+    "unknown":       "optional",
 }
 
 
