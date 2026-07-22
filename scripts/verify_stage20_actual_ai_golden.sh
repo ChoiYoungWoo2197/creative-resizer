@@ -280,12 +280,20 @@ sect "Helper Container"
 
 _DOCKER_RUN_ARGS=(
     "--name" "${HELPER_CONTAINER}"
-    "--rm" "--network=none"
+    "--rm"
     "-e" "PYTHONPATH=/app"
     "-e" "PYTHONDONTWRITEBYTECODE=1"
     "-e" "GIT_SHA=${GIT_SHA}"
     "-v" "${ARTIFACT_DIR}:/artifacts:rw"
 )
+
+if [[ "${DRY_RUN_ONLY}" == "true" ]]; then
+    _DOCKER_RUN_ARGS+=("--network=none")
+    info "Helper network: none (dry-run-only)"
+else
+    _DOCKER_RUN_ARGS+=("--network=bridge")
+    info "Helper network: bridge (actual AI enabled)"
+fi
 
 # Mount temp env file (read-only)
 if [[ -n "${TEMP_ENV_FILE}" && -f "${TEMP_ENV_FILE}" ]]; then
