@@ -238,6 +238,7 @@ def _basic_contamination_check(
 
         stat = ImageStat.Stat(check_region)
         variance = sum(stat.var) / max(len(stat.var), 1)
+        result["variance"] = round(variance, 3)
         if variance < 0.5:
             result["outputBlank"] = True
         if variance < 10.0:
@@ -484,7 +485,12 @@ def run_source_faithful_repair(
     best_score = -1.0
 
     for attempt_idx in range(max_attempts):
-        attempt_version = get_attempt_version(attempt_idx)
+        # Use caller-supplied prompt_version override if different from default,
+        # otherwise progress through the version sequence per attempt index.
+        if prompt_version != LATEST_VERSION:
+            attempt_version = prompt_version
+        else:
+            attempt_version = get_attempt_version(attempt_idx)
         try:
             prompt = build_prompt(attempt_version, target_width=target_w, target_height=target_h)
         except Exception as e:
@@ -536,6 +542,13 @@ def run_source_faithful_repair(
                 f" job_id={_job_id_log} spec_id={_spec_id_log}",
                 flush=True,
             )
+            print(
+                f"[SFR_ATTEMPT_REJECTED] requestId={request_id}"
+                f" attempt={attempt_idx + 1}/{max_attempts}"
+                f" reason=mother_hand_terms_in_prompt"
+                f" version={attempt_version}",
+                flush=True,
+            )
             attempt_log["rejectionReasons"].append(_mh_msg)
             res.warnings.append(_mh_msg)
             res.hard_fail_reasons.append(_mh_msg)
@@ -544,6 +557,12 @@ def run_source_faithful_repair(
 
         if provider is None:
             attempt_log["rejectionReasons"].append("provider_not_configured")
+            print(
+                f"[SFR_ATTEMPT_REJECTED] requestId={request_id}"
+                f" attempt={attempt_idx + 1}/{max_attempts}"
+                f" reason=provider_not_configured",
+                flush=True,
+            )
             res.attempts.append(attempt_log)
             res.background_ai_candidate_count += 1
             continue
@@ -610,6 +629,12 @@ def run_source_faithful_repair(
 
         if ai_raw is None:
             attempt_log["rejectionReasons"].append("provider_returned_none")
+            print(
+                f"[SFR_ATTEMPT_REJECTED] requestId={request_id}"
+                f" attempt={attempt_idx + 1}/{max_attempts}"
+                f" reason=provider_returned_none",
+                flush=True,
+            )
             res.attempts.append(attempt_log)
             continue
 
@@ -619,6 +644,12 @@ def run_source_faithful_repair(
                 ai_raw = ai_raw.resize((target_w, target_h), Image.LANCZOS)
             except Exception:
                 attempt_log["rejectionReasons"].append("resize_failed")
+                print(
+                    f"[SFR_ATTEMPT_REJECTED] requestId={request_id}"
+                    f" attempt={attempt_idx + 1}/{max_attempts}"
+                    f" reason=resize_failed",
+                    flush=True,
+                )
                 res.attempts.append(attempt_log)
                 continue
 
@@ -642,8 +673,13 @@ def run_source_faithful_repair(
         attempt_log["visibleHandMutationCount"] = mutations
 
         if mutations > _MAX_ACCEPTABLE_MUTATIONS:
-            attempt_log["rejectionReasons"].append(
-                f"visible_hand_mutation:{mutations}_pixels"
+            _mut_reason = f"visible_hand_mutation:{mutations}_pixels"
+            attempt_log["rejectionReasons"].append(_mut_reason)
+            print(
+                f"[SFR_ATTEMPT_REJECTED] requestId={request_id}"
+                f" attempt={attempt_idx + 1}/{max_attempts}"
+                f" reason={_mut_reason}",
+                flush=True,
             )
             res.attempts.append(attempt_log)
             continue
@@ -652,6 +688,13 @@ def run_source_faithful_repair(
         contam = _basic_contamination_check(ai_raw, gen_allowed_resized)
         if contam.get("outputBlank"):
             attempt_log["rejectionReasons"].append("output_blank")
+            print(
+                f"[SFR_ATTEMPT_REJECTED] requestId={request_id}"
+                f" attempt={attempt_idx + 1}/{max_attempts}"
+                f" reason=output_blank"
+                f" variance={contam.get('variance', '?')}",
+                flush=True,
+            )
             res.attempts.append(attempt_log)
             continue
 

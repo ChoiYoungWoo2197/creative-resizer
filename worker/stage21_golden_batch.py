@@ -3,7 +3,7 @@
 
 Runs the Stage 21 AI-only pipeline (SFR + Foreground Compositor) against a set
 of golden PSD files and verifies:
-  - Source isolation: different PSDs produce different SHA-256 hashes
+  - Source isolation: different PSDs produce different pixel SHA-256 hashes
   - A→B→A isolation: providerInputSha256 of B never equals A's
   - Required roles are placed (product, title / body_text)
   - Smart Fit invocations = 0
@@ -13,6 +13,17 @@ of golden PSD files and verifies:
 Modes:
   --dry-run   Use FakeBackgroundProvider — no AI calls, fast deterministic pass.
   --actual-ai Use real ExternalInpaintProvider — requires BACKGROUND_AI_API_KEY.
+
+SHA-256 hashing:
+  All image hashes use canonical RGBA pixel bytes (not PNG encoder bytes)
+  to guarantee determinism across runs: "<w>x<h>:RGBA:" + tobytes().
+
+Isolation verdicts (allIsolated = True requires ALL of):
+  - pairIsolationStatus == "PASS"  (all same-spec cross-PSD pairs isolated)
+  - abaIsolation.status == "clean"
+  - aBIsolated == True
+  - aAStable == True
+  pairIsolation=[] yields pairIsolationStatus="NOT_RUN" and allIsolated=False.
 
 Output:
   <output_dir>/results.csv          Per-PSD results
@@ -39,6 +50,7 @@ import os
 import sys
 import time
 import traceback
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -48,7 +60,6 @@ from PIL import Image
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 # Golden PSD file names (relative to --psd-dir).
-# Update when new golden PSDs are added to the test suite.
 GOLDEN_PSD_NAMES = [
     "mother-hand-product.psd",
     "야다화장품_네이버GFA.psd",
@@ -72,6 +83,7 @@ TARGET_SPECS = [
 class BatchResult:
     index: int = 0
     filename: str = ""
+    specId: str = ""
     sourceFileSha256: str = ""
     compositeSha256: str = ""
     providerInputSha256: str = ""
@@ -93,13 +105,7 @@ class BatchResult:
     error: str = ""
 
 
-# ── SHA-256 helpers ───────────────────────────────────────────────────────────
-
-def _sha256_image(img: Image.Image) -> str:
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="PNG")
-    return hashlib.sha256(buf.getvalue()).hexdigest()
-
+# ── File SHA helper ───────────────────────────────────────────────────────────
 
 def _sha256_file(path: str) -> str:
     try:
@@ -140,15 +146,15 @@ def run_batch(
     )
 
     all_results: list[BatchResult] = []
-    isolation_pairs: list[dict] = []
-    prev_result: BatchResult | None = None  # for A→B→A isolation check
-
     idx = 0
+
     for psd_name in golden_names:
         psd_path = os.path.join(psd_dir, psd_name)
         if not os.path.exists(psd_path):
-            r = BatchResult(index=idx, filename=psd_name, verdict="SKIP",
-                            failReasons=[f"PSD not found: {psd_path}"], error="psd_not_found")
+            r = BatchResult(
+                index=idx, filename=psd_name, verdict="SKIP",
+                failReasons=[f"PSD not found: {psd_path}"], error="psd_not_found",
+            )
             all_results.append(r)
             idx += 1
             continue
@@ -157,15 +163,24 @@ def run_batch(
         try:
             img, source_meta = load_source_image(psd_path)
         except Exception as e:
-            r = BatchResult(index=idx, filename=psd_name, verdict="ERROR",
-                            failReasons=[f"load_source_image failed: {e}"],
-                            error="load_failed")
+            r = BatchResult(
+                index=idx, filename=psd_name, verdict="ERROR",
+                failReasons=[f"load_source_image failed: {e}"], error="load_failed",
+            )
             all_results.append(r)
             idx += 1
             continue
 
         _src_file_sha256 = sha256_file(psd_path)
         _composite_sha256 = sha256_image(img)
+
+        print(
+            f"[DETERMINISM_TRACE] psd={psd_name}"
+            f" stage=psd-composite-raw"
+            f" pixelSha256={_composite_sha256[:16]}"
+            f" size={img.width}x{img.height}",
+            flush=True,
+        )
 
         # Parse PSD layers once per PSD (for Stage 21 foreground compositor)
         psd_layers_classified: list = []
@@ -204,13 +219,14 @@ def run_batch(
             br = BatchResult(
                 index=idx,
                 filename=psd_name,
+                specId=spec_id,
                 sourceFileSha256=_src_file_sha256[:16],
                 compositeSha256=_composite_sha256[:16],
                 width=w,
                 height=h,
                 workDir=_work_dir,
             )
-            br.detectedRoles = sorted({l.get("role") for l in psd_layers_classified})
+            br.detectedRoles = sorted({lyr.get("role") for lyr in psd_layers_classified})
 
             try:
                 sfr_dir = os.path.join(output_dir, "sfr", job_id)
@@ -227,6 +243,13 @@ def run_batch(
                 )
                 br.providerRequestCount = sfr.background_ai_attempt_count
                 br.providerInputSha256 = render_ctx.provider_input_sha256[:16]
+
+                print(
+                    f"[DETERMINISM_TRACE] job={job_id}"
+                    f" stage=provider-input-final"
+                    f" pixelSha256={render_ctx.provider_input_sha256[:16]}",
+                    flush=True,
+                )
 
                 if not sfr.success or sfr.repair_image is None:
                     br.verdict = "FAIL"
@@ -256,8 +279,8 @@ def run_batch(
                     if fg_result.success and fg_result.composite_image is not None:
                         result_img = fg_result.composite_image
                     br.placedRoles = list({
-                        l.get("role") for l in psd_layers_classified
-                        if l.get("role") in (
+                        lyr.get("role") for lyr in psd_layers_classified
+                        if lyr.get("role") in (
                             fg_result.placed_roles if fg_result else []
                         )
                     })
@@ -267,6 +290,13 @@ def run_batch(
                 render_ctx.record_final_artifact(result_img)
                 br.finalArtifactSha256 = render_ctx.final_artifact_sha256[:16]
 
+                print(
+                    f"[DETERMINISM_TRACE] job={job_id}"
+                    f" stage=final-artifact"
+                    f" pixelSha256={render_ctx.final_artifact_sha256[:16]}",
+                    flush=True,
+                )
+
                 # Save artifact
                 artifact_path = os.path.join(output_dir, "artifacts", f"{job_id}.png")
                 os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
@@ -274,7 +304,7 @@ def run_batch(
                 br.artifactPath = artifact_path
                 render_ctx.save_debug_artifact("06-final", result_img)
 
-                # Verdicts
+                # Quality verdicts
                 missing = [
                     r for r in REQUIRED_PLACED_ROLES
                     if r not in br.placedRoles and r not in br.detectedRoles
@@ -296,19 +326,6 @@ def run_batch(
                 br.failReasons = fail_reasons
                 br.verdict = "PASS" if not fail_reasons else "FAIL"
 
-                # A→B→A isolation: compare providerInputSha256 with previous
-                if prev_result is not None:
-                    isolation_pairs.append({
-                        "psd_a": prev_result.filename,
-                        "psd_b": br.filename,
-                        "spec": spec_id,
-                        "sha_a": prev_result.providerInputSha256,
-                        "sha_b": br.providerInputSha256,
-                        "isolated": prev_result.providerInputSha256 != br.providerInputSha256,
-                    })
-
-                prev_result = br
-
             except RuntimeError as e:
                 err_str = str(e)
                 if "CROSS_JOB_SOURCE_CONTAMINATION" in err_str or "SOURCE_CONTEXT_MISMATCH" in err_str:
@@ -329,15 +346,87 @@ def run_batch(
             all_results.append(br)
             idx += 1
 
+    # Compute cross-PSD isolation pairs — only compare same spec, different PSDs
+    results_by_spec: dict[str, list[BatchResult]] = defaultdict(list)
+    for r in all_results:
+        if r.verdict not in ("SKIP", "ERROR", "CONTAMINATION") and r.specId:
+            results_by_spec[r.specId].append(r)
+
+    isolation_pairs: list[dict] = []
+    for spec_key, spec_results in results_by_spec.items():
+        for i in range(len(spec_results)):
+            for j in range(i + 1, len(spec_results)):
+                a, b = spec_results[i], spec_results[j]
+                if a.filename != b.filename:
+                    isolation_pairs.append({
+                        "psd_a": a.filename,
+                        "psd_b": b.filename,
+                        "spec": spec_key,
+                        "sha_a": a.providerInputSha256,
+                        "sha_b": b.providerInputSha256,
+                        "isolated": a.providerInputSha256 != b.providerInputSha256,
+                    })
+
     # A→B→A re-run: run first PSD again and compare with first run
     aba_report = _run_aba_isolation(
         golden_names, psd_dir, output_dir, provider, target_specs,
     )
 
+    # Isolation verdict computation
+    aba = aba_report or {}
+    a_b_isolated = aba.get("aBIsolated")
+    a_a_stable = aba.get("aAStable")
+    aba_status = aba.get("status", "")
+    aba_clean = aba_status == "clean"
+
+    if isolation_pairs:
+        all_pairs_pass = all(p["isolated"] for p in isolation_pairs)
+        pair_isolation_status = "PASS" if all_pairs_pass else "FAIL"
+    else:
+        all_pairs_pass = False
+        pair_isolation_status = "NOT_RUN"
+
+    # allIsolated requires ALL conditions to be true
+    all_isolated = (
+        all_pairs_pass
+        and aba_clean
+        and a_b_isolated is True
+        and a_a_stable is True
+    )
+
+    # Separate verdicts
+    source_isolation_verdict = "PASS" if all_isolated else "FAIL"
+    if a_a_stable is None:
+        determinism_verdict = "NOT_RUN"
+    else:
+        determinism_verdict = "PASS" if a_a_stable else "FAIL"
+    provider_contract_verdict = pair_isolation_status
+    if aba_status == "skipped":
+        aba_isolation_verdict = "SKIPPED"
+    elif aba_status == "incomplete":
+        aba_isolation_verdict = "INCOMPLETE"
+    else:
+        aba_isolation_verdict = "PASS" if aba_clean else "FAIL"
+
+    quality_results = [r for r in all_results if r.verdict not in ("SKIP",)]
+    quality_pass = bool(quality_results) and all(r.verdict == "PASS" for r in quality_results)
+    quality_gate_verdict = "PASS" if quality_pass else "FAIL"
+
+    overall_verdict = "PASS" if (all_isolated and quality_pass) else "FAIL"
+
     isolation_report = {
         "pairIsolation": isolation_pairs,
-        "allIsolated": all(p["isolated"] for p in isolation_pairs),
+        "pairIsolationStatus": pair_isolation_status,
+        "allIsolated": all_isolated,
         "abaIsolation": aba_report,
+        "verdicts": {
+            "sourceIsolationVerdict": source_isolation_verdict,
+            "determinismVerdict": determinism_verdict,
+            "providerContractVerdict": provider_contract_verdict,
+            "abaIsolationVerdict": aba_isolation_verdict,
+            "qualityGateVerdict": quality_gate_verdict,
+            "overallVerdict": overall_verdict,
+        },
     }
 
     return all_results, isolation_report
@@ -350,10 +439,10 @@ def _run_aba_isolation(
     provider,
     specs: list[dict],
 ) -> dict:
-    """Run A→B→A isolation test: first PSD, then second PSD, then first PSD again.
+    """A→B→A isolation: first PSD, second PSD, first PSD again, all on specs[0].
 
-    Verifies that providerInputSha256 of third run (A again) matches first run (A),
-    and that B's hash never equals A's.
+    Verifies providerInputSha256 of third run (A2) matches first run (A1),
+    and that B's pixel hash never equals A's.
     """
     from ai_render_context import AiRenderContext, sha256_image, sha256_file
     from background.source_faithful_repair import run_source_faithful_repair
@@ -379,6 +468,14 @@ def _run_aba_isolation(
         try:
             img, _ = load_source_image(psd_path)
             _composite_sha256 = sha256_image(img)
+
+            print(
+                f"[DETERMINISM_TRACE] aba_run={run_idx} psd={psd_name}"
+                f" stage=psd-composite-raw"
+                f" pixelSha256={_composite_sha256[:16]}",
+                flush=True,
+            )
+
             job_id = f"aba_run{run_idx}_{psd_name.replace('.psd', '')}"
             _work_dir = os.path.join(output_dir, "aba", job_id)
             render_ctx = AiRenderContext(
@@ -413,11 +510,20 @@ def _run_aba_isolation(
                 output_dir=os.path.join(output_dir, "aba_sfr", job_id),
                 render_ctx=render_ctx,
             )
+
+            _prov_sha = render_ctx.provider_input_sha256
+            print(
+                f"[DETERMINISM_TRACE] aba_run={run_idx} psd={psd_name}"
+                f" stage=provider-input-final"
+                f" pixelSha256={_prov_sha[:16]}",
+                flush=True,
+            )
+
             sha256_per_run.append({
                 "run": run_idx,
                 "psd": psd_name,
                 "compositeSha256": _composite_sha256[:16],
-                "providerInputSha256": render_ctx.provider_input_sha256[:16],
+                "providerInputSha256": _prov_sha[:16],
             })
         except Exception as e:
             sha256_per_run.append({"run": run_idx, "psd": psd_name, "error": str(e)[:200]})
@@ -433,6 +539,14 @@ def _run_aba_isolation(
     a_a_stable   = (a1 == a2) if (a1 and a2) else None
     contaminated = (a_b_isolated is False) or (a_a_stable is False)
 
+    print(
+        f"[BATCH] ABA isolation:"
+        f" A1={a1} B={b} A2={a2}"
+        f" aBIsolated={a_b_isolated} aAStable={a_a_stable}"
+        f" contaminated={contaminated}",
+        flush=True,
+    )
+
     return {
         "status": "contaminated" if contaminated else "clean",
         "runs": sha256_per_run,
@@ -445,7 +559,7 @@ def _run_aba_isolation(
 # ── Reporting ─────────────────────────────────────────────────────────────────
 
 _CSV_COLS = [
-    "index", "filename", "sourceFileSha256", "compositeSha256",
+    "index", "filename", "specId", "sourceFileSha256", "compositeSha256",
     "providerInputSha256", "aiBackgroundSha256", "finalArtifactSha256",
     "width", "height",
     "detectedRoles", "placedRoles", "missingRequiredRoles",
@@ -476,6 +590,7 @@ def write_json(results: list[BatchResult], isolation: dict, path: str) -> None:
             "error": sum(1 for r in results if r.verdict in ("ERROR", "CONTAMINATION")),
             "skip": sum(1 for r in results if r.verdict == "SKIP"),
         },
+        "verdicts": isolation.get("verdicts", {}),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -489,10 +604,27 @@ def write_markdown(results: list[BatchResult], isolation: dict, path: str) -> No
         "fail": sum(1 for r in results if r.verdict == "FAIL"),
         "error": sum(1 for r in results if r.verdict in ("ERROR", "CONTAMINATION")),
     }
-    lines.append(f"Total: {summary['total']}  PASS: {summary['pass']}  FAIL: {summary['fail']}  ERROR: {summary['error']}\n")
+    lines.append(
+        f"Total: {summary['total']}  "
+        f"PASS: {summary['pass']}  "
+        f"FAIL: {summary['fail']}  "
+        f"ERROR: {summary['error']}\n"
+    )
+
+    verdicts = isolation.get("verdicts", {})
+    lines.append(f"overallVerdict: **{verdicts.get('overallVerdict', 'N/A')}**\n")
+    lines.append(f"sourceIsolationVerdict: {verdicts.get('sourceIsolationVerdict', 'N/A')}  "
+                 f"determinismVerdict: {verdicts.get('determinismVerdict', 'N/A')}  "
+                 f"providerContractVerdict: {verdicts.get('providerContractVerdict', 'N/A')}  "
+                 f"abaIsolationVerdict: {verdicts.get('abaIsolationVerdict', 'N/A')}  "
+                 f"qualityGateVerdict: {verdicts.get('qualityGateVerdict', 'N/A')}\n")
 
     aba = isolation.get("abaIsolation", {})
-    lines.append(f"A→B→A isolation: {aba.get('status', 'n/a')}  A-B-isolated: {aba.get('aBIsolated')}  A-A-stable: {aba.get('aAStable')}\n")
+    lines.append(
+        f"A-B-A isolation: {aba.get('status', 'n/a')}  "
+        f"A-B-isolated: {aba.get('aBIsolated')}  "
+        f"A-A-stable: {aba.get('aAStable')}\n"
+    )
 
     lines.append("\n| # | File | Spec | Verdict | Placed | Missing | Attempts | SHA256(composite) | Fail Reasons |")
     lines.append("|---|------|------|---------|--------|---------|----------|-------------------|--------------|")
@@ -501,7 +633,7 @@ def write_markdown(results: list[BatchResult], isolation: dict, path: str) -> No
         missing = " ".join(r.missingRequiredRoles or [])
         reasons = " ".join(r.failReasons or [])
         lines.append(
-            f"| {r.index} | {r.filename} | {r.width}x{r.height} | {r.verdict}"
+            f"| {r.index} | {r.filename} | {r.specId or f'{r.width}x{r.height}'} | {r.verdict}"
             f" | {placed or '-'} | {missing or '-'} | {r.providerRequestCount}"
             f" | {r.compositeSha256} | {reasons or '-'} |"
         )
@@ -547,8 +679,13 @@ def compute_exit_code(results: list[BatchResult], isolation: dict) -> int:
         return 4
     if any(r.error == "psd_not_found" for r in results):
         return 2
+    verdicts = isolation.get("verdicts", {})
     if isolation.get("abaIsolation", {}).get("contamination"):
         return 4
+    if verdicts.get("overallVerdict") == "FAIL":
+        if verdicts.get("sourceIsolationVerdict") == "FAIL":
+            return 4
+        return 1
     if any(r.verdict in ("FAIL", "ERROR") for r in results):
         return 1
     return 0
@@ -566,6 +703,8 @@ def main() -> None:
                     help="Use real ExternalInpaintProvider (requires BACKGROUND_AI_API_KEY)")
     ap.add_argument("--psd-names", nargs="*", default=None,
                     help="Override golden PSD names (default: GOLDEN_PSD_NAMES)")
+    ap.add_argument("--specs", nargs="*", default=None,
+                    help="Target specs as WxH, e.g. --specs 1250x560 900x900 (default: TARGET_SPECS)")
     args = ap.parse_args()
 
     dry_run = not args.actual_ai
@@ -585,10 +724,26 @@ def main() -> None:
     output_dir = args.output_dir
     psd_names = args.psd_names or GOLDEN_PSD_NAMES
 
+    # Parse --specs
+    target_specs = TARGET_SPECS
+    if args.specs:
+        target_specs = []
+        for s in args.specs:
+            try:
+                parts = s.split("x")
+                if len(parts) != 2:
+                    raise ValueError(f"expected WxH format")
+                w_s, h_s = int(parts[0]), int(parts[1])
+                target_specs.append({"width": w_s, "height": h_s})
+            except (ValueError, IndexError):
+                print(f"[BATCH] Invalid spec format: {s!r} (expected WxH, e.g. 1250x560)", file=sys.stderr)
+                sys.exit(2)
+
     print(
         f"[BATCH] Starting Stage 21 golden batch"
         f" mode={'actual-ai' if not dry_run else 'dry-run'}"
-        f" psds={psd_names}",
+        f" psds={psd_names}"
+        f" specs={[f'{s[\"width\"]}x{s[\"height\"]}' for s in target_specs]}",
         flush=True,
     )
 
@@ -597,13 +752,14 @@ def main() -> None:
         output_dir=output_dir,
         dry_run=dry_run,
         psd_names=psd_names,
+        specs=target_specs,
     )
 
     # Write outputs
-    csv_path  = os.path.join(output_dir, "results.csv")
-    json_path = os.path.join(output_dir, "results.json")
-    md_path   = os.path.join(output_dir, "results.md")
-    iso_path  = os.path.join(output_dir, "cross-source-isolation-report.json")
+    csv_path   = os.path.join(output_dir, "results.csv")
+    json_path  = os.path.join(output_dir, "results.json")
+    md_path    = os.path.join(output_dir, "results.md")
+    iso_path   = os.path.join(output_dir, "cross-source-isolation-report.json")
     sheet_path = os.path.join(output_dir, "contact-sheet.png")
 
     write_csv(results, csv_path)
@@ -617,12 +773,13 @@ def main() -> None:
     # Print summary
     passes = sum(1 for r in results if r.verdict == "PASS")
     total  = len(results)
+    verdicts = isolation.get("verdicts", {})
     print(f"\n[BATCH] {'='*60}", flush=True)
     print(f"[BATCH] Results: {passes}/{total} PASS", flush=True)
     for r in results:
-        icon = "✓" if r.verdict == "PASS" else "✗"
+        icon = "+" if r.verdict == "PASS" else "x"
         print(
-            f"[BATCH]  {icon} [{r.verdict}] {r.filename} {r.width}x{r.height}"
+            f"[BATCH]  {icon} [{r.verdict}] {r.filename} {r.specId}"
             f"  sha256={r.compositeSha256}"
             f"  placed={r.placedRoles}"
             + (f"  FAIL={r.failReasons}" if r.failReasons else ""),
@@ -630,7 +787,15 @@ def main() -> None:
         )
 
     aba = isolation.get("abaIsolation", {})
-    print(f"[BATCH] A→B→A isolation: {aba.get('status', 'n/a')}", flush=True)
+    print(
+        f"[BATCH] A-B-A isolation: {aba.get('status', 'n/a')}"
+        f"  aBIsolated={aba.get('aBIsolated')}"
+        f"  aAStable={aba.get('aAStable')}",
+        flush=True,
+    )
+    print(f"[BATCH] pairIsolationStatus: {isolation.get('pairIsolationStatus', 'N/A')}", flush=True)
+    print(f"[BATCH] allIsolated: {isolation.get('allIsolated', False)}", flush=True)
+    print(f"[BATCH] Verdicts: {verdicts}", flush=True)
     print(f"[BATCH] Outputs: {output_dir}", flush=True)
 
     exit_code = compute_exit_code(results, isolation)

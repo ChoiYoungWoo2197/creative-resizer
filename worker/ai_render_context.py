@@ -23,10 +23,17 @@ from PIL import Image
 # ── Hash helpers ──────────────────────────────────────────────────────────────
 
 def sha256_image(img: Image.Image) -> str:
-    """SHA-256 of PNG-encoded RGB pixels (deterministic, size-independent)."""
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="PNG")
-    return hashlib.sha256(buf.getvalue()).hexdigest()
+    """SHA-256 of canonical RGBA pixel bytes — deterministic, PNG-encoder-independent.
+
+    Payload: "<width>x<height>:RGBA:" + raw RGBA tobytes().
+    Avoids PNG-compression non-determinism (2-byte difference between runs).
+    """
+    rgba = img.convert("RGBA")
+    payload = (
+        f"{rgba.width}x{rgba.height}:RGBA:".encode("ascii")
+        + rgba.tobytes()
+    )
+    return hashlib.sha256(payload).hexdigest()
 
 
 def sha256_file(path: str) -> str:

@@ -705,8 +705,14 @@ class _FailFirstProvider:
         _t41_count[0] += 1
         if _t41_count[0] == 1:
             return None  # fail first call (job A)
+        # Return gradient image so _basic_contamination_check (variance >= 0.5) passes
+        import numpy as np
         w, h = image.size
-        return Image.new("RGB", (w, h), (80, 80, 80))
+        arr = np.zeros((h, w, 3), dtype=np.uint8)
+        arr[:, :, 0] = np.linspace(60, 100, h, dtype=np.uint8)[:, None]
+        arr[:, :, 1] = 80
+        arr[:, :, 2] = 80
+        return Image.fromarray(arr, "RGB")
 
 img_t41a = _solid_img((200, 50, 50), (80, 80))
 img_t41b = _solid_img((50, 200, 50), (80, 80))
@@ -832,7 +838,7 @@ check("T48b: 1200x300 v2 does NOT contain 'beige'",
 
 # T49: v1 IS detected as deprecated and contains mother-hand terms
 _v1_prompt = build_prompt("source-faithful-repair-v1", 1200, 628)
-check("T49: v1 prompt contains mother-hand terms (as expected — it is deprecated)",
+check("T49: v1 prompt contains mother-hand terms (as expected - it is deprecated)",
       prompt_contains_mother_hand_terms(_v1_prompt))
 check("T49b: v1 is in DEPRECATED_VERSIONS",
       "source-faithful-repair-v1" in DEPRECATED_VERSIONS)
