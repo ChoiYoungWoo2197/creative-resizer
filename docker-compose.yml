@@ -12,6 +12,7 @@ services:
       - /tmp
     security_opt:
       - label:disable
+      - seccomp:unconfined
     depends_on:
       - creative-api
     restart: unless-stopped
