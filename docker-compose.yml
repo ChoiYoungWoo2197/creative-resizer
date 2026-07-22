@@ -8,6 +8,8 @@ services:
     container_name: creative-nginx
     ports:
       - "3001:80"
+    tmpfs:
+      - /tmp
     depends_on:
       - creative-api
     restart: unless-stopped
