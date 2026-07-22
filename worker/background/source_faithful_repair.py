@@ -5,9 +5,15 @@ Policy:
   - Immutable pixels (visible hands, skin, unaffected background) are NEVER modified
   - Product / text / logo / CTA are placed back by the deterministic compositor
   - Smart Fit, blur-fill, mirrored edge, stretched texture are NEVER used
-  - Up to 3 AI attempts with progressively conservative prompts
+  - Up to max_attempts AI calls with progressively conservative prompts
   - If all attempts fail: verdict=PARTIAL, provider_not_configured or ai_failed
     (no smart-fit fallback)
+
+Stage 21 P0: AiRenderContext integration.
+  - render_ctx (optional) carries SHA-256 hashes computed at job start.
+  - Source isolation guard fires before the first provider call to detect
+    cross-job source contamination (CROSS_JOB_SOURCE_CONTAMINATION error).
+  - Per-attempt providerInputSha256 is logged to render_ctx.attempt_provenance.
 
 Returns SourceFaithfulRepairResult containing all required Stage 20.2 diagnostic fields.
 """
@@ -16,7 +22,11 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from PIL import Image, ImageFilter
+
+if TYPE_CHECKING:
+    from ai_render_context import AiRenderContext
 
 from .prompt_builder import (
     build_prompt,
@@ -368,6 +378,7 @@ def run_source_faithful_repair(
     output_dir: str = "",
     canvas_w: int = 0,
     canvas_h: int = 0,
+    render_ctx: "AiRenderContext | None" = None,
 ) -> SourceFaithfulRepairResult:
     """Run source-faithful AI repair pipeline.
 
@@ -436,6 +447,25 @@ def run_source_faithful_repair(
         res.repair_image = source_image
         return res
 
+    # ── P0 Source isolation guard ─────────────────────────────────────────────
+    # Verify that source_image is the image this job loaded — not a remnant from
+    # a prior job.  render_ctx.assert_source_integrity() compares the SHA-256 of
+    # source_image against the hash computed right after load_source_image() in
+    # _generate_ai_only().  A mismatch raises RuntimeError with the
+    # CROSS_JOB_SOURCE_CONTAMINATION prefix so the caller's fail-closed path
+    # surfaces it rather than silently generating a bad banner.
+    if render_ctx is not None:
+        try:
+            render_ctx.assert_source_integrity(source_image, label="sfr_entry")
+            print(
+                f"[SFR_ISOLATION_OK] job_id={render_ctx.job_id}"
+                f" spec_id={render_ctx.spec_id}"
+                f" composite_sha256={render_ctx.composite_sha256[:16]}",
+                flush=True,
+            )
+        except RuntimeError as _iso_err:
+            raise  # propagate immediately — no retry, no fallback
+
     # ── Step 5: AI attempts ───────────────────────────────────────────────────
     res.background_ai_executed = True
 
@@ -486,6 +516,28 @@ def run_source_faithful_repair(
             # Resize source to target size for AI call
             ai_source = source_image.resize((target_w, target_h), Image.LANCZOS)
             ai_mask = gen_allowed.resize((target_w, target_h), Image.LANCZOS) if gen_allowed else None
+
+            # P0: Record + log provider input SHA-256 for cross-job audit
+            provider_input_sha256 = ""
+            if render_ctx is not None:
+                provider_input_sha256 = render_ctx.record_provider_input(ai_source)
+                attempt_log["providerInputSha256"] = provider_input_sha256
+                print(
+                    f"[SFR_PROVIDER_INPUT_SHA256] job_id={render_ctx.job_id}"
+                    f" spec_id={render_ctx.spec_id}"
+                    f" attempt={attempt_idx + 1}"
+                    f" sha256={provider_input_sha256[:16]}",
+                    flush=True,
+                )
+                # Save debug artifact: 02-provider-input
+                render_ctx.save_debug_artifact(
+                    f"02-provider-input-attempt{attempt_idx + 1}", ai_source
+                )
+                if ai_mask is not None:
+                    render_ctx.save_debug_artifact(
+                        f"03-gen-mask-attempt{attempt_idx + 1}", ai_mask
+                    )
+
             raw_result = provider.inpaint(
                 image=ai_source,
                 mask=ai_mask or Image.new("L", (target_w, target_h), 255),
@@ -570,6 +622,16 @@ def run_source_faithful_repair(
             res.background_ai_accepted_count += 1
             attempt_log["success"] = True
             attempt_log["accepted"] = True
+            # P0: record AI background SHA-256 for accepted result
+            if render_ctx is not None:
+                ai_bg_sha256 = render_ctx.record_ai_background(ai_raw)
+                attempt_log["aiBackgroundSha256"] = ai_bg_sha256
+                render_ctx.save_debug_artifact(
+                    f"04-ai-background-attempt{attempt_idx + 1}", ai_raw
+                )
+                render_ctx.save_debug_artifact(
+                    f"05-composited-attempt{attempt_idx + 1}", composited
+                )
 
         res.attempts.append(attempt_log)
 

@@ -3,6 +3,7 @@ import os
 import subprocess
 from io import BytesIO
 from psd_compat import open_psd_safe_with_patch
+from ai_render_context import AiRenderContext, sha256_image, sha256_file
 
 
 def _try_imagemagick(cmd: list, label: str, errors: list):
@@ -1133,6 +1134,19 @@ def _generate_ai_only(
 
     img, source_meta = load_source_image(psd_path)
 
+    # P0: Compute source provenance hashes immediately after load.
+    # composite_sha256 is the single source-of-truth for this job's pixels.
+    # AiRenderContext is created per-spec (inside the loop below) with the
+    # correct target_w/h and an isolated work_dir.
+    _source_file_sha256 = sha256_file(psd_path)
+    _composite_sha256 = sha256_image(img)
+    print(
+        f"[AI_ONLY_PROVENANCE] jobId={jid}"
+        f" sourceFileSha256={_source_file_sha256[:16]}"
+        f" compositeSha256={_composite_sha256[:16]}",
+        flush=True,
+    )
+
     # Stage 21: Parse + classify PSD layers for foreground compositing.
     # Only attempted when source_type=="psd". PNG/JPG inputs skip this path.
     psd_layers_classified: list = []
@@ -1160,9 +1174,12 @@ def _generate_ai_only(
             print(f"[STAGE21] PSD layer parse failed, foreground compositor disabled: {_psd_err}", flush=True)
             psd_layers_classified = []
 
-    max_attempts = int(os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "3"))
+    # P1: default 1 (single attempt).  Override via BACKGROUND_AI_MAX_ATTEMPTS env var.
+    max_attempts = int(os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "1"))
     results = []
     actual_provider_request_count = 0
+
+    _work_base = os.environ.get("AI_WORK_DIR", "/app/storage/work")
 
     for spec_idx, spec in enumerate(specs):
         media = spec["media"]
@@ -1170,6 +1187,7 @@ def _generate_ai_only(
         h = spec["height"]
         slug = spec.get("slug", "")
         name = spec.get("name", "")
+        spec_id = f"{w}x{h}"
 
         t_spec = _time.time()
         print(
@@ -1178,7 +1196,22 @@ def _generate_ai_only(
             flush=True,
         )
 
-        sfr_dir = os.path.join(output_dir, "stage20_3", f"{w}x{h}")
+        # P0: Per-spec AiRenderContext with isolated work directory + provenance
+        _spec_work_dir = os.path.join(_work_base, jid, spec_id)
+        render_ctx = AiRenderContext(
+            job_id=jid,
+            spec_id=spec_id,
+            source_path=psd_path,
+            source_file_sha256=_source_file_sha256,
+            composite_sha256=_composite_sha256,
+            target_width=w,
+            target_height=h,
+            work_dir=_spec_work_dir,
+        )
+        # Save source composite as first debug artifact
+        render_ctx.save_debug_artifact("01-source-composite", img)
+
+        sfr_dir = os.path.join(output_dir, "stage20_3", spec_id)
         sfr = run_source_faithful_repair(
             source_image=img,
             classified_layers=psd_layers_classified,  # Stage 21: removal + immutable masks
@@ -1188,6 +1221,7 @@ def _generate_ai_only(
             max_attempts=max_attempts,
             request_id=f"{jid}_{w}x{h}",
             output_dir=sfr_dir,
+            render_ctx=render_ctx,
         )
         actual_provider_request_count += sfr.background_ai_attempt_count
 
@@ -1212,6 +1246,10 @@ def _generate_ai_only(
             result_img = result_img.resize((w, h), Image.LANCZOS)
 
         # Stage 21: Foreground compositor — place product/logo/text/CTA over AI background
+        # P0: record AI background sha256 before foreground compositing
+        if sfr.repair_image is not None:
+            render_ctx.record_ai_background(sfr.repair_image)
+
         fg_result = None
         if psd_layers_classified:
             try:
@@ -1235,6 +1273,10 @@ def _generate_ai_only(
             except Exception as _fg_err:
                 print(f"[STAGE21] foreground compositor error spec={name}: {_fg_err}", flush=True)
                 fg_result = None
+
+        # P0: record final artifact SHA-256 and save debug artifact before format conversion
+        render_ctx.record_final_artifact(result_img)
+        render_ctx.save_debug_artifact("06-final", result_img)
 
         if output_format in ("jpg", "jpeg"):
             result_img = result_img.convert("RGB")
@@ -1341,6 +1383,13 @@ def _generate_ai_only(
                 "humanSubjectPreserved": fg_result.human_subject_preserved if fg_result else False,
                 "visibleHandMutationCount": sfr.visible_hand_mutation_count,
                 "backgroundCacheHit": False,
+                # P0: SHA-256 provenance fields for cross-job audit
+                "sourceFileSha256": render_ctx.source_file_sha256[:16] if render_ctx.source_file_sha256 else "",
+                "compositeSha256": render_ctx.composite_sha256[:16] if render_ctx.composite_sha256 else "",
+                "providerInputSha256": render_ctx.provider_input_sha256[:16] if render_ctx.provider_input_sha256 else "",
+                "aiBackgroundSha256": render_ctx.ai_background_sha256[:16] if render_ctx.ai_background_sha256 else "",
+                "finalArtifactSha256": render_ctx.final_artifact_sha256[:16] if render_ctx.final_artifact_sha256 else "",
+                "workDir": render_ctx.work_dir,
             },
         })
 

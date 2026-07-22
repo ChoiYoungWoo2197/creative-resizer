@@ -1,8 +1,18 @@
+import os
+
 from psd_tools import PSDImage
 from PIL import Image
 import subprocess
 from io import BytesIO
 from psd_compat import open_psd_safe_with_patch
+
+# P2: Feature flag — disable GPT-4o-mini object analysis for AI-only pipeline.
+# When false, /analyze-psd returns a minimal stub so the Worker skips the
+# expensive GPT call.  Worker's own layer parsing in _generate_ai_only() is
+# unaffected (it runs separately, not through this endpoint).
+_PSD_OBJECT_ANALYSIS_ENABLED = (
+    os.environ.get("PSD_OBJECT_ANALYSIS_ENABLED", "true").lower() == "true"
+)
 
 
 ARTBOARD_KEYWORDS = [
@@ -34,6 +44,29 @@ def _classify_artboard_type(w: int, h: int) -> str:
 
 
 def analyze_psd_file(file_path: str) -> dict:
+    # P2: skip expensive GPT-4o-mini object analysis when flag is off
+    if not _PSD_OBJECT_ANALYSIS_ENABLED:
+        print(
+            f"[PSD_ANALYSIS] PSD_OBJECT_ANALYSIS_ENABLED=false - skipping GPT analysis"
+            f" for {os.path.basename(file_path)}",
+            flush=True,
+        )
+        return {
+            "width": 0,
+            "height": 0,
+            "hasArtboards": False,
+            "artboards": [],
+            "layers": [],
+            "layerReadable": False,
+            "layerCount": 0,
+            "layerReadError": None,
+            "layerReadErrorCode": None,
+            "layerReflowAvailable": False,
+            "psdParserEngine": "disabled",
+            "psdCompatPatched": False,
+            "analysisSkipped": True,
+            "analysisSkipReason": "PSD_OBJECT_ANALYSIS_ENABLED=false",
+        }
     try:
         return _analyze_psd_file_inner(file_path)
     except Exception as e:

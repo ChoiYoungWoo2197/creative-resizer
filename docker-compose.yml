@@ -77,10 +77,14 @@ services:
       # BACKGROUND_AI_API_KEY는 서버 .env 파일에 설정 필요
       - BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED=true
       - BACKGROUND_GENERATION_MODE=source_faithful_repair
-      - BACKGROUND_AI_MAX_ATTEMPTS=3
+      - BACKGROUND_AI_MAX_ATTEMPTS=1
       - BACKGROUND_AI_API_KEY=${BACKGROUND_AI_API_KEY}
       # Typography Pipeline (Stage 20.1)
       - TYPOGRAPHY_PIPELINE_ENABLED=false
+      # P2: Disable GPT-4o-mini PSD object analysis for AI-only pipeline
+      - PSD_OBJECT_ANALYSIS_ENABLED=false
+      # P0: Per-job work directory for debug artifacts + SHA-256 isolation
+      - AI_WORK_DIR=/app/storage/work
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped

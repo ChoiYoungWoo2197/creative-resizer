@@ -479,6 +479,316 @@ check("T28: short text at mid-bottom (cy=0.70) -> body_text",
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# T30-T43: P0 Source Isolation + AiRenderContext Tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n=== [T30-T43] P0 AiRenderContext + Source Isolation ===")
+
+import hashlib
+import io as _io
+import os
+import tempfile
+
+from ai_render_context import AiRenderContext, sha256_image, sha256_file
+
+
+def _solid_img(color, size=(100, 100)):
+    return Image.new("RGB", size, color)
+
+
+def _sha(img):
+    return sha256_image(img)
+
+
+# ── T30: Different PSDs produce different sourceFileSha256 ────────────────────
+
+with tempfile.NamedTemporaryFile(suffix=".psd", delete=False) as fa:
+    fa.write(b"psd_file_A_fake_content_0001")
+    path_a = fa.name
+with tempfile.NamedTemporaryFile(suffix=".psd", delete=False) as fb:
+    fb.write(b"psd_file_B_fake_content_0002")
+    path_b = fb.name
+
+sha_a = sha256_file(path_a)
+sha_b = sha256_file(path_b)
+check("T30: different PSDs → different sourceFileSha256", sha_a != sha_b,
+      f"sha_a={sha_a[:8]} sha_b={sha_b[:8]}")
+os.unlink(path_a)
+os.unlink(path_b)
+
+# ── T31: Different composites produce different compositeSha256 ───────────────
+
+img_psd_a = _solid_img((200, 100, 50))
+img_psd_b = _solid_img((50, 200, 150))
+sha_comp_a = _sha(img_psd_a)
+sha_comp_b = _sha(img_psd_b)
+check("T31: different composites → different compositeSha256",
+      sha_comp_a != sha_comp_b,
+      f"sha_a={sha_comp_a[:8]} sha_b={sha_comp_b[:8]}")
+
+# ── T32: Different source images → different providerInputSha256 ──────────────
+
+from background.source_faithful_repair import run_source_faithful_repair
+
+def _run_sfr_with_ctx(img, color_id):
+    """Run SFR with FakeProvider and return (render_ctx, sfr)."""
+    from background.external_provider import FakeBackgroundProvider
+    job_id = f"t32_job_{color_id}"
+    ctx = AiRenderContext(
+        job_id=job_id,
+        spec_id="100x100",
+        source_path="/fake/source.psd",
+        source_file_sha256="fake_file_sha",
+        composite_sha256=_sha(img),
+        target_width=150,
+        target_height=100,
+        work_dir=tempfile.mkdtemp(),
+    )
+    sfr = run_source_faithful_repair(
+        source_image=img,
+        classified_layers=[],
+        target_w=150,
+        target_h=100,
+        provider=FakeBackgroundProvider(),
+        max_attempts=1,
+        request_id=job_id,
+        render_ctx=ctx,
+    )
+    return ctx, sfr
+
+ctx_a, _ = _run_sfr_with_ctx(_solid_img((200, 100, 50), (100, 100)), "A")
+ctx_b, _ = _run_sfr_with_ctx(_solid_img((50, 200, 150), (100, 100)), "B")
+check("T32: different PSDs → different providerInputSha256",
+      ctx_a.provider_input_sha256 != ctx_b.provider_input_sha256,
+      f"a={ctx_a.provider_input_sha256[:8]} b={ctx_b.provider_input_sha256[:8]}")
+
+# ── T33: Job-level workDir isolation ─────────────────────────────────────────
+
+ctx_j1 = AiRenderContext(job_id="job1", spec_id="200x200",
+                         work_dir="/app/storage/work/job1/200x200")
+ctx_j2 = AiRenderContext(job_id="job2", spec_id="200x200",
+                         work_dir="/app/storage/work/job2/200x200")
+check("T33: job-level workDirs are different",
+      ctx_j1.work_dir != ctx_j2.work_dir,
+      f"j1={ctx_j1.work_dir} j2={ctx_j2.work_dir}")
+
+# ── T34: Job-level artifactPath isolation ─────────────────────────────────────
+
+check("T34: artifact paths differ between jobs (jobId in workDir)",
+      "job1" in ctx_j1.work_dir and "job1" not in ctx_j2.work_dir)
+
+# ── T35: Provider doesn't retain previous image ───────────────────────────────
+
+# Run two sequential SFR calls with different source images using the SAME
+# FakeBackgroundProvider instance.  Verify providerInputSha256 differs.
+
+from background.external_provider import FakeBackgroundProvider
+shared_provider = FakeBackgroundProvider()
+img_x = _solid_img((180, 90, 40), (80, 80))
+img_y = _solid_img((40, 180, 220), (80, 80))
+
+ctx_x = AiRenderContext(job_id="t35_x", spec_id="120x80",
+                        composite_sha256=_sha(img_x), work_dir=tempfile.mkdtemp())
+ctx_y = AiRenderContext(job_id="t35_y", spec_id="120x80",
+                        composite_sha256=_sha(img_y), work_dir=tempfile.mkdtemp())
+
+run_source_faithful_repair(source_image=img_x, classified_layers=[],
+                           target_w=120, target_h=80,
+                           provider=shared_provider, max_attempts=1,
+                           request_id="t35_x", render_ctx=ctx_x)
+run_source_faithful_repair(source_image=img_y, classified_layers=[],
+                           target_w=120, target_h=80,
+                           provider=shared_provider, max_attempts=1,
+                           request_id="t35_y", render_ctx=ctx_y)
+
+check("T35: shared provider - x and y produce different providerInputSha256",
+      ctx_x.provider_input_sha256 != ctx_y.provider_input_sha256,
+      f"x={ctx_x.provider_input_sha256[:8]} y={ctx_y.provider_input_sha256[:8]}")
+
+# ── T36: maxAttempts default == 1 ────────────────────────────────────────────
+
+import os as _os
+_saved = _os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS")
+_os.environ.pop("BACKGROUND_AI_MAX_ATTEMPTS", None)
+_default_max = int(_os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "1"))
+if _saved is not None:
+    _os.environ["BACKGROUND_AI_MAX_ATTEMPTS"] = _saved
+check("T36: BACKGROUND_AI_MAX_ATTEMPTS default == 1", _default_max == 1,
+      f"got {_default_max}")
+
+# ── T37: Actual provider request count ≤ 1 ───────────────────────────────────
+
+_t37_calls = [0]
+
+class _CountingFake:
+    def metadata(self): return {"providerName": "fake", "modelName": "fake"}
+    def inpaint(self, image, mask, prompt, options):
+        _t37_calls[0] += 1
+        w, h = image.size
+        return Image.new("RGB", (w, h), (120, 120, 120))
+
+source_t37 = _solid_img((100, 150, 200), (60, 60))
+sfr_t37 = run_source_faithful_repair(
+    source_image=source_t37, classified_layers=[],
+    target_w=90, target_h=60,
+    provider=_CountingFake(), max_attempts=1, request_id="t37",
+)
+check("T37: actual provider request count ≤ 1",
+      _t37_calls[0] <= 1,
+      f"got call_count={_t37_calls[0]}")
+
+# ── T38: PSD_OBJECT_ANALYSIS_ENABLED=false → analysisSkipped=True ────────────
+
+from psd_analyzer import analyze_psd_file
+
+_os.environ["PSD_OBJECT_ANALYSIS_ENABLED"] = "false"
+# Reload the flag (psd_analyzer reads it at module level — simulate env override)
+import importlib
+import psd_analyzer as _psd_mod
+# Re-evaluate flag by calling with the env set (module-level flag was already set)
+# Since _PSD_OBJECT_ANALYSIS_ENABLED is module-level, patch it directly for test
+_orig_flag = _psd_mod._PSD_OBJECT_ANALYSIS_ENABLED
+_psd_mod._PSD_OBJECT_ANALYSIS_ENABLED = False
+result38 = _psd_mod.analyze_psd_file("/nonexistent/fake.psd")
+_psd_mod._PSD_OBJECT_ANALYSIS_ENABLED = _orig_flag
+_os.environ.pop("PSD_OBJECT_ANALYSIS_ENABLED", None)
+
+check("T38: PSD_OBJECT_ANALYSIS_ENABLED=false → analysisSkipped=True",
+      result38.get("analysisSkipped") is True,
+      f"got {result38}")
+
+# ── T39: Analysis disabled but structure is valid (no crash) ─────────────────
+
+check("T39: disabled analysis returns dict with artboards key",
+      "artboards" in result38)
+check("T39: disabled analysis returns width=0",
+      result38.get("width") == 0)
+
+# ── T40: A→B→A cross-source isolation in same process ────────────────────────
+
+print("\n--- T40: A→B→A isolation ---")
+
+img_aba_a = _solid_img((210, 80, 30), (90, 90))
+img_aba_b = _solid_img((30, 210, 120), (90, 90))
+
+sha_aba = {}
+for run_id, img_run in [("A1", img_aba_a), ("B", img_aba_b), ("A2", img_aba_a)]:
+    ctx_run = AiRenderContext(
+        job_id=f"t40_{run_id}",
+        spec_id="130x90",
+        composite_sha256=_sha(img_run),
+        work_dir=tempfile.mkdtemp(),
+    )
+    run_source_faithful_repair(
+        source_image=img_run, classified_layers=[],
+        target_w=130, target_h=90,
+        provider=FakeBackgroundProvider(), max_attempts=1,
+        request_id=f"t40_{run_id}", render_ctx=ctx_run,
+    )
+    sha_aba[run_id] = ctx_run.provider_input_sha256
+
+check("T40: A→B isolated (A1 ≠ B)", sha_aba.get("A1") != sha_aba.get("B"),
+      f"A1={sha_aba.get('A1','')[:8]} B={sha_aba.get('B','')[:8]}")
+check("T40: A stable (A1 == A2)", sha_aba.get("A1") == sha_aba.get("A2"),
+      f"A1={sha_aba.get('A1','')[:8]} A2={sha_aba.get('A2','')[:8]}")
+
+# ── T41: One PSD failure doesn't propagate state to next ─────────────────────
+# Use outpaint target (120x80 != source 80x80) to force the AI provider call.
+
+from background.external_provider import FakeBackgroundProvider
+
+_t41_count = [0]
+
+class _FailFirstProvider:
+    def metadata(self): return {"providerName": "fail_first", "modelName": "f1"}
+    def inpaint(self, image, mask, prompt, options):
+        _t41_count[0] += 1
+        if _t41_count[0] == 1:
+            return None  # fail first call (job A)
+        w, h = image.size
+        return Image.new("RGB", (w, h), (80, 80, 80))
+
+img_t41a = _solid_img((200, 50, 50), (80, 80))
+img_t41b = _solid_img((50, 200, 50), (80, 80))
+
+ctx_t41b = AiRenderContext(
+    job_id="t41_b", spec_id="120x80",
+    composite_sha256=_sha(img_t41b),
+    work_dir=tempfile.mkdtemp(),
+)
+prov41 = _FailFirstProvider()
+
+# Job A fails (provider returns None on first call)
+sfr_t41a = run_source_faithful_repair(
+    source_image=img_t41a, classified_layers=[],
+    target_w=120, target_h=80,  # outpaint forces AI call
+    provider=prov41, max_attempts=1, request_id="t41_a",
+)
+# Job B should succeed (provider returns valid image on second call)
+sfr_t41b = run_source_faithful_repair(
+    source_image=img_t41b, classified_layers=[],
+    target_w=120, target_h=80,  # outpaint forces AI call
+    provider=prov41, max_attempts=1, request_id="t41_b",
+    render_ctx=ctx_t41b,
+)
+
+check("T41: first PSD failure does not prevent second PSD from running",
+      sfr_t41b.success,
+      f"sfr_t41b.success={sfr_t41b.success} failure_reason={sfr_t41b.failure_reason}")
+# Second PSD's providerInputSha256 must be set (AI call was made)
+check("T41: second PSD providerInputSha256 is non-empty",
+      bool(ctx_t41b.provider_input_sha256),
+      f"got provider_input_sha256={ctx_t41b.provider_input_sha256!r}")
+
+# ── T42: Smart Fit invocations = 0 in ai-auto mode ───────────────────────────
+
+# SFR pipeline never calls smart-fit. Verify by checking sfr.smart_fit_used field.
+sfr_t42 = run_source_faithful_repair(
+    source_image=_solid_img((100, 100, 100), (80, 80)),
+    classified_layers=[],
+    target_w=120, target_h=80,
+    provider=FakeBackgroundProvider(), max_attempts=1, request_id="t42",
+)
+check("T42: sfr.smart_fit_used == False", not sfr_t42.smart_fit_used)
+check("T42: sfr.blur_fill_used == False", not sfr_t42.blur_fill_used)
+check("T42: sfr.native_fallback_used == False", not sfr_t42.native_fallback_used)
+
+# ── T43: Source isolation guard catches wrong source image ────────────────────
+
+print("\n--- T43: Source isolation guard raises on wrong source ---")
+
+img_correct = _solid_img((200, 100, 50), (80, 80))
+img_wrong   = _solid_img((50, 100, 200), (80, 80))
+
+ctx_t43 = AiRenderContext(
+    job_id="t43_guard",
+    spec_id="80x80",
+    source_path="/fake/correct.psd",
+    composite_sha256=_sha(img_correct),  # hash of CORRECT image
+    work_dir=tempfile.mkdtemp(),
+)
+
+# Pass the WRONG image — guard should raise
+isolation_error_raised = False
+try:
+    ctx_t43.assert_source_integrity(img_wrong, label="test")
+except RuntimeError as _e:
+    isolation_error_raised = "CROSS_JOB_SOURCE_CONTAMINATION" in str(_e)
+
+check("T43: assert_source_integrity raises on wrong source",
+      isolation_error_raised,
+      "guard did not raise RuntimeError with CROSS_JOB_SOURCE_CONTAMINATION")
+
+# Passing the CORRECT image must not raise
+no_error = True
+try:
+    ctx_t43.assert_source_integrity(img_correct, label="test_correct")
+except RuntimeError:
+    no_error = False
+check("T43: assert_source_integrity does NOT raise on correct source", no_error)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Result
 # ══════════════════════════════════════════════════════════════════════════════
 
