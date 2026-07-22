@@ -1,0 +1,71 @@
+{
+  "_comment": "PSD Object Analysis fixture for mother-hand-product.psd",
+  "_note": "layerId는 서버에서 export 후 채워야 함. matchedLayerName fallback으로 동작.",
+  "_generate": "scripts/export_psd_object_analysis.sh 실행 후 이 파일을 갱신하세요.",
+  "status": "READY",
+  "analysisVersion": "psd-object-map-v1",
+  "model": "gpt-5-mini",
+  "sourceFileSha256": "__POPULATE_FROM_SERVER__",
+  "objects": [
+    {
+      "id": "obj_title",
+      "matchedLayerId": "__POPULATE_FROM_SERVER__",
+      "matchedLayerName": "손글씨",
+      "role": "title",
+      "label": "어머님 손에 금보다 필요한 건? — 헤드라인 텍스트",
+      "importance": "required",
+      "confidence": 0.97,
+      "matchStatus": "ready",
+      "reflowBehavior": "keep_aspect",
+      "safeZoneRequired": true,
+      "canScale": true,
+      "canCrop": false,
+      "recommendedLayerName": "어머님 손에 금보다 필요한 건?"
+    },
+    {
+      "id": "obj_product",
+      "matchedLayerId": "__POPULATE_FROM_SERVER__",
+      "matchedLayerName": "제품",
+      "role": "product",
+      "label": "제품 이미지",
+      "importance": "required",
+      "confidence": 0.98,
+      "matchStatus": "ready",
+      "reflowBehavior": "keep_aspect",
+      "safeZoneRequired": false,
+      "canScale": true,
+      "canCrop": true,
+      "recommendedLayerName": "제품"
+    },
+    {
+      "id": "obj_human",
+      "matchedLayerId": "__POPULATE_FROM_SERVER__",
+      "matchedLayerName": "손 이미지",
+      "role": "human_subject",
+      "label": "손 모델 이미지",
+      "importance": "required",
+      "confidence": 0.96,
+      "matchStatus": "ready",
+      "reflowBehavior": "keep_aspect",
+      "safeZoneRequired": false,
+      "canScale": false,
+      "canCrop": false,
+      "recommendedLayerName": "손"
+    },
+    {
+      "id": "obj_background",
+      "matchedLayerId": "__POPULATE_FROM_SERVER__",
+      "matchedLayerName": "배경",
+      "role": "background",
+      "label": "배경 레이어",
+      "importance": "required",
+      "confidence": 0.99,
+      "matchStatus": "ready",
+      "reflowBehavior": "fill_canvas",
+      "safeZoneRequired": false,
+      "canScale": true,
+      "canCrop": true,
+      "recommendedLayerName": "배경"
+    }
+  ]
+}

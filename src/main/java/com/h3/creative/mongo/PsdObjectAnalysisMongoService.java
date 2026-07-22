@@ -20,4 +20,12 @@ public class PsdObjectAnalysisMongoService {
     public PsdObjectAnalysis findById(String id) {
         return mongoTemplate.findOne(Query.query(Criteria.where("_id").is(id)), PsdObjectAnalysis.class);
     }
+
+    public PsdObjectAnalysis findByCacheKey(String cacheKey) {
+        if (cacheKey == null || cacheKey.isBlank()) return null;
+        return mongoTemplate.findOne(
+                Query.query(Criteria.where("cacheKey").is(cacheKey).and("status").is("READY")),
+                PsdObjectAnalysis.class
+        );
+    }
 }

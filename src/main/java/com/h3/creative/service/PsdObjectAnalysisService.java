@@ -14,6 +14,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -42,6 +44,8 @@ public class PsdObjectAnalysisService {
     @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
 
+    private static final String ANALYSIS_VERSION = "psd-object-map-v1";
+
     private static final Set<String> VALID_ROLES =
             Set.of("background", "title", "body_text", "main_image", "cta", "logo", "badge", "decoration", "unknown");
     private static final Set<String> VALID_IMPORTANCES =
@@ -65,6 +69,29 @@ public class PsdObjectAnalysisService {
         log.info("PSD 객체 분석 시작: file={} artboard={}x{}", filename, abW, abH);
 
         try {
+            // 캐시 키 계산 (파일 SHA-256 + 아트보드 좌표 + 분석 버전 + 모델)
+            String sourceFileSha256 = computeFileSha256(dest);
+            String cacheKey = computeCacheKey(sourceFileSha256, abX, abY, abW, abH);
+
+            // 캐시 히트 확인
+            PsdObjectAnalysis cached = mongoService.findByCacheKey(cacheKey);
+            if (cached != null) {
+                log.info("PSD 객체 분석 캐시 히트: cacheKey={}... id={}", cacheKey.substring(0, 16), cached.getId());
+                cached.setAnalysisCacheHit(true);
+                cached.setPreviewBase64(null); // previewBase64는 재계산 필요 시 생략
+                // 캐시 히트 시 프리뷰는 재생성 (워커 재호출)
+                try {
+                    Map<String, Integer> abBox = new LinkedHashMap<>();
+                    abBox.put("x", abX); abBox.put("y", abY);
+                    abBox.put("width", abW); abBox.put("height", abH);
+                    Map<String, Object> extracted = workerClient.extractArtboard(dest.getAbsolutePath(), abBox);
+                    cached.setPreviewBase64((String) extracted.get("previewBase64"));
+                } catch (Exception previewEx) {
+                    log.warn("캐시 히트 프리뷰 재생성 실패: {}", previewEx.getMessage());
+                }
+                return cached;
+            }
+
             Map<String, Integer> artboardBox = new LinkedHashMap<>();
             artboardBox.put("x", abX);
             artboardBox.put("y", abY);
@@ -97,6 +124,7 @@ public class PsdObjectAnalysisService {
             boolean reflowReady = computeReflowReady(objectResults);
             List<String> missingRoles = computeMissingRequiredRoles(objectResults);
 
+            LocalDateTime now = LocalDateTime.now();
             PsdObjectAnalysis doc = new PsdObjectAnalysis();
             doc.setPsdPath(dest.getAbsolutePath());
             doc.setSelectedArtboardId(selectedArtboardId);
@@ -106,13 +134,50 @@ public class PsdObjectAnalysisService {
             doc.setObjects(objectResults);
             doc.setReflowReady(reflowReady);
             doc.setMissingRequiredRoles(missingRoles);
-            doc.setCreatedAt(LocalDateTime.now());
+            doc.setSourceFileSha256(sourceFileSha256);
+            doc.setCacheKey(cacheKey);
+            doc.setStatus("READY");
+            doc.setGptRequestCount(1);
+            doc.setAnalysisVersion(ANALYSIS_VERSION);
+            doc.setModel(openAiObjectModel);
+            doc.setAnalysisCacheHit(false);
+            doc.setAnalyzedAt(now);
+            doc.setCreatedAt(now);
+            doc.setUpdatedAt(now);
             doc.setPreviewBase64(previewBase64);  // @Transient — 저장 안 됨
 
             return mongoService.save(doc);
         } finally {
             // temp PSD 삭제
             if (dest.exists()) dest.delete();
+        }
+    }
+
+    private String computeFileSha256(File file) {
+        try {
+            byte[] bytes = Files.readAllBytes(file.toPath());
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(bytes);
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("PSD SHA-256 계산 실패: {}", e.getMessage());
+            return UUID.randomUUID().toString().replace("-", "");
+        }
+    }
+
+    private String computeCacheKey(String sourceFileSha256, int abX, int abY, int abW, int abH) {
+        String raw = String.join(":", sourceFileSha256, String.valueOf(abX), String.valueOf(abY),
+                String.valueOf(abW), String.valueOf(abH), ANALYSIS_VERSION, openAiObjectModel);
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return UUID.randomUUID().toString().replace("-", "");
         }
     }
 

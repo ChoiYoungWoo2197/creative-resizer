@@ -26,7 +26,18 @@ public class PsdObjectAnalysis {
     private boolean reflowReady;
     private List<String> missingRequiredRoles;
 
+    // Cache / provenance fields
+    private String sourceFileSha256;
+    private String cacheKey;
+    private String status;              // PENDING / READY / FAILED
+    private Integer gptRequestCount;
+    private String analysisVersion;
+    private String model;
+    private Boolean analysisCacheHit;
+
+    private LocalDateTime analyzedAt;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
     /** 프리뷰 이미지(base64). MongoDB에 저장되지 않으며 HTTP 응답에만 포함된다. */
     @Transient

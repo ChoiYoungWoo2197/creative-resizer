@@ -103,6 +103,7 @@ class BatchResult:
     artifactPath: str = ""
     workDir: str = ""
     error: str = ""
+    semanticRoleVerdict: str = "NOT_AVAILABLE"
 
 
 # ── File SHA helper ───────────────────────────────────────────────────────────
@@ -123,6 +124,8 @@ def run_batch(
     dry_run: bool = True,
     psd_names: list[str] | None = None,
     specs: list[dict] | None = None,
+    analysis_dir: str | None = None,
+    require_analysis: bool = False,
 ) -> tuple[list[BatchResult], dict]:
     """Run golden batch.  Returns (results, isolation_report)."""
     from background.source_faithful_repair import run_source_faithful_repair
@@ -197,6 +200,73 @@ def run_batch(
         except Exception as _le:
             print(f"[BATCH] PSD layer parse warning psd={psd_name}: {_le}", flush=True)
 
+        # Stage 21.5: Load object analysis fixture if --analysis-dir is specified
+        fixture_analysis: dict | None = None
+        semantic_role_source = "heuristic"
+        if analysis_dir:
+            fixture_stem = psd_name.replace(".psd", "").replace(".psb", "")
+            fixture_candidates = [
+                os.path.join(analysis_dir, fixture_stem + ".json"),
+                os.path.join(analysis_dir, psd_name + ".json"),
+            ]
+            for fp in fixture_candidates:
+                if os.path.exists(fp):
+                    try:
+                        with open(fp, encoding="utf-8") as _ff:
+                            fixture_analysis = json.load(_ff)
+                        print(
+                            f"[FIXTURE] Loaded object analysis fixture:"
+                            f" psd={psd_name} file={fp}",
+                            flush=True,
+                        )
+                        semantic_role_source = "fixture"
+                    except Exception as _fe:
+                        print(
+                            f"[FIXTURE] Failed to load fixture {fp}: {_fe}", flush=True
+                        )
+                    break
+            if fixture_analysis is None and require_analysis:
+                print(
+                    f"[FIXTURE] ERROR: --require-analysis set but no fixture found"
+                    f" for psd={psd_name}",
+                    flush=True,
+                )
+                for spec in (specs or TARGET_SPECS):
+                    r = BatchResult(
+                        index=idx,
+                        filename=psd_name,
+                        specId=f"{spec['width']}x{spec['height']}",
+                        width=spec["width"],
+                        height=spec["height"],
+                        verdict="ERROR",
+                        failReasons=["NO_FIXTURE: --require-analysis set"],
+                        error="no_fixture",
+                        semanticRoleVerdict="NOT_AVAILABLE",
+                    )
+                    all_results.append(r)
+                    idx += 1
+                continue
+
+        # Apply object map from fixture to override heuristic roles
+        if fixture_analysis and fixture_analysis.get("objects"):
+            try:
+                from object_map_applicator import apply_object_map
+                psd_layers_classified, _apply_logs = apply_object_map(
+                    psd_layers_classified, fixture_analysis["objects"]
+                )
+                _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
+                print(
+                    f"[FIXTURE] Object map applied:"
+                    f" psd={psd_name} applied={_applied}/{len(_apply_logs)}"
+                    f" roles={sorted({l.get('role') for l in psd_layers_classified})}",
+                    flush=True,
+                )
+            except Exception as _omap_err:
+                print(
+                    f"[FIXTURE] apply_object_map failed psd={psd_name}: {_omap_err}",
+                    flush=True,
+                )
+
         for spec in target_specs:
             t0 = time.time()
             w, h = spec["width"], spec["height"]
@@ -227,6 +297,16 @@ def run_batch(
                 workDir=_work_dir,
             )
             br.detectedRoles = sorted({lyr.get("role") for lyr in psd_layers_classified})
+
+            # Semantic role verdict based on object map fixture (pre-SFR)
+            if semantic_role_source == "fixture":
+                _sem_missing = [
+                    r for r in REQUIRED_PLACED_ROLES
+                    if r not in br.detectedRoles
+                ]
+                br.semanticRoleVerdict = "PASS" if not _sem_missing else "FAIL"
+            else:
+                br.semanticRoleVerdict = "NOT_AVAILABLE"
 
             try:
                 sfr_dir = os.path.join(output_dir, "sfr", job_id)
@@ -564,7 +644,7 @@ _CSV_COLS = [
     "width", "height",
     "detectedRoles", "placedRoles", "missingRequiredRoles",
     "providerRequestCount", "smartFitInvocations", "legacyFallbackInvocations",
-    "elapsedMs", "verdict", "failReasons", "artifactPath",
+    "elapsedMs", "verdict", "semanticRoleVerdict", "failReasons", "artifactPath",
 ]
 
 
@@ -626,14 +706,15 @@ def write_markdown(results: list[BatchResult], isolation: dict, path: str) -> No
         f"A-A-stable: {aba.get('aAStable')}\n"
     )
 
-    lines.append("\n| # | File | Spec | Verdict | Placed | Missing | Attempts | SHA256(composite) | Fail Reasons |")
-    lines.append("|---|------|------|---------|--------|---------|----------|-------------------|--------------|")
+    lines.append("\n| # | File | Spec | Verdict | SemanticRole | Placed | Missing | Attempts | SHA256(composite) | Fail Reasons |")
+    lines.append("|---|------|------|---------|--------------|--------|---------|----------|-------------------|--------------|")
     for r in results:
         placed = " ".join(r.placedRoles or [])
         missing = " ".join(r.missingRequiredRoles or [])
         reasons = " ".join(r.failReasons or [])
         lines.append(
             f"| {r.index} | {r.filename} | {r.specId or f'{r.width}x{r.height}'} | {r.verdict}"
+            f" | {getattr(r, 'semanticRoleVerdict', 'N/A')}"
             f" | {placed or '-'} | {missing or '-'} | {r.providerRequestCount}"
             f" | {r.compositeSha256} | {reasons or '-'} |"
         )
@@ -705,6 +786,11 @@ def main() -> None:
                     help="Override golden PSD names (default: GOLDEN_PSD_NAMES)")
     ap.add_argument("--specs", nargs="*", default=None,
                     help="Target specs as WxH, e.g. --specs 1250x560 900x900 (default: TARGET_SPECS)")
+    ap.add_argument("--analysis-dir", default=None,
+                    help="Directory containing object analysis fixture JSON files per PSD."
+                         " Filename must match PSD stem: <psd-name>.json")
+    ap.add_argument("--require-analysis", action="store_true", default=False,
+                    help="Abort (ERROR) if --analysis-dir is set but no fixture exists for a PSD")
     args = ap.parse_args()
 
     dry_run = not args.actual_ai
@@ -749,12 +835,19 @@ def main() -> None:
         flush=True,
     )
 
+    analysis_dir = args.analysis_dir
+    if analysis_dir and not os.path.isdir(analysis_dir):
+        print(f"[BATCH] --analysis-dir not found: {analysis_dir}", file=sys.stderr)
+        sys.exit(2)
+
     results, isolation = run_batch(
         psd_dir=psd_dir,
         output_dir=output_dir,
         dry_run=dry_run,
         psd_names=psd_names,
         specs=target_specs,
+        analysis_dir=analysis_dir,
+        require_analysis=args.require_analysis,
     )
 
     # Write outputs

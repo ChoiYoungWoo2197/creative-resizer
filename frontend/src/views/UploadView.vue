@@ -542,6 +542,7 @@ const objAnalyzing        = ref(false)
 const objAnalysisResult   = ref(null)
 const objAnalysisError    = ref(null)
 const objAnalysisArtboardId = ref(null)
+const objAnalysisId       = ref(null)    // 저장된 PsdObjectAnalysis MongoDB ID (submit 시 전송)
 const previewWrapRef      = ref(null)
 const previewImgMeta      = ref(null)
 const hoveredObjId        = ref(null)
@@ -768,6 +769,7 @@ function clearFile() {
   psdMode.value = 'artboard-first'
   objAnalyzing.value = false; objAnalysisResult.value = null; objAnalysisError.value = null
   objAnalysisArtboardId.value = null; previewImgMeta.value = null
+  objAnalysisId.value = null
   hoveredObjId.value = null; selectedObjId.value = null
 }
 
@@ -914,6 +916,7 @@ async function runObjectAnalysis() {
     }
     const { data } = await analyzePsdObjects(fd)
     objAnalysisResult.value = data
+    objAnalysisId.value = data?.id ?? null   // 캐시 재사용을 위해 분석 ID 보관
     if (objReflowCanActivate.value) {
       psdMode.value = 'object-reflow'
     }
@@ -1087,6 +1090,9 @@ async function submit() {
   fd.append('outputFormat', form.outputFormat)
   if (isPsdFile.value) {
     fd.append('psdMode', 'artboard-first')
+  }
+  if (objAnalysisId.value) {
+    fd.append('objectAnalysisId', objAnalysisId.value)
   }
 
   loading.value = true

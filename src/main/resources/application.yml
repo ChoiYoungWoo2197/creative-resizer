@@ -38,6 +38,11 @@ creative:
     compare-model: ${OPENAI_COMPARE_MODEL:gpt-5-mini}
     fallback-model: ${OPENAI_FALLBACK_MODEL:gpt-4.1-mini}
     image-detail: ${OPENAI_IMAGE_DETAIL:high}
+  psd-object-analysis:
+    reuse-enabled: ${PSD_OBJECT_ANALYSIS_REUSE_ENABLED:true}
+    on-generate: ${PSD_OBJECT_ANALYSIS_ON_GENERATE:false}
+    required-for-psd: ${PSD_OBJECT_ANALYSIS_REQUIRED_FOR_PSD:false}
+    analysis-version: psd-object-map-v1
 
 ---
 spring:

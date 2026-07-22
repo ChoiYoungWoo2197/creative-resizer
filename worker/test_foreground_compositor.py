@@ -913,9 +913,112 @@ check("T54b: render_ctx.prompt_contains_mother_hand_terms is False for v2",
       f"got={_ctx_t54.prompt_contains_mother_hand_terms}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# T55-T65: Object Map Applicator tests
+# ==============================================================================
+
+print("\n--- Object Map Applicator ---")
+from object_map_applicator import apply_object_map
+
+def _make_layer(lid, name, ltype, role, text=None):
+    return {
+        "id": lid, "name": name, "type": ltype, "role": role, "priority": "required",
+        "bbox": {"x": 0, "y": 0, "width": 200, "height": 100},
+        "canvasWidth": 1200, "canvasHeight": 628,
+        "textContent": text,
+        "objectMapApplied": False,
+    }
+
+def _obj(mid, mname, role, status="ready", conf=0.9):
+    return {"matchedLayerId": mid, "matchedLayerName": mname,
+            "role": role, "matchStatus": status, "confidence": conf}
+
+# T55: layerId exact match overrides role
+_l55 = [_make_layer("prod_10_20", "제품", "smartobject", "main_image")]
+_o55 = [_obj("prod_10_20", "제품", "product")]
+_r55, _logs55 = apply_object_map(_l55, _o55)
+check("T55: layerId exact match -> product", _r55[0]["role"] == "product")
+check("T55b: applied=True", _logs55[0]["applied"] is True)
+check("T55c: matchMethod=layerId_exact", _logs55[0]["matchMethod"] == "layerId_exact")
+
+# T56: name fallback when layerId is placeholder
+_l56 = [_make_layer("손글씨_100_200", "손글씨", "type", "human_subject", "어머님 손에 금보다 필요한 건?")]
+_o56 = [_obj("__PLACEHOLDER__", "손글씨", "title")]
+_r56, _logs56 = apply_object_map(_l56, _o56)
+check("T56: name_fallback -> title", _r56[0]["role"] == "title")
+check("T56b: applied=True", _logs56[0]["applied"] is True)
+check("T56c: matchMethod=name_fallback", _logs56[0]["matchMethod"] == "name_fallback")
+
+# T57: missing_layer entries are NOT applied
+_l57 = [_make_layer("layer_0_0", "배경", "pixel", "main_image")]
+_o57 = [_obj("layer_0_0", "배경", "background", status="missing_layer")]
+_r57, _logs57 = apply_object_map(_l57, _o57)
+check("T57: missing_layer not applied", _r57[0]["role"] == "main_image")
+check("T57b: no logs", len(_logs57) == 0)
+
+# T58: same role -> not applied (no-op)
+_l58 = [_make_layer("bg_0_0", "배경", "pixel", "background")]
+_o58 = [_obj("bg_0_0", "배경", "background")]
+_r58, _logs58 = apply_object_map(_l58, _o58)
+check("T58: same role -> applied=False", len(_logs58) == 0 or _logs58[0].get("applied") is False)
+
+# T59: empty objects list -> no change
+_l59 = [_make_layer("layer_0_0", "X", "pixel", "unknown")]
+_r59, _logs59 = apply_object_map(_l59, [])
+check("T59: empty objects -> no change", _r59[0]["role"] == "unknown")
+check("T59b: no logs", len(_logs59) == 0)
+
+# T60: multiple layers, only matched ones updated
+_l60 = [
+    _make_layer("prod_50_50", "제품", "smartobject", "main_image"),
+    _make_layer("bg_0_0", "배경", "pixel", "main_image"),
+    _make_layer("text_0_500", "텍스트", "type", "body_text"),
+]
+_o60 = [
+    _obj("prod_50_50", "제품", "product"),
+    _obj("bg_0_0", "배경", "background"),
+]
+_r60, _logs60 = apply_object_map(_l60, _o60)
+check("T60: product matched", _r60[0]["role"] == "product")
+check("T60b: background matched", _r60[1]["role"] == "background")
+check("T60c: unmatched stays body_text", _r60[2]["role"] == "body_text")
+check("T60d: 2 logs", len([lg for lg in _logs60 if lg["applied"]]) == 2)
+
+# T61: text_content fallback for type layer
+_l61 = [_make_layer("copy_100_400", "copy", "type", "body_text", "어머님 손에 금보다 필요한 건?")]
+_o61 = [_obj("__PLACEHOLDER__", "어머님 손에 금보다 필요한 건?", "title")]
+_r61, _logs61 = apply_object_map(_l61, _o61)
+check("T61: text_content_fallback -> title", _r61[0]["role"] == "title")
+
+# T62: objectMapApplied flag set on layer
+_l62 = [_make_layer("layer_0_0", "레이어", "pixel", "unknown")]
+_o62 = [_obj("layer_0_0", "레이어", "product")]
+_r62, _logs62 = apply_object_map(_l62, _o62)
+check("T62: objectMapApplied flag set", _r62[0].get("objectMapApplied") is True)
+
+# T63: matched_low_confidence entry IS applied
+_l63 = [_make_layer("layer_0_0", "레이어", "pixel", "unknown")]
+_o63 = [_obj("layer_0_0", "레이어", "product", status="matched_low_confidence", conf=0.55)]
+_r63, _logs63 = apply_object_map(_l63, _o63)
+check("T63: matched_low_confidence applied", _r63[0]["role"] == "product")
+
+# T64: unknown role entries NOT applied
+_l64 = [_make_layer("layer_0_0", "레이어", "pixel", "main_image")]
+_o64 = [_obj("layer_0_0", "레이어", "unknown")]
+_r64, _logs64 = apply_object_map(_l64, _o64)
+check("T64: unknown role not applied", _r64[0]["role"] == "main_image")
+
+# T65: priority updated after role override
+_l65 = [_make_layer("layer_0_0", "레이어", "pixel", "decorative")]
+_l65[0]["priority"] = "optional"
+_o65 = [_obj("layer_0_0", "레이어", "title")]
+_r65, _logs65 = apply_object_map(_l65, _o65)
+check("T65: priority updated to required after title override", _r65[0].get("priority") == "required")
+
+
+# ==============================================================================
 # Result
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 total = PASS + FAIL
 print(f"\n{'='*60}")

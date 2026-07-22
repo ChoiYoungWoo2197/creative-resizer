@@ -1170,6 +1170,29 @@ def _generate_ai_only(
                     f" roles={detected_roles}",
                     flush=True,
                 )
+
+                # Stage 21.5: Apply Object Map if provided (overrides heuristic roles)
+                _obj_results = (object_analysis or {}).get("objects") or []
+                if _obj_results:
+                    try:
+                        from object_map_applicator import apply_object_map
+                        psd_layers_classified, _apply_logs = apply_object_map(
+                            psd_layers_classified, _obj_results
+                        )
+                        _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
+                        _analysis_id = (object_analysis or {}).get("id", "")
+                        print(
+                            f"[PSD_OBJECT_ANALYSIS] objectMapApplied"
+                            f" analysisId={_analysis_id}"
+                            f" appliedCount={_applied}/{len(_apply_logs)}"
+                            f" newRoles={sorted({l.get('role') for l in psd_layers_classified})}",
+                            flush=True,
+                        )
+                    except Exception as _omap_err:
+                        print(
+                            f"[PSD_OBJECT_ANALYSIS] apply_object_map failed: {_omap_err}",
+                            flush=True,
+                        )
         except Exception as _psd_err:
             print(f"[STAGE21] PSD layer parse failed, foreground compositor disabled: {_psd_err}", flush=True)
             psd_layers_classified = []
