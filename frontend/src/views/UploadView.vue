@@ -203,46 +203,18 @@
           </div>
         </div>
 
-        <!-- Advanced -->
+        <!-- AI 자동 재구성 -->
         <div class="sec">
           <div class="sec-head" @click="advOpen = !advOpen">
-            <span class="sec-title">고급 옵션</span>
+            <span class="sec-title">렌더링 옵션</span>
             <span class="chevron" :class="{ up: advOpen }">›</span>
           </div>
           <div v-show="advOpen" class="sec-body adv-body">
-            <div class="adv-row">
-              <span class="adv-label">리사이즈</span>
-              <div class="adv-chips">
-                <button v-for="r in resizeOptions" :key="r.value" type="button"
-                  class="adv-chip" :class="{ on: form.resizeMode === r.value }"
-                  @click="form.resizeMode = r.value">{{ r.label }}</button>
-              </div>
-            </div>
-            <div v-if="form.resizeMode === 'smart-fit'" class="adv-row">
-              <span class="adv-label">소재 유형</span>
-              <div class="adv-chips">
-                <button v-for="t in materialTypeOptions" :key="t.value" type="button"
-                  class="adv-chip" :class="{ on: materialType === t.value }"
-                  @click="selectMaterialType(t.value)">{{ t.label }}</button>
-              </div>
-            </div>
-            <div v-if="form.resizeMode === 'smart-fit'" class="adv-row">
-              <span class="adv-label">강도</span>
-              <div class="adv-chips">
-                <button v-for="s in smartFitOptions" :key="s.value" type="button"
-                  class="adv-chip" :class="{ on: form.smartFitStrength === s.value }"
-                  @click="selectStrength(s.value)">{{ s.label }}</button>
-              </div>
-            </div>
-            <div v-if="form.resizeMode === 'smart-fit' && currentMaterialHint" class="ai-strength-hint">
-              <span class="ai-hint-star">✦</span> {{ currentMaterialHint }}
-            </div>
-            <div v-if="form.resizeMode === 'smart-fit'" class="adv-row adv-row-pos">
-              <span class="adv-label">위치</span>
-              <div class="adv-pos-grid">
-                <button v-for="p in focalPositionOptions" :key="p.value" type="button"
-                  class="adv-chip adv-chip-pos" :class="{ on: form.focalPosition === p.value }"
-                  @click="form.focalPosition = p.value">{{ p.label }}</button>
+            <div class="ai-only-notice">
+              <span class="ai-only-icon">✦</span>
+              <div class="ai-only-content">
+                <strong class="ai-only-title">AI 자동 재구성</strong>
+                <span class="ai-only-desc">Stage 20.3 Source-Faithful Repair — 소재의 핵심 요소를 보존하면서 AI가 각 규격에 맞는 배경을 자동 생성합니다.</span>
               </div>
             </div>
             <div class="adv-row">
@@ -1109,26 +1081,12 @@ async function submit() {
   fd.append('advertiser', form.advertiser)
   fd.append('campaignName', form.campaignName)
   selectedSpecIds.value.forEach(id => fd.append('specIds', id))
-  fd.append('resizeMode', form.resizeMode)
-  fd.append('smartFitStrength', form.smartFitStrength)
-  fd.append('focalPosition', form.focalPosition)
+  fd.append('resizeMode', 'ai-auto')
+  fd.append('smartFitStrength', 'balanced')
+  fd.append('focalPosition', 'center')
   fd.append('outputFormat', form.outputFormat)
   if (isPsdFile.value) {
-    fd.append('psdMode', psdMode.value || 'artboard-first')
-    if (selectedArtboardIds.value.length > 0) {
-      selectedArtboardIds.value.forEach(id => fd.append('selectedArtboardIds', id))
-    }
-  }
-  if (aiAnalysis.value?.id) {
-    fd.append('aiAnalysisId', aiAnalysis.value.id)
-    fd.append('aiApplied', String(aiApplied.value))
-    fd.append('aiRecommendedResizeMode', aiAnalysis.value.resizeMode ?? '')
-    fd.append('aiRecommendedSmartFitStrength', aiAnalysis.value.smartFitStrength ?? '')
-    fd.append('aiRecommendedFocalPosition', aiAnalysis.value.focalPosition ?? '')
-  }
-  if (isPsdFile.value && psdMode.value === 'object-reflow' && objAnalysisResult.value?.id) {
-    fd.append('objectAnalysisId', objAnalysisResult.value.id)
-    fd.append('objectReflowEnabled', 'true')
+    fd.append('psdMode', 'artboard-first')
   }
 
   loading.value = true
@@ -1290,6 +1248,17 @@ onMounted(loadSpecs)
 .adv-chip  { padding: 4px 10px; border-radius: 100px; border: 1px solid #E5E8EB; background: #fff; font-size: 11px; color: #6B7684; cursor: pointer; font-family: inherit; transition: all 0.1s; }
 .adv-chip:hover { border-color: #7C3AED; color: #7C3AED; }
 .adv-chip.on    { background: #333D4B; border-color: #333D4B; color: #fff; font-weight: 600; }
+
+.ai-only-notice {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: linear-gradient(135deg, #F0F4FF 0%, #F5F0FF 100%);
+  border: 1px solid #C4B5FD; border-radius: 10px;
+  padding: 12px 13px; margin-bottom: 12px;
+}
+.ai-only-icon { font-size: 16px; color: #7C3AED; flex-shrink: 0; margin-top: 1px; }
+.ai-only-content { display: flex; flex-direction: column; gap: 3px; }
+.ai-only-title { font-size: 12px; font-weight: 700; color: #5B21B6; }
+.ai-only-desc { font-size: 10.5px; color: #6D28D9; line-height: 1.5; }
 
 .ai-strength-hint {
   display: flex; align-items: center; gap: 5px;

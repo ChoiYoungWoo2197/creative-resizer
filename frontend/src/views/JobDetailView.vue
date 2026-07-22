@@ -237,16 +237,38 @@
               </div>
               <!-- Stage 20.3: Render Provenance (요청 모드 vs 실제 적용 모드) -->
               <div v-if="r.renderProvenance" class="provenance-row">
-                <span v-if="r.renderProvenance.forcedSmartFit" class="provenance-forced">
-                  ⚠ 강제 스마트 맞춤 (요청: {{ resizeModeLabel(r.renderProvenance.requestedResizeMode) }})
-                </span>
-                <span v-if="r.renderProvenance.blurFillUsed" class="provenance-blur">
-                  ◈ 블러 배경 적용됨
-                </span>
-                <span v-if="r.renderProvenance.effectiveResizeMode && r.renderProvenance.effectiveResizeMode !== r.renderProvenance.requestedResizeMode"
-                      class="provenance-mode">
-                  실제: {{ resizeModeLabel(r.renderProvenance.effectiveResizeMode) }}
-                </span>
+                <!-- AI-only 경로 -->
+                <template v-if="r.renderProvenance.renderPolicy === 'ai-only'">
+                  <span class="provenance-ai-only">
+                    ✦ AI 자동 처리
+                  </span>
+                  <span v-if="r.renderProvenance.effectiveRenderer" class="provenance-renderer">
+                    {{ r.renderProvenance.effectiveRenderer }}
+                  </span>
+                  <span v-if="r.renderProvenance.backgroundAiProvider" class="provenance-provider">
+                    {{ r.renderProvenance.backgroundAiProvider }}
+                    <template v-if="r.renderProvenance.backgroundAiModel"> · {{ r.renderProvenance.backgroundAiModel }}</template>
+                  </span>
+                  <span v-if="r.renderProvenance.sourceFaithfulnessScore" class="provenance-score">
+                    신뢰도 {{ Math.round(r.renderProvenance.sourceFaithfulnessScore) }}점
+                  </span>
+                  <span v-if="r.renderProvenance.backgroundAiAttemptCount > 1" class="provenance-attempts">
+                    {{ r.renderProvenance.backgroundAiAttemptCount }}회 시도
+                  </span>
+                </template>
+                <!-- 레거시 경로 (AI_ONLY 이전) -->
+                <template v-else>
+                  <span v-if="r.renderProvenance.forcedSmartFit" class="provenance-forced">
+                    ⚠ 강제 스마트 맞춤 (요청: {{ resizeModeLabel(r.renderProvenance.requestedResizeMode) }})
+                  </span>
+                  <span v-if="r.renderProvenance.blurFillUsed" class="provenance-blur">
+                    ◈ 블러 배경 적용됨
+                  </span>
+                  <span v-if="r.renderProvenance.effectiveResizeMode && r.renderProvenance.effectiveResizeMode !== r.renderProvenance.requestedResizeMode"
+                        class="provenance-mode">
+                    실제: {{ resizeModeLabel(r.renderProvenance.effectiveResizeMode) }}
+                  </span>
+                </template>
               </div>
             </div>
             <div class="card-actions">
@@ -1454,9 +1476,44 @@ onUnmounted(stopPolling)
   background: #EEF2FF; color: #3730A3;
   border: 1px solid #A5B4FC;
 }
+.provenance-ai-only {
+  padding: 2px 8px; border-radius: 4px;
+  background: #F5F3FF; color: #5B21B6;
+  border: 1px solid #C4B5FD;
+  font-weight: 700;
+}
+.provenance-renderer {
+  padding: 2px 6px; border-radius: 4px;
+  background: #EDE9FE; color: #6D28D9;
+  border: 1px solid #DDD6FE;
+  font-size: 9.5px; font-weight: 600;
+}
+.provenance-provider {
+  padding: 2px 6px; border-radius: 4px;
+  background: #F0FDF4; color: #166534;
+  border: 1px solid #BBF7D0;
+  font-size: 9.5px;
+}
+.provenance-score {
+  padding: 2px 6px; border-radius: 4px;
+  background: #FFF7ED; color: #9A3412;
+  border: 1px solid #FED7AA;
+  font-size: 9.5px; font-weight: 600;
+}
+.provenance-attempts {
+  padding: 2px 6px; border-radius: 4px;
+  background: #F8FAFC; color: #64748B;
+  border: 1px solid #E2E8F0;
+  font-size: 9.5px;
+}
 @media (prefers-color-scheme: dark) {
-  .provenance-forced { background: #451A03; color: #FCD34D; border-color: #92400E; }
-  .provenance-blur   { background: #450A0A; color: #FCA5A5; border-color: #991B1B; }
-  .provenance-mode   { background: #1E1B4B; color: #A5B4FC; border-color: #3730A3; }
+  .provenance-forced   { background: #451A03; color: #FCD34D; border-color: #92400E; }
+  .provenance-blur     { background: #450A0A; color: #FCA5A5; border-color: #991B1B; }
+  .provenance-mode     { background: #1E1B4B; color: #A5B4FC; border-color: #3730A3; }
+  .provenance-ai-only  { background: #2E1065; color: #C4B5FD; border-color: #7C3AED; }
+  .provenance-renderer { background: #2E1065; color: #DDD6FE; border-color: #7C3AED; }
+  .provenance-provider { background: #052E16; color: #86EFAC; border-color: #166534; }
+  .provenance-score    { background: #431407; color: #FED7AA; border-color: #9A3412; }
+  .provenance-attempts { background: #1E293B; color: #94A3B8; border-color: #334155; }
 }
 </style>

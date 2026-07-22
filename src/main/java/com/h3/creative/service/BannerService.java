@@ -69,6 +69,7 @@ public class BannerService {
         job.setTargetMedia(targetMedia);
         job.setSpecIds(specIds);
         job.setResizeMode(resizeMode);
+        job.setRenderPolicy("ai-auto".equals(resizeMode) ? "ai-only" : "legacy");
         job.setSmartFitStrength(smartFitStrength);
         job.setFocalPosition(focalPosition);
         job.setOutputFormat(outputFormat);

@@ -1089,6 +1089,181 @@ def _try_background_pipeline(
     return out
 
 
+def _generate_ai_only(
+    psd_path: str,
+    specs: list,
+    resize_mode: str,
+    output_format: str,
+    output_dir: str,
+    smart_fit_strength: str = "balanced",
+    focal_position: str = "center",
+    source_type: str = "image",
+    psd_mode: str = "artboard-first",
+    selected_artboard_ids: list | None = None,
+    object_reflow_enabled: bool = False,
+    object_analysis: dict | None = None,
+    job_id: str | None = None,
+    _provider_override=None,
+) -> tuple:
+    """Stage 20.3 AI-only rendering (Source-Faithful Repair).
+
+    Fail-closed: raises RuntimeError on any AI failure. No legacy fallback.
+    classify_layers=[] for all inputs — AI handles full canvas repair/outpaint.
+    """
+    from background.source_faithful_repair import run_source_faithful_repair
+    from background.external_provider import ProviderFactory
+
+    print(f"[{job_id or 'job'}][AI_ONLY] source_type={source_type} specs={len(specs)}")
+
+    provider = _provider_override
+    if provider is None:
+        try:
+            provider = ProviderFactory.create(enable_external=True, use_fake_for_test=False)
+        except Exception as exc:
+            raise RuntimeError(f"AI_ONLY_RENDERING: provider build failed: {exc}") from exc
+        if provider is None:
+            raise RuntimeError("AI_ONLY_RENDERING: no AI provider (BACKGROUND_AI_API_KEY not set)")
+
+    img, source_meta = load_source_image(psd_path)
+    max_attempts = int(os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "3"))
+    results = []
+
+    for spec in specs:
+        media = spec["media"]
+        w = spec["width"]
+        h = spec["height"]
+        slug = spec.get("slug", "")
+        name = spec.get("name", "")
+
+        sfr_dir = os.path.join(output_dir, "stage20_3", f"{w}x{h}")
+        sfr = run_source_faithful_repair(
+            source_image=img,
+            classified_layers=[],
+            target_w=w,
+            target_h=h,
+            provider=provider,
+            max_attempts=max_attempts,
+            request_id=f"{job_id or 'job'}_{w}x{h}",
+            output_dir=sfr_dir,
+        )
+
+        print(
+            f"[{job_id or 'job'}][AI_ONLY] spec={name} {w}x{h}"
+            f" verdict={sfr.verdict} success={sfr.success}"
+            f" provider={sfr.background_ai_provider} attempts={sfr.background_ai_attempt_count}"
+            f" faithfulness={sfr.source_faithfulness_score:.1f}"
+        )
+
+        if not sfr.success or sfr.repair_image is None:
+            raise RuntimeError(
+                f"AI_ONLY_RENDERING fail_closed: spec={name} {w}x{h}"
+                f" reason={sfr.failure_reason} verdict={sfr.verdict}"
+            )
+
+        result_img = sfr.repair_image
+        if result_img.size != (w, h):
+            result_img = result_img.resize((w, h), Image.LANCZOS)
+
+        if output_format in ("jpg", "jpeg"):
+            result_img = result_img.convert("RGB")
+            ext = "jpg"
+        else:
+            ext = output_format
+
+        slug_part = f"_{slug}" if slug else ""
+        filename = f"{media}{slug_part}_{w}x{h}.{ext}"
+        out_path = os.path.join(output_dir, filename)
+        os.makedirs(output_dir, exist_ok=True)
+        result_img.save(out_path)
+
+        file_size = os.path.getsize(out_path)
+        with Image.open(out_path) as check_img:
+            actual_w, actual_h = check_img.size
+        valid = (actual_w == w and actual_h == h)
+
+        results.append({
+            "media": media,
+            "name": name,
+            "slug": slug,
+            "width": w,
+            "height": h,
+            "fileName": filename,
+            "filePath": out_path,
+            "fileSize": file_size,
+            "valid": valid,
+            "validationMessage": "정상" if valid else f"expected={w}x{h} actual={actual_w}x{actual_h}",
+            "selectedArtboardId": None,
+            "selectedArtboardName": None,
+            "actualPsdRenderMode": "ai-source-faithful-repair",
+            "renderSource": source_meta.get("renderSource", "unknown"),
+            "fallbackUsed": source_meta.get("fallbackUsed", False),
+            "fallbackReason": source_meta.get("fallbackReason"),
+            "fallbackErrors": source_meta.get("fallbackErrors", []),
+            "sourceWidth": source_meta.get("sourceWidth"),
+            "sourceHeight": source_meta.get("sourceHeight"),
+            "layerReflowAttempted": False,
+            "layerReflowSucceeded": False,
+            "layerReflowError": None,
+            "layerReflowExtractedLayerCount": 0,
+            "layerReflowDetectedRoles": [],
+            "layerReflowTemplate": None,
+            "usedLayerRoles": [],
+            "resizeStrategy": "source-faithful-ai-repair",
+            "candidateType": None,
+            "candidateScore": None,
+            "blurAreaRatio": None,
+            "cropRatio": None,
+            "subjectScale": None,
+            "qualityGate": None,
+            "qualityLabel": None,
+            "safeZonePass": None,
+            "safeZoneViolations": [],
+            "requiredLayerMissing": None,
+            "renderMode": "ai-only",
+            "objectReflowUsed": False,
+            "objectReflowFallbackUsed": False,
+            "layoutScore": sfr.overall_repair_score,
+            "backgroundMode": "source_faithful_repair",
+            "candidateCount": sfr.background_ai_candidate_count,
+            "selectedCandidateId": f"sfr:{sfr.background_ai_provider}",
+            "backgroundPipelineExecuted": True,
+            "backgroundPipelineEnabled": True,
+            "backgroundCompareOnly": False,
+            "bestEvaluatedBackgroundSource": sfr.applied_background_source,
+            "appliedBackgroundSource": sfr.applied_background_source,
+            "appliedBackgroundScore": sfr.source_faithfulness_score,
+            "backgroundFallbackUsed": False,
+            "backgroundFallbackReason": "",
+            "externalInpaintAttempted": sfr.background_ai_executed,
+            "outpaintAttempted": sfr.outpaint_mask_ratio > 0,
+            "shadowApplied": False,
+            "renderProvenance": {
+                "renderPolicy": "ai-only",
+                "requestedResizeMode": resize_mode,
+                "effectiveResizeMode": "ai-auto",
+                "effectiveRenderer": "source-faithful-ai-repair",
+                "selectedMode": "ai-source-faithful",
+                "backgroundGenerationMode": "source_faithful_repair",
+                "backgroundAiExecuted": sfr.background_ai_executed,
+                "backgroundAiProvider": sfr.background_ai_provider,
+                "backgroundAiModel": sfr.background_ai_model,
+                "backgroundAiSucceeded": sfr.background_ai_succeeded,
+                "backgroundAiAttemptCount": sfr.background_ai_attempt_count,
+                "sourceFaithfulnessScore": sfr.source_faithfulness_score,
+                "blurFillUsed": False,
+                "forcedSmartFit": False,
+                "sourceType": source_type,
+                "psdMode": psd_mode if source_type == "psd" else None,
+                "backgroundPipelineUsed": True,
+                "sourceFaithfulRepairUsed": True,
+                "failClosed": True,
+                "verdict": sfr.verdict,
+            },
+        })
+
+    return results, []
+
+
 def generate_candidates(input_path: str, output_dir: str, spec: dict,
                         resize_mode: str = "smart-fit", focal_position: str = "center",
                         strengths: list = None, detected_elements: list = None,
@@ -1159,6 +1334,14 @@ def generate(psd_path: str, specs: list[dict], resize_mode: str,
     """returns (results, missingRatioTypes)"""
 
     os.makedirs(output_dir, exist_ok=True)
+
+    # Stage 20.3 AI-only routing gate: resize_mode=='ai-auto' OR AI_ONLY_RENDERING=true
+    if resize_mode == "ai-auto" or os.environ.get("AI_ONLY_RENDERING", "false").lower() == "true":
+        return _generate_ai_only(
+            psd_path, specs, resize_mode, output_format, output_dir,
+            smart_fit_strength, focal_position, source_type, psd_mode,
+            selected_artboard_ids, object_reflow_enabled, object_analysis, job_id
+        )
     results = []
 
     # 4차-9: 객체 기반 재배치 모드 (OR 조건: objectReflowEnabled OR psdMode=="object-reflow")
