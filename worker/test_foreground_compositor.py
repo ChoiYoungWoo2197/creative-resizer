@@ -1015,6 +1015,39 @@ _o65 = [_obj("layer_0_0", "레이어", "title")]
 _r65, _logs65 = apply_object_map(_l65, _o65)
 check("T65: priority updated to required after title override", _r65[0].get("priority") == "required")
 
+# ------------------------------------------------------------------------------
+# T66-T68: Strict mode — name/text fallback and low-confidence rejection
+# ------------------------------------------------------------------------------
+print("\n--- Strict mode tests (T66-T68) ---")
+
+# T66: strict=True forbids name_fallback (same setup as T56 but strict)
+_l66 = [_make_layer("손글씨_100_200", "손글씨", "type", "human_subject", "어머님 손에 금보다 필요한 건?")]
+_o66 = [_obj("__PLACEHOLDER__", "손글씨", "title")]
+_r66, _logs66 = apply_object_map(_l66, _o66, strict=True)
+check("T66: strict=True name_fallback NOT applied", _r66[0]["role"] == "human_subject")
+check("T66b: log.applied=False", len(_logs66) == 1 and _logs66[0]["applied"] is False)
+check("T66c: rejectReason=strict_no_name_fallback", _logs66[0].get("rejectReason") == "strict_no_name_fallback")
+
+# T67: strict=True forbids text_content_fallback (same setup as T61 but strict)
+_l67 = [_make_layer("copy_100_400", "copy", "type", "body_text", "어머님 손에 금보다 필요한 건?")]
+_o67 = [_obj("__PLACEHOLDER__", "어머님 손에 금보다 필요한 건?", "title")]
+_r67, _logs67 = apply_object_map(_l67, _o67, strict=True)
+check("T67: strict=True text_content_fallback NOT applied", _r67[0]["role"] == "body_text")
+check("T67b: rejectReason=strict_no_name_fallback", len(_logs67) == 1 and _logs67[0]["applied"] is False)
+
+# T68: strict=True + layerId exact but confidence < 0.8 → REJECTED
+_l68 = [_make_layer("layer_0_0", "레이어", "pixel", "unknown")]
+_o68 = [_obj("layer_0_0", "레이어", "product", status="matched_low_confidence", conf=0.55)]
+_r68, _logs68 = apply_object_map(_l68, _o68, strict=True)
+check("T68: strict=True conf=0.55 below threshold NOT applied", _r68[0]["role"] == "unknown")
+check("T68b: rejectReason contains confidence", "confidence" in (_logs68[0].get("rejectReason") or ""))
+
+# T68c: strict=True + layerId exact + confidence >= 0.8 → APPLIED
+_l68c = [_make_layer("layer_0_0", "레이어", "pixel", "unknown")]
+_o68c = [_obj("layer_0_0", "레이어", "product", conf=0.9)]
+_r68c, _logs68c = apply_object_map(_l68c, _o68c, strict=True)
+check("T68c: strict=True conf=0.9 layerId exact IS applied", _r68c[0]["role"] == "product")
+
 
 # ==============================================================================
 # Result

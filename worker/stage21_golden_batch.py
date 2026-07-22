@@ -201,37 +201,102 @@ def run_batch(
             print(f"[BATCH] PSD layer parse warning psd={psd_name}: {_le}", flush=True)
 
         # Stage 21.5: Load object analysis fixture if --analysis-dir is specified
+        # Priority: 1. <sourceFileSha256>.json  2. <psd-stem>.json  3. manifest
         fixture_analysis: dict | None = None
         semantic_role_source = "heuristic"
         if analysis_dir:
             fixture_stem = psd_name.replace(".psd", "").replace(".psb", "")
-            fixture_candidates = [
-                os.path.join(analysis_dir, fixture_stem + ".json"),
-                os.path.join(analysis_dir, psd_name + ".json"),
-            ]
+            # Build candidate list: SHA256-named first, then stem-based, then manifest
+            fixture_candidates: list[str] = []
+            if _src_file_sha256:
+                fixture_candidates.append(
+                    os.path.join(analysis_dir, _src_file_sha256 + ".json")
+                )
+            fixture_candidates.append(os.path.join(analysis_dir, fixture_stem + ".json"))
+            fixture_candidates.append(os.path.join(analysis_dir, psd_name + ".json"))
+
+            # Manifest lookup: analysis_dir/manifest.json  → {"<sha256>": "<filename>"}
+            manifest_path = os.path.join(analysis_dir, "manifest.json")
+            if os.path.exists(manifest_path) and _src_file_sha256:
+                try:
+                    with open(manifest_path, encoding="utf-8") as _mf:
+                        _manifest: dict = json.load(_mf)
+                    _mentry = _manifest.get(_src_file_sha256)
+                    if _mentry:
+                        fixture_candidates.append(
+                            os.path.join(analysis_dir, _mentry)
+                        )
+                except Exception:
+                    pass
+
+            _fixture_load_error: str = ""
             for fp in fixture_candidates:
-                if os.path.exists(fp):
-                    try:
-                        with open(fp, encoding="utf-8") as _ff:
-                            fixture_analysis = json.load(_ff)
-                        print(
-                            f"[FIXTURE] Loaded object analysis fixture:"
-                            f" psd={psd_name} file={fp}",
-                            flush=True,
-                        )
-                        semantic_role_source = "fixture"
-                    except Exception as _fe:
-                        print(
-                            f"[FIXTURE] Failed to load fixture {fp}: {_fe}", flush=True
-                        )
-                    break
+                # Never load placeholder/example fixtures in production runs
+                if fp.endswith(".example.json"):
+                    print(
+                        f"[FIXTURE] SKIP example fixture psd={psd_name} file={fp}",
+                        flush=True,
+                    )
+                    continue
+                if not os.path.exists(fp):
+                    continue
+                try:
+                    with open(fp, encoding="utf-8") as _ff:
+                        _candidate: dict = json.load(_ff)
+
+                    # Validate source hash if fixture provides it
+                    _fix_sha = (_candidate.get("sourceFileSha256") or "").strip()
+                    if _fix_sha and not _fix_sha.startswith("__"):
+                        if _src_file_sha256 and _fix_sha != _src_file_sha256:
+                            _fixture_load_error = (
+                                f"OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH:"
+                                f" fixture={_fix_sha[:16]} actual={_src_file_sha256[:16]}"
+                            )
+                            print(
+                                f"[FIXTURE] {_fixture_load_error} psd={psd_name} file={fp}",
+                                flush=True,
+                            )
+                            # fail-closed: abort this PSD
+                            break
+
+                    fixture_analysis = _candidate
+                    print(
+                        f"[FIXTURE] Loaded object analysis fixture:"
+                        f" psd={psd_name} file={fp}",
+                        flush=True,
+                    )
+                    semantic_role_source = "fixture"
+                except Exception as _fe:
+                    print(
+                        f"[FIXTURE] Failed to load fixture {fp}: {_fe}", flush=True
+                    )
+                break  # stop at first valid or rejected candidate
+
+            # If hash mismatch was detected, emit ERROR result for all specs
+            if _fixture_load_error:
+                for spec in target_specs:
+                    r = BatchResult(
+                        index=idx,
+                        filename=psd_name,
+                        specId=f"{spec['width']}x{spec['height']}",
+                        width=spec["width"],
+                        height=spec["height"],
+                        verdict="ERROR",
+                        failReasons=[_fixture_load_error],
+                        error="OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH",
+                        semanticRoleVerdict="NOT_AVAILABLE",
+                    )
+                    all_results.append(r)
+                    idx += 1
+                continue
+
             if fixture_analysis is None and require_analysis:
                 print(
                     f"[FIXTURE] ERROR: --require-analysis set but no fixture found"
                     f" for psd={psd_name}",
                     flush=True,
                 )
-                for spec in (specs or TARGET_SPECS):
+                for spec in target_specs:
                     r = BatchResult(
                         index=idx,
                         filename=psd_name,
@@ -250,22 +315,53 @@ def run_batch(
         # Apply object map from fixture to override heuristic roles
         if fixture_analysis and fixture_analysis.get("objects"):
             try:
-                from object_map_applicator import apply_object_map
-                psd_layers_classified, _apply_logs = apply_object_map(
-                    psd_layers_classified, fixture_analysis["objects"]
-                )
-                _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
-                print(
-                    f"[FIXTURE] Object map applied:"
-                    f" psd={psd_name} applied={_applied}/{len(_apply_logs)}"
-                    f" roles={sorted({l.get('role') for l in psd_layers_classified})}",
-                    flush=True,
-                )
+                from object_map_applicator import apply_object_map, has_placeholders
+                # In strict mode (--require-analysis), reject any fixture with placeholders
+                _ph = has_placeholders(fixture_analysis)
+                if require_analysis and _ph:
+                    print(
+                        f"[FIXTURE] STRICT_REJECT: placeholder values found"
+                        f" psd={psd_name} fields={_ph}",
+                        flush=True,
+                    )
+                    for spec in target_specs:
+                        r = BatchResult(
+                            index=idx,
+                            filename=psd_name,
+                            specId=f"{spec['width']}x{spec['height']}",
+                            width=spec["width"],
+                            height=spec["height"],
+                            verdict="ERROR",
+                            failReasons=[f"FIXTURE_PLACEHOLDER_NOT_ALLOWED: {_ph}"],
+                            error="fixture_placeholder",
+                            semanticRoleVerdict="NOT_AVAILABLE",
+                        )
+                        all_results.append(r)
+                        idx += 1
+                    fixture_analysis = None  # prevent further processing
+                else:
+                    psd_layers_classified, _apply_logs = apply_object_map(
+                        psd_layers_classified,
+                        fixture_analysis["objects"],
+                        strict=require_analysis,
+                    )
+                    _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
+                    print(
+                        f"[FIXTURE] Object map applied:"
+                        f" psd={psd_name} applied={_applied}/{len(_apply_logs)}"
+                        f" strict={require_analysis}"
+                        f" roles={sorted({l.get('role') for l in psd_layers_classified})}",
+                        flush=True,
+                    )
             except Exception as _omap_err:
                 print(
                     f"[FIXTURE] apply_object_map failed psd={psd_name}: {_omap_err}",
                     flush=True,
                 )
+
+        # If placeholder rejection caused all specs to be emitted, skip loop below
+        if fixture_analysis is None and semantic_role_source == "fixture":
+            continue
 
         for spec in target_specs:
             t0 = time.time()

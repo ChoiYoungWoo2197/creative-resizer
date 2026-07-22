@@ -8,10 +8,10 @@ group = 'com.h3'
 version = '0.0.1-SNAPSHOT'
 
 java {
-    // Smoke 빌드는 Docker(eclipse-temurin:17-jdk-jammy) 내부에서 실행
-    // 로컬 JDK17이 없는 경우 Gradle toolchain이 자동 탐지를 시도함
+    // Docker 빌드는 eclipse-temurin:17-jdk-jammy 내부에서 JDK 17 사용
+    // 로컬 테스트는 설치된 JDK 버전(18)으로 실행
     toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
+        languageVersion = JavaLanguageVersion.of(18)
     }
 }
 
