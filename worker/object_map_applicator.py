@@ -192,6 +192,21 @@ def apply_object_map(
             "rejectReason": None,
         }
 
+        # Human immutable guard: pixel/smartobject layers originally classified as
+        # human_subject cannot be downgraded to any other role by Object Map.
+        # AI generates pixels in removal_mask areas; downgrading human_subject to
+        # a removal role would cause AI to overwrite the person/hand pixels.
+        if old_role == "human_subject" and ltype in ("pixel", "smartobject") and new_role != "human_subject":
+            print(
+                f"[OBJECT_MAP_APPLY] HUMAN_IMMUTABLE_REJECT"
+                f" layerId={lid!r} name={lname!r}"
+                f" attempted {old_role!r}->{new_role!r}: human_subject is immutable",
+                flush=True,
+            )
+            log_entry["rejectReason"] = "human_subject_immutable"
+            apply_logs.append(log_entry)
+            continue
+
         if new_role and new_role != old_role:
             try:
                 from layer_role_classifier import PRIORITY_MAP
