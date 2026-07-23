@@ -172,6 +172,13 @@ def _validate_roles(result: list) -> list:
             layer["priority"] = PRIORITY_MAP.get("body_text", "important")
             continue
 
+        # V6: 텍스트 레이어 + badge + 긴 텍스트 → body_text
+        # badge는 짧은 라벨(예: "SALE", "20%")용. 긴 문장은 body_text로 재분류.
+        if layer_type == "type" and role == "badge" and len(text.strip()) > 20:
+            layer["role"] = "body_text"
+            layer["priority"] = PRIORITY_MAP.get("body_text", "important")
+            continue
+
         # V3: shape 레이어 + human_subject → decorative
         if layer_type == "shape" and role == "human_subject":
             layer["role"] = "decorative"

@@ -129,19 +129,35 @@ _IMMUTABLE_ROLES = frozenset({
 # ── Outpaint mask ─────────────────────────────────────────────────────────────
 
 def _build_outpaint_mask(source_w: int, source_h: int, target_w: int, target_h: int) -> Image.Image | None:
-    """White = canvas areas outside original source image after centering."""
+    """White = canvas areas that need outpainting (outside source coverage after centering).
+
+    Each axis is handled independently:
+    - If source > target in that axis: source is cropped, no outpainting needed there.
+    - If source < target in that axis: margins on both sides need outpainting.
+    Returns None when source covers the entire target in both axes (nothing to outpaint).
+    """
     if source_w == target_w and source_h == target_h:
         return None
     mask = Image.new("L", (target_w, target_h), 0)
     from PIL import ImageDraw
     draw = ImageDraw.Draw(mask)
-    # Source is placed at top-left (or centered) — compute offsets
     off_x = (target_w - source_w) // 2
     off_y = (target_h - source_h) // 2
-    # Paint the full canvas white, then clear the source region
-    draw.rectangle([0, 0, target_w - 1, target_h - 1], fill=255)
-    if off_x >= 0 and off_y >= 0:
-        draw.rectangle([off_x, off_y, off_x + source_w - 1, off_y + source_h - 1], fill=0)
+    # Horizontal margins: only when source is narrower than target
+    if off_x > 0:
+        draw.rectangle([0, 0, off_x - 1, target_h - 1], fill=255)
+        right_start = off_x + source_w
+        if right_start < target_w:
+            draw.rectangle([right_start, 0, target_w - 1, target_h - 1], fill=255)
+    # Vertical margins: only when source is shorter than target
+    if off_y > 0:
+        draw.rectangle([0, 0, target_w - 1, off_y - 1], fill=255)
+        bottom_start = off_y + source_h
+        if bottom_start < target_h:
+            draw.rectangle([0, bottom_start, target_w - 1, target_h - 1], fill=255)
+    # If no outpaint areas were marked, source covers the whole target
+    if mask.getextrema()[1] == 0:
+        return None
     return mask
 
 
@@ -274,7 +290,9 @@ def compute_source_faithfulness_score(
 
         total = sum(1 for v in mask_data if v > 127)
         if total == 0:
-            return 100.0
+            # generation_allowed_mask covered the entire canvas — no preserved pixels to score.
+            # Returning 100.0 would be a false positive; 0.0 signals "not applicable".
+            return 0.0
 
         unchanged = 0
         for i, mv in enumerate(mask_data):

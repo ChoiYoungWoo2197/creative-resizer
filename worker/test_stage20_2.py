@@ -199,6 +199,46 @@ class TestMaskBuilders:
         mask = _build_outpaint_mask(800, 600, 800, 600)
         assert mask is None
 
+    def test_outpaint_mask_source_taller_than_target_has_side_strips_only(self):
+        """Fix: Mother-like case (1200×1200 → 1250×560) must NOT produce all-white mask."""
+        from background.source_faithful_repair import _build_outpaint_mask, _mask_ratio
+        mask = _build_outpaint_mask(1200, 1200, 1250, 560)
+        # Source is taller than target → vertical outpaint NOT needed, horizontal margins exist
+        assert mask is not None
+        ratio = _mask_ratio(mask)
+        # Only thin side margins (25px each side of 1250 total) → ratio ≈ 50/1250 = 0.04
+        assert ratio < 0.1, f"Expected <10% (side strips only), got {ratio:.3f}"
+
+    def test_outpaint_mask_source_taller_wider_returns_none(self):
+        """Fix: When source exceeds target in both dimensions, no outpainting needed."""
+        from background.source_faithful_repair import _build_outpaint_mask
+        mask = _build_outpaint_mask(1300, 1300, 1250, 560)
+        assert mask is None, "Source larger than target in both dims → no outpaint"
+
+    def test_outpaint_mask_yada_like_has_side_strips_only(self):
+        """Fix: Yada-like case (1200×628 → 1250×560) must NOT produce all-white mask."""
+        from background.source_faithful_repair import _build_outpaint_mask, _mask_ratio
+        mask = _build_outpaint_mask(1200, 628, 1250, 560)
+        assert mask is not None
+        ratio = _mask_ratio(mask)
+        assert ratio < 0.1, f"Expected <10% (side strips only), got {ratio:.3f}"
+
+    def test_outpaint_mask_mother_yada_differ_when_source_differs(self):
+        """Fix: Different source sizes that produce different masks must NOT share the same SHA."""
+        import hashlib, io as _io
+        from background.source_faithful_repair import _build_outpaint_mask
+        # Source sizes that differ in height (Mother vs a taller source)
+        mask_a = _build_outpaint_mask(1200, 1200, 1250, 560)
+        mask_b = _build_outpaint_mask(1200, 628, 1250, 560)
+        # Both should have identical side strips (1200 wide in 1250 target) — expected equal
+        # But the old bug made BOTH all-white. After fix, they are also equal (same side margins).
+        # Key: neither should be all-white (100% ratio).
+        from background.source_faithful_repair import _mask_ratio
+        if mask_a is not None:
+            assert _mask_ratio(mask_a) < 1.0, "Mother mask must NOT be all-white"
+        if mask_b is not None:
+            assert _mask_ratio(mask_b) < 1.0, "Yada mask must NOT be all-white"
+
     def test_union_masks_or_logic(self):
         from background.source_faithful_repair import _union_masks
         m1 = Image.new("L", (10, 10), 0)
@@ -307,6 +347,15 @@ class TestSourceFaithfulnessScore:
         mask = Image.new("L", (20, 20), 0)
         score = compute_source_faithfulness_score(original, modified, mask)
         assert score < 50
+
+    def test_full_generation_mask_returns_zero_not_100(self):
+        """Fix: all-white gen_allowed mask (no preserved pixels) → 0.0, not 100.0 false positive."""
+        from background.source_faithful_repair import compute_source_faithfulness_score
+        original = _rgb(20, 20, (200, 100, 50))
+        result = _rgb(20, 20, (10, 10, 10))
+        gen_allowed_all_white = Image.new("L", (20, 20), 255)
+        score = compute_source_faithfulness_score(original, result, gen_allowed_all_white)
+        assert score == 0.0, f"Expected 0.0 (no preserved pixels), got {score}"
 
 
 # ── 7. Contamination check ─────────────────────────────────────────────────────

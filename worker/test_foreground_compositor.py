@@ -477,6 +477,26 @@ check("T28: short headline at top (cy=0.10) -> title",
 check("T28: short text at mid-bottom (cy=0.70) -> body_text",
       _text_layer_fallback_role("관리하세요", 0.70) == "body_text")
 
+# T29: V6 — text layer + badge + long text → body_text
+print("\n--- T29: V6 badge+long-text -> body_text ---")
+long_badge_text = "민감피부 세안 후 피부 당김 없이 촉촉하게"
+t29 = _make_classified("type", "badge", long_badge_text,
+                       x=100, y=300, w=800, h=60,
+                       text_content=long_badge_text)
+result29 = _validate_roles([t29])
+check("T29: text+badge+long text -> body_text (V6)",
+      result29[0]["role"] == "body_text",
+      f"got {result29[0]['role']}")
+
+# T29b: Short badge text must stay as badge (V6 should not trigger)
+t29b = _make_classified("type", "badge", "SALE",
+                        x=50, y=50, w=80, h=40,
+                        text_content="SALE")
+result29b = _validate_roles([t29b])
+check("T29b: text+badge+short text -> stays badge",
+      result29b[0]["role"] == "badge",
+      f"got {result29b[0]['role']}")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # T30-T43: P0 Source Isolation + AiRenderContext Tests
