@@ -213,6 +213,11 @@ def plan_foreground_layout(
             f" safeZoneViolationCount={sc.safeZoneViolationCount}"
             f" clippingViolationCount={sc.clippingViolationCount}"
             f" overlapViolationCount={sc.overlapViolationCount}"
+            f" originalPreservationPenalty={sc.originalPreservationPenalty}"
+            f" targetAdaptationPenalty={sc.targetAdaptationPenalty}"
+            f" readabilityPenalty={sc.readabilityPenalty}"
+            f" balancePenalty={sc.balancePenalty}"
+            f" sizePenalty={sc.sizePenalty}"
             f" score={sc.total}",
             flush=True,
         )

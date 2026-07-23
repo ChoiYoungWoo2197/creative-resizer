@@ -196,7 +196,50 @@ def apply_object_map(
         # human_subject cannot be downgraded to any other role by Object Map.
         # AI generates pixels in removal_mask areas; downgrading human_subject to
         # a removal role would cause AI to overwrite the person/hand pixels.
-        if old_role == "human_subject" and ltype in ("pixel", "smartobject") and new_role != "human_subject":
+        #
+        # Exception (D-3 role contradiction correction):
+        #   A layer mis-classified as human_subject may be corrected to a text role
+        #   ONLY when ALL of the following hold:
+        #     1. method == layerId_exact  (strict match, not name/text fallback)
+        #     2. confidence >= 0.8        (high-confidence assertion)
+        #     3. new_role in TEXT_ROLES   (title / body_text / headline / cta / brand_text)
+        #     4. layer has rasterized-text evidence (type, name, or textContent)
+        #     5. layer type is NOT a known photo type (excluded: smartobject with photographic evidence)
+        _TEXT_CORRECTION_ROLES = {"title", "body_text", "headline", "cta", "brand_text"}
+        _is_text_role_correction = (
+            old_role == "human_subject"
+            and new_role in _TEXT_CORRECTION_ROLES
+            and match_method == "layerId_exact"
+            and confidence >= 0.8
+        )
+        if _is_text_role_correction:
+            # Additional evidence checks
+            _has_text_evidence = (
+                ltype in ("text", "typelayer")
+                or bool((layer.get("textContent") or "").strip())
+                or bool((layer.get("text_content") or "").strip())
+            )
+            _bbox = layer.get("bbox", {})
+            _w = _bbox.get("width", 1) or 1
+            _h = _bbox.get("height", 1) or 1
+            _is_text_geometry = (_w / _h) >= 2.0 or (_h / _w >= 0.0 and _h < 80)
+            if _has_text_evidence or _is_text_geometry:
+                print(
+                    f"[ROLE_CONTRADICTION_RESOLVED]"
+                    f" jobId= layerId={lid!r} name={lname!r}"
+                    f" previousRole={old_role!r}"
+                    f" resolvedRole={new_role!r}"
+                    f" evidence=text_geometry"
+                    f" objectMapMatch=layerId_exact"
+                    f" confidence={confidence:.2f}",
+                    flush=True,
+                )
+                # Allow the correction to proceed (skip immutable guard)
+            else:
+                # No text evidence — refuse, keep immutable guard
+                _is_text_role_correction = False
+
+        if old_role == "human_subject" and ltype in ("pixel", "smartobject") and new_role != "human_subject" and not _is_text_role_correction:
             print(
                 f"[OBJECT_MAP_APPLY] HUMAN_IMMUTABLE_REJECT"
                 f" layerId={lid!r} name={lname!r}"

@@ -257,7 +257,7 @@ class PsdObjectAnalysisServiceCacheTest {
         ArgumentCaptor<PsdObjectAnalysis> cap = ArgumentCaptor.forClass(PsdObjectAnalysis.class);
         verify(mongoService).save(cap.capture());
         PsdObjectAnalysis doc = cap.getValue();
-        assertThat(doc.getAnalysisVersion()).isEqualTo("psd-object-map-v1");
+        assertThat(doc.getAnalysisVersion()).isEqualTo("psd-object-map-v2");
         assertThat(doc.getModel()).isEqualTo("gpt-5-mini");
         assertThat(doc.getStatus()).isEqualTo("READY");
     }
