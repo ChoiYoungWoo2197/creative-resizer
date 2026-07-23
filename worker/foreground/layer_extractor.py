@@ -6,7 +6,34 @@ scaled to fit the target canvas. Positions are derived from the original bbox
 """
 from __future__ import annotations
 
+import hashlib
+import re
+
 from PIL import Image
+
+
+def _make_object_id(layer: dict) -> str:
+    """Stable object identity for a foreground layer.
+
+    Priority:
+      1. Non-empty layer id (from psd-tools)
+      2. Stable hash of role + normalized-name + source bbox
+
+    The id must be deterministic across repeated extractions so that
+    the dedup logic in composite_foreground() catches any duplicates.
+    """
+    lid = (layer.get("id") or "").strip()
+    if lid:
+        return lid
+
+    role = layer.get("role", "unknown")
+    name_raw = (layer.get("name") or "").strip().lower()
+    # Strip trailing coordinate suffixes like "_50_120"
+    name_norm = re.sub(r"[_\s]+\d+(?:[_\s]+\d+)*$", "", name_raw).strip()
+    bbox = layer.get("bbox", {})
+    bbox_str = f"{bbox.get('x',0)},{bbox.get('y',0)},{bbox.get('width',0)},{bbox.get('height',0)}"
+    raw = f"{role}::{name_norm}::{bbox_str}"
+    return "auto_" + hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 # Roles included in foreground compositing (background excluded)
 FOREGROUND_ROLES = frozenset({
@@ -98,13 +125,25 @@ def extract_foreground_layers(
                 flush=True,
             )
 
+        object_id = _make_object_id(layer)
+        # Pixel hash for provenance (non-empty alpha channel only)
+        pixel_sha = ""
+        try:
+            pixel_sha = hashlib.sha256(limg.tobytes()).hexdigest()
+        except Exception:
+            pass
+
         result.append({
-            "role":    role,
-            "name":    layer.get("name", ""),
-            "image":   limg,
-            "bbox":    {"x": sx, "y": sy, "width": sw, "height": sh},
-            "depth":   layer.get("depth", 0),
-            "layerId": layer.get("id", ""),
+            "role":             role,
+            "name":             layer.get("name", ""),
+            "image":            limg,
+            "bbox":             {"x": sx, "y": sy, "width": sw, "height": sh},
+            "sourceBBox":       {"x": ox, "y": oy, "width": ow, "height": oh},
+            "depth":            layer.get("depth", 0),
+            "layerId":          layer.get("id", ""),
+            "objectId":         object_id,
+            "sourcePixelSha256": pixel_sha,
+            "compositedCount":  0,  # incremented by compositor
         })
         print(
             f"[FG_EXTRACT] role={role} name={layer.get('name')!r}"

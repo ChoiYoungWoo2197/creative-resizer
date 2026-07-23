@@ -400,10 +400,18 @@ def run_source_faithful_repair(
     canvas_w: int = 0,
     canvas_h: int = 0,
     render_ctx: "AiRenderContext | None" = None,
+    background_plate: "Image.Image | None" = None,
+    background_plate_removal_mask: "Image.Image | None" = None,
 ) -> SourceFaithfulRepairResult:
     """Run source-faithful AI repair pipeline.
 
-    Steps:
+    When background_plate is provided (Bundle A):
+      - AI receives only the background-only plate (no human / product / text).
+      - generationAllowedMask = background_plate_removal_mask | outpaintMask.
+      - immutable_mask is NOT applied (human handled entirely by foreground compositor).
+      - composite_ai_result() uses background_plate as the base instead of source_image.
+
+    Classic mode (background_plate=None):
       1. Build removal mask (text + CTA + logo + product roles from classified layers)
       2. Build immutable mask (visible hands / person roles)
       3. Build outpaint mask (new canvas areas outside source)
@@ -416,31 +424,48 @@ def run_source_faithful_repair(
     t0 = time.time()
     res = SourceFaithfulRepairResult(prompt_version=prompt_version)
 
-    src_w, src_h = source_image.size
+    # Bundle A: determine AI input image and compositing base.
+    # When background_plate is provided, AI sees only the background;
+    # when None, AI receives the full source composite (legacy behaviour).
+    _using_bg_plate = background_plate is not None
+    _ai_base: Image.Image = background_plate if _using_bg_plate else source_image
+    if _using_bg_plate:
+        _ai_base = _ai_base.convert("RGB")
+
+    src_w, src_h = _ai_base.size
     cw = canvas_w or src_w
     ch = canvas_h or src_h
 
     # ── Step 1: Removal mask ─────────────────────────────────────────────────
-    removal_mask = _mask_from_classified_roles(
-        classified_layers, _REMOVAL_ROLES, cw, ch, dilation_px=3
-    )
-    product_mask = _mask_from_classified_roles(
-        classified_layers, _PRODUCT_ROLES, cw, ch, dilation_px=4
-    )
-    combined_removal = _union_masks(removal_mask, product_mask)
+    if _using_bg_plate:
+        # Background plate already excludes foreground — removal mask comes from
+        # the plate builder (foreground bbox holes that AI should fill seamlessly).
+        combined_removal = background_plate_removal_mask
+    else:
+        removal_mask = _mask_from_classified_roles(
+            classified_layers, _REMOVAL_ROLES, cw, ch, dilation_px=3
+        )
+        product_mask = _mask_from_classified_roles(
+            classified_layers, _PRODUCT_ROLES, cw, ch, dilation_px=4
+        )
+        combined_removal = _union_masks(removal_mask, product_mask)
     res.removal_mask_ratio = _mask_ratio(combined_removal)
     res.removal_mask = combined_removal
 
     # ── Step 2: Immutable mask (visible hands / person) ─────────────────────
-    immutable_mask = _mask_from_classified_roles(
-        classified_layers, _IMMUTABLE_ROLES, cw, ch, dilation_px=0
-    )
-    # Dilate slightly for feathering then subtract from removal
-    if immutable_mask and combined_removal:
-        from PIL import ImageChops
-        immutable_dilated = immutable_mask.filter(ImageFilter.MaxFilter(3))
-        # Immutable pixels override removal mask
-        combined_removal = ImageChops.subtract(combined_removal, immutable_dilated)
+    if _using_bg_plate:
+        # Human is NOT in the background plate — immutable mask is not needed.
+        # The foreground compositor places human exactly once at the end.
+        immutable_mask = None
+    else:
+        immutable_mask = _mask_from_classified_roles(
+            classified_layers, _IMMUTABLE_ROLES, cw, ch, dilation_px=0
+        )
+        # Dilate slightly for feathering then subtract from removal
+        if immutable_mask and combined_removal:
+            from PIL import ImageChops
+            immutable_dilated = immutable_mask.filter(ImageFilter.MaxFilter(3))
+            combined_removal = ImageChops.subtract(combined_removal, immutable_dilated)
     res.immutable_mask_ratio = _mask_ratio(immutable_mask)
     res.immutable_mask = immutable_mask
 
@@ -595,8 +620,10 @@ def run_source_faithful_repair(
             flush=True,
         )
         try:
-            # Resize source to target size for AI call
-            ai_source = source_image.resize((target_w, target_h), Image.LANCZOS)
+            # Resize AI input to target size.
+            # Bundle A: uses background_plate (no human/product/text visible).
+            # Classic: uses full source_image.
+            ai_source = _ai_base.resize((target_w, target_h), Image.LANCZOS)
             ai_mask = gen_allowed.resize((target_w, target_h), Image.LANCZOS) if gen_allowed else None
 
             # P0: Record + log provider input SHA-256 for cross-job audit
@@ -604,14 +631,16 @@ def run_source_faithful_repair(
             if render_ctx is not None:
                 provider_input_sha256 = render_ctx.record_provider_input(ai_source)
                 attempt_log["providerInputSha256"] = provider_input_sha256
+                attempt_log["usingBackgroundPlate"] = _using_bg_plate
                 print(
                     f"[SFR_PROVIDER_INPUT_SHA256] job_id={render_ctx.job_id}"
                     f" spec_id={render_ctx.spec_id}"
                     f" attempt={attempt_idx + 1}"
-                    f" sha256={provider_input_sha256[:16]}",
+                    f" sha256={provider_input_sha256[:16]}"
+                    f" usingBackgroundPlate={_using_bg_plate}",
                     flush=True,
                 )
-                # Save debug artifact: 02-provider-input
+                # Save debug artifacts
                 render_ctx.save_debug_artifact(
                     f"02-provider-input-attempt{attempt_idx + 1}", ai_source
                 )
@@ -671,23 +700,28 @@ def run_source_faithful_repair(
                 res.attempts.append(attempt_log)
                 continue
 
-        # Composite AI result: only inside generationAllowedMask
+        # Composite AI result: only inside generationAllowedMask.
+        # Base image: background_plate (Bundle A) or full source composite (classic).
+        base_resized = _ai_base.resize((target_w, target_h), Image.LANCZOS)
+        # source_resized: always the full source_image at target size.
+        # Used for faithfulness scoring (compare full source to composited output).
         source_resized = source_image.resize((target_w, target_h), Image.LANCZOS)
         gen_allowed_resized = (
             gen_allowed.resize((target_w, target_h), Image.LANCZOS)
             if gen_allowed else None
         )
+        # Bundle A: no immutable mask — human handled by foreground compositor.
         immutable_resized = (
             immutable_mask.resize((target_w, target_h), Image.LANCZOS)
             if immutable_mask else None
         )
 
         composited = composite_ai_result(
-            ai_raw, source_resized, gen_allowed_resized, immutable_resized
+            ai_raw, base_resized, gen_allowed_resized, immutable_resized
         )
 
-        # Check visible hand mutation
-        mutations = count_visible_hand_mutations(source_resized, composited, immutable_resized)
+        # Visible hand mutation: only relevant in classic mode (human in ai_base).
+        mutations = count_visible_hand_mutations(base_resized, composited, immutable_resized)
         attempt_log["visibleHandMutationCount"] = mutations
 
         if mutations > _MAX_ACCEPTABLE_MUTATIONS:
@@ -757,13 +791,16 @@ def run_source_faithful_repair(
         res.scene_continuity_score = min(best_score, 95.0)
         res.overall_repair_score = (best_score * 0.6 + res.scene_continuity_score * 0.4)
 
-        # Final mutation check on accepted image
-        source_resized = source_image.resize((target_w, target_h), Image.LANCZOS)
-        immutable_resized = (
+        # Final mutation check.
+        # Bundle A: no immutable mask → mutations=0 (human protected by foreground compositor).
+        base_resized_final = _ai_base.resize((target_w, target_h), Image.LANCZOS)
+        immutable_resized_final = (
             immutable_mask.resize((target_w, target_h), Image.LANCZOS)
             if immutable_mask else None
         )
-        final_mutations = count_visible_hand_mutations(source_resized, best_image, immutable_resized)
+        final_mutations = count_visible_hand_mutations(
+            base_resized_final, best_image, immutable_resized_final
+        )
         res.visible_hand_mutation_count = final_mutations
         res.protected_object_mutation_detected = final_mutations > _MAX_ACCEPTABLE_MUTATIONS
 

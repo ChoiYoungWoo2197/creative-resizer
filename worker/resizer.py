@@ -1285,6 +1285,42 @@ def _generate_ai_only(
         # Save source composite as first debug artifact
         render_ctx.save_debug_artifact("01-source-composite", img)
 
+        # Bundle A: build background-only plate for AI provider input.
+        # Fail-closed: if plate build fails, raise rather than fall back to full composite.
+        _bg_plate_img: object = None
+        _bg_plate_removal_mask: object = None
+        if psd_layers_classified and source_type == "psd":
+            try:
+                from background.background_plate_builder import build_background_plate
+                _bg_plate_result = build_background_plate(
+                    source_composite=img,
+                    psd_layers=psd_layers_classified,
+                    canvas_w=psd_canvas_w,
+                    canvas_h=psd_canvas_h,
+                    render_context=render_ctx,
+                )
+                if _bg_plate_result.success:
+                    _bg_plate_img = _bg_plate_result.image
+                    _bg_plate_removal_mask = _bg_plate_result.foreground_removal_mask
+                    render_ctx.save_debug_artifact("02-background-plate", _bg_plate_result.image)
+                    print(
+                        f"[BACKGROUND_PLATE_OK] jobId={jid} specId={spec_id}"
+                        f" strategy={_bg_plate_result.strategy!r}"
+                        f" sha256={_bg_plate_result.background_pixel_sha256[:16]}"
+                        f" excludedFg={len(_bg_plate_result.excluded_layer_ids)}",
+                        flush=True,
+                    )
+                else:
+                    raise RuntimeError(
+                        f"BACKGROUND_PLATE_BUILD_FAILED:"
+                        f" reason={_bg_plate_result.failure_reason}"
+                        f" warnings={_bg_plate_result.warnings}"
+                    )
+            except RuntimeError:
+                raise  # propagate fail-closed
+            except Exception as _bp_err:
+                raise RuntimeError(f"BACKGROUND_PLATE_BUILD_FAILED: {_bp_err}") from _bp_err
+
         sfr_dir = os.path.join(output_dir, "stage20_3", spec_id)
         sfr = run_source_faithful_repair(
             source_image=img,
@@ -1296,6 +1332,8 @@ def _generate_ai_only(
             request_id=f"{jid}_{w}x{h}",
             output_dir=sfr_dir,
             render_ctx=render_ctx,
+            background_plate=_bg_plate_img,
+            background_plate_removal_mask=_bg_plate_removal_mask,
         )
         actual_provider_request_count += sfr.background_ai_attempt_count
 
