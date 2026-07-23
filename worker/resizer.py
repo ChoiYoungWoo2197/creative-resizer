@@ -1193,18 +1193,30 @@ def _generate_ai_only(
                         _analysis_version = (object_analysis or {}).get("analysisVersion", "")
                         _analysis_model = (object_analysis or {}).get("model", "")
 
-                        print(
-                            f"[PSD_OBJECT_ANALYSIS]"
-                            f" trigger=generate"
-                            f" source=stored-snapshot"
-                            f" analysisCacheHit=true"
-                            f" reused=true"
-                            f" gptRequestCount=0"
-                            f" analysisId={_analysis_id}"
-                            f" analysisVersion={_analysis_version}"
-                            f" model={_analysis_model}",
-                            flush=True,
-                        )
+                        # D-3: stale version guard — v1 snapshots are outdated
+                        _CURRENT_ANALYSIS_VERSION = "psd-object-map-v2"
+                        if _analysis_version and _analysis_version != _CURRENT_ANALYSIS_VERSION:
+                            print(
+                                f"[OBJECT_ANALYSIS_CACHE] STALE_VERSION"
+                                f" jobId={jid}"
+                                f" storedVersion={_analysis_version}"
+                                f" currentVersion={_CURRENT_ANALYSIS_VERSION}"
+                                f" cacheHit=false (stale)"
+                                f" action=skip",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"[OBJECT_ANALYSIS_CACHE]"
+                                f" jobId={jid}"
+                                f" analysisVersion={_analysis_version}"
+                                f" cacheHit=true"
+                                f" reused=true"
+                                f" requestCount=0"
+                                f" analysisId={_analysis_id}"
+                                f" model={_analysis_model}",
+                                flush=True,
+                            )
 
                         # strict=True: production path uses exact layerId match only
                         psd_layers_classified, _apply_logs = apply_object_map(
@@ -1255,13 +1267,43 @@ def _generate_ai_only(
     results = []
     actual_provider_request_count = 0
 
-    # D-1: Background generation mode — determines Provider input strategy.
-    # semantic_scene_cleanup → full composite → semantic edit (Bundle D-1)
-    # source_faithful_repair → background plate → targeted repair (legacy)
-    _bg_mode = os.environ.get("BACKGROUND_GENERATION_MODE", "source_faithful_repair").strip()
-    if _bg_mode not in ("source_faithful_repair", "semantic_scene_cleanup"):
-        raise RuntimeError(f"UNKNOWN_BACKGROUND_GENERATION_MODE: {_bg_mode!r}")
-    print(f"[BG_MODE] jobId={jid} backgroundGenerationMode={_bg_mode}", flush=True)
+    # D-3: Background generation mode — semantic_scene_cleanup is the default.
+    # source_faithful_repair is the legacy rollback path (explicit only).
+    # Invalid mode → fail-closed (no silent fallback).
+    _VALID_BG_MODES = ("semantic_scene_cleanup", "source_faithful_repair")
+    _bg_mode_raw = os.environ.get("BACKGROUND_GENERATION_MODE", "").strip()
+    _bg_mode_default_applied = False
+    _bg_mode_explicit_rollback = False
+    if not _bg_mode_raw:
+        _bg_mode = "semantic_scene_cleanup"
+        _bg_mode_default_applied = True
+    elif _bg_mode_raw in _VALID_BG_MODES:
+        _bg_mode = _bg_mode_raw
+        _bg_mode_explicit_rollback = (_bg_mode_raw == "source_faithful_repair")
+    else:
+        print(
+            f"[BG_MODE_INVALID]"
+            f" jobId={jid}"
+            f" requestedMode={_bg_mode_raw!r}"
+            f" allowedModes={list(_VALID_BG_MODES)}"
+            f" failClosed=true",
+            flush=True,
+        )
+        raise RuntimeError(
+            f"INVALID_BACKGROUND_GENERATION_MODE: {_bg_mode_raw!r}."
+            f" Allowed: {_VALID_BG_MODES}."
+            f" No automatic fallback (fail-closed)."
+        )
+    print(
+        f"[BG_MODE]"
+        f" jobId={jid}"
+        f" requestedMode={_bg_mode_raw or '(default)'!r}"
+        f" effectiveMode={_bg_mode}"
+        f" defaultApplied={_bg_mode_default_applied}"
+        f" explicitRollback={_bg_mode_explicit_rollback}"
+        f" legacyFallbackUsed=false",
+        flush=True,
+    )
 
     _work_base = os.environ.get("AI_WORK_DIR", "/app/storage/work")
 
@@ -1466,6 +1508,7 @@ def _generate_ai_only(
         fg_result = None
         layout_plan = None
         _active_fg_layers: list = []     # populated by PSD or D-2 path
+        _decorative_policy_report: dict = {}  # D-3: populated by decorative_policy
 
         # D-2: scale virtual fg_layers to this spec's target dimensions
         _virtual_fg_for_spec: list = []
@@ -1502,6 +1545,18 @@ def _generate_ai_only(
                     target_w=w,
                     target_h=h,
                 )
+
+                # D-3: Decorative grouping and composition ownership policy.
+                # Independent decorative layers are excluded from compositor.
+                # title/CTA/logo-grouped decorative become group_child (not composited standalone).
+                _decorative_policy_report: dict = {}
+                try:
+                    from foreground.decorative_policy import apply_decorative_policy
+                    fg_layers, _decorative_policy_report = apply_decorative_policy(
+                        fg_layers, canvas_w=psd_canvas_w, canvas_h=psd_canvas_h, job_id=jid
+                    )
+                except Exception as _dp_err:
+                    print(f"[STAGE21] decorative_policy error spec={name}: {_dp_err}", flush=True)
 
                 # Bundle B: deterministic reflow — plan safe-zone-aware positions
                 # before compositing. Updates fg_layer["bbox"] in-place so the
@@ -1927,6 +1982,17 @@ def _generate_ai_only(
                     else (fg_result.duplicate_count == 0 if fg_result else True)
                 ),
                 "layoutHardFailReasons": layout_plan.hardFailReasons if layout_plan else [],
+                # D-3: routing and policy provenance
+                "backgroundModeSource": "explicit" if _bg_mode_raw else "default",
+                "semanticDefaultApplied": _bg_mode_default_applied,
+                "legacyRollbackExplicit": _bg_mode_explicit_rollback,
+                "legacyFallbackUsed": False,
+                "decorativeDetectedCount": _decorative_policy_report.get("detectedCount", 0),
+                "decorativeGroupedCount": _decorative_policy_report.get("groupedCount", 0),
+                "decorativeExcludedCount": _decorative_policy_report.get("excludedCount", 0),
+                "decorativeCompositionCount": _decorative_policy_report.get("compositionCount", 0),
+                "excludedDecorativeObjectIds": _decorative_policy_report.get("excludedObjectIds", []),
+                "groupedDecorativeObjectIds": _decorative_policy_report.get("groupedObjectIds", []),
                 # D-2: virtual foreground provenance (computed before this block)
                 **_d2_prov_fields,
                 # P0: SHA-256 provenance fields for cross-job audit

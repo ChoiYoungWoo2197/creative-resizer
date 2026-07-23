@@ -31,6 +31,10 @@ class CandidateScore:
     sizePenalty: float = 0.0
     balancePenalty: float = 0.0
     originalRelationPenalty: float = 0.0
+    # D-3: preservation-aware scoring
+    originalPreservationPenalty: float = 0.0
+    targetAdaptationPenalty: float = 0.0
+    readabilityPenalty: float = 0.0
     total: float = 0.0  # lower is better
 
 

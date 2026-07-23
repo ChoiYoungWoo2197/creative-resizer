@@ -44,7 +44,7 @@ public class PsdObjectAnalysisService {
     @Value("${creative.openai.image-detail:high}")
     private String openAiImageDetail;
 
-    private static final String ANALYSIS_VERSION = "psd-object-map-v1";
+    private static final String ANALYSIS_VERSION = "psd-object-map-v2";
 
     private static final Set<String> VALID_ROLES =
             Set.of("background", "title", "body_text", "main_image", "cta", "logo", "badge", "decoration", "unknown");
