@@ -538,8 +538,12 @@
                       <div v-else class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
                         <span>{{ spec.width }}×{{ spec.height }}</span>
                       </div>
-                      <!-- 세이프존 시각화 오버레이 -->
-                      <div v-if="hasParsedSafeZone(spec)" class="sz-frame-overlay" :style="szOverlayStyle(spec)" />
+                      <!-- 세이프존 시각화 오버레이: 클릭 toggle, 이 프레임 내부에만 표시 -->
+                      <div
+                        v-if="hasParsedSafeZone(spec) && safeZoneVisibleIds.has(spec.id)"
+                        class="sz-frame-overlay"
+                        :style="szOverlayStyle(spec)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -559,7 +563,12 @@
                       <span v-if="spec.maxFileSizeKb" class="hcard-guide-size">{{ formatFileSize(spec.maxFileSizeKb) }} 이하</span>
                     </div>
                     <div v-if="hasParsedSafeZone(spec)" class="hcard-guide-row hcard-sz-row">
-                      <span class="hcard-sz-label">세이프존</span>
+                      <button
+                        class="hcard-sz-label"
+                        :class="{ 'hcard-sz-active': safeZoneVisibleIds.has(spec.id) }"
+                        @click.stop="toggleSafeZone(spec.id)"
+                        title="클릭하여 세이프존 미리보기"
+                      >세이프존 {{ safeZoneVisibleIds.has(spec.id) ? '▲' : '▼' }}</button>
                       <span v-if="spec.safeTop != null"    class="hcard-sz-chip">상 {{ spec.safeTop }}px</span>
                       <span v-if="spec.safeRight != null"  class="hcard-sz-chip">우 {{ spec.safeRight }}px</span>
                       <span v-if="spec.safeBottom != null" class="hcard-sz-chip">하 {{ spec.safeBottom }}px</span>
@@ -662,7 +671,8 @@ const objAnalysisMeta     = ref(null)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const naverLoadError = ref(false)
-const selectedSpecIds = ref([])
+const selectedSpecIds      = ref([])
+const safeZoneVisibleIds   = ref(new Set())
 const dragover     = ref(false)
 const materialType = ref('')
 const psdMode      = ref('artboard-first')
@@ -803,7 +813,19 @@ function toggleSpec(id) {
   if (i >= 0) selectedSpecIds.value.splice(i, 1)
   else selectedSpecIds.value.push(id)
 }
-function removeSpec(id) { selectedSpecIds.value = selectedSpecIds.value.filter(x => x !== id) }
+function removeSpec(id) {
+  selectedSpecIds.value = selectedSpecIds.value.filter(x => x !== id)
+  const s = new Set(safeZoneVisibleIds.value)
+  s.delete(id)
+  safeZoneVisibleIds.value = s
+}
+
+function toggleSafeZone(specId) {
+  const s = new Set(safeZoneVisibleIds.value)
+  if (s.has(specId)) s.delete(specId)
+  else s.add(specId)
+  safeZoneVisibleIds.value = s
+}
 
 function tagStyle(p) {
   const cfg = platformCfg[p] ?? {}
@@ -1672,11 +1694,15 @@ onMounted(loadSpecs)
 .hcards-list .hcard-guide,
 .hcards-list .hcard-details { display: none; }
 
-/* 세이프존 시각화 오버레이 */
+/* 세이프존 시각화 오버레이 — .spec-preview-frame(position:relative) 내부에만 표시 */
 .sz-frame-overlay {
-  position: absolute; border: 1.5px dashed rgba(124,58,237,0.75);
-  border-radius: 1px; pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(124,58,237,0.12);
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px dashed rgba(124,58,237,0.80);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: inset 0 0 0 1px rgba(124,58,237,0.15);
 }
 
 /* 제작 가이드 */
@@ -1689,8 +1715,16 @@ onMounted(loadSpecs)
 .hcard-guide-size { font-size: 9.5px; color: #6B7280; font-weight: 500; }
 .hcard-sz-label {
   font-size: 9px; font-weight: 700; color: #7C3AED;
-  background: #F5F3FF; border-radius: 4px; padding: 1px 4px;
+  background: #F5F3FF; border-radius: 4px; padding: 1px 5px;
   border: 1px solid #DDD6FE; flex-shrink: 0;
+  cursor: pointer; user-select: none;
+  transition: background 0.1s, box-shadow 0.1s;
+}
+.hcard-sz-label:hover { background: #EDE9FE; }
+.hcard-sz-active {
+  background: #7C3AED !important; color: #fff !important;
+  border-color: #6D28D9 !important;
+  box-shadow: 0 0 0 2px rgba(124,58,237,0.2);
 }
 .hcard-sz-chip {
   font-size: 9px; font-weight: 600; padding: 1px 4px; border-radius: 3px;
@@ -1741,6 +1775,7 @@ details[open] > .hcard-details-lbl::before { content: '▼ '; }
   border-radius: 7px; overflow: hidden;
   box-shadow: 0 3px 10px rgba(15, 23, 42, 0.1);
   min-height: 20px;
+  position: relative; /* sz-frame-overlay의 containing block */
 }
 .spec-preview-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .spec-preview-frame.ultra-wide { width: 133px; }
