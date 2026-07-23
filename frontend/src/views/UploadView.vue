@@ -466,7 +466,7 @@
                 </details>
 
                 <!-- 기술 정보 접기 -->
-                <details v-if="objAnalysisMeta || objAnalysisResult?.id" class="oa-tech-details">
+                <details v-if="objAnalysisMeta || objAnalysisResult?.id" class="oa-tech-details" open>
                   <summary class="oa-tech-summary">기술 정보</summary>
                   <div class="oa-tech-body">
                     <div v-if="objAnalysisResult?.id" class="oa-tech-row">
@@ -534,16 +534,33 @@
                       :class="getPreviewType(spec)"
                       :style="{ aspectRatio: `${spec.width} / ${spec.height}` }"
                     >
-                      <img v-if="previewUrl" :src="previewUrl" class="spec-preview-img" :alt="spec.placementName" />
-                      <div v-else class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
-                        <span>{{ spec.width }}×{{ spec.height }}</span>
-                      </div>
-                      <!-- 세이프존 시각화 오버레이: 클릭 toggle, 이 프레임 내부에만 표시 -->
-                      <div
-                        v-if="hasParsedSafeZone(spec) && safeZoneVisibleIds.has(spec.id)"
-                        class="sz-frame-overlay"
-                        :style="szOverlayStyle(spec)"
-                      />
+                      <!-- 세이프존 도식: toggle ON + 완전한 metrics -->
+                      <template v-if="safeZoneVisibleIds.has(spec.id) && getSafeZoneMetrics(spec)">
+                        <div class="sz-diagram">
+                          <div class="sz-safe-inner" :style="szInnerStyle(spec)">
+                            <span class="sz-inner-dim">{{ getSafeZoneMetrics(spec).safeWidth }}×{{ getSafeZoneMetrics(spec).safeHeight }}</span>
+                          </div>
+                          <span v-if="getSafeZoneMetrics(spec).topPct >= 10"
+                                class="sz-lbl sz-lbl-top"
+                                :style="{ top: (getSafeZoneMetrics(spec).topPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).top }}px</span>
+                          <span v-if="getSafeZoneMetrics(spec).rightPct >= 10"
+                                class="sz-lbl sz-lbl-right"
+                                :style="{ right: (getSafeZoneMetrics(spec).rightPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).right }}px</span>
+                          <span v-if="getSafeZoneMetrics(spec).bottomPct >= 10"
+                                class="sz-lbl sz-lbl-bottom"
+                                :style="{ bottom: (getSafeZoneMetrics(spec).bottomPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).bottom }}px</span>
+                          <span v-if="getSafeZoneMetrics(spec).leftPct >= 10"
+                                class="sz-lbl sz-lbl-left"
+                                :style="{ left: (getSafeZoneMetrics(spec).leftPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).left }}px</span>
+                        </div>
+                      </template>
+                      <!-- 일반 미리보기 -->
+                      <template v-else>
+                        <img v-if="previewUrl" :src="previewUrl" class="spec-preview-img" :alt="spec.placementName" />
+                        <div v-else class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
+                          <span>{{ spec.width }}×{{ spec.height }}</span>
+                        </div>
+                      </template>
                     </div>
                   </div>
                 </div>
@@ -566,6 +583,7 @@
                       <button
                         class="hcard-sz-label"
                         :class="{ 'hcard-sz-active': safeZoneVisibleIds.has(spec.id) }"
+                        :aria-pressed="safeZoneVisibleIds.has(spec.id)"
                         @click.stop="toggleSafeZone(spec.id)"
                         title="클릭하여 세이프존 미리보기"
                       >세이프존 {{ safeZoneVisibleIds.has(spec.id) ? '▲' : '▼' }}</button>
@@ -579,7 +597,7 @@
                     </div>
                   </div>
                   <!-- 상세 가이드 (접기) -->
-                  <details class="hcard-details">
+                  <details class="hcard-details" open>
                     <summary class="hcard-details-lbl">상세 가이드</summary>
                     <div class="hcard-details-body">
                       <template v-if="hasDetailContent(spec)">
@@ -683,7 +701,7 @@ const isPsdFile = computed(() =>
 
 const uploadOpen = ref(true)
 const mediaOpen  = ref(true)
-const advOpen    = ref(false)
+const advOpen    = ref(true)
 const expandedPlatforms = reactive({})
 const viewModes = reactive({})
 
@@ -797,9 +815,19 @@ function isPlatformPartial(p) {
   return n > 0 && n < sp.length
 }
 function togglePlatform(p) {
-  const ids = (groupedSpecs.value[p] ?? []).map(s => s.id)
-  if (isPlatformAllSelected(p)) selectedSpecIds.value = selectedSpecIds.value.filter(id => !ids.includes(id))
-  else ids.forEach(id => { if (!selectedSpecIds.value.includes(id)) selectedSpecIds.value.push(id) })
+  const specs = groupedSpecs.value[p] ?? []
+  const ids = specs.map(s => s.id)
+  if (isPlatformAllSelected(p)) {
+    selectedSpecIds.value = selectedSpecIds.value.filter(id => !ids.includes(id))
+    const s = new Set(safeZoneVisibleIds.value)
+    ids.forEach(id => s.delete(id))
+    safeZoneVisibleIds.value = s
+  } else {
+    ids.forEach(id => { if (!selectedSpecIds.value.includes(id)) selectedSpecIds.value.push(id) })
+    const s = new Set(safeZoneVisibleIds.value)
+    specs.forEach(spec => { if (getSafeZoneMetrics(spec)) s.add(spec.id) })
+    safeZoneVisibleIds.value = s
+  }
 }
 function deselectPlatform(p) {
   const ids = (groupedSpecs.value[p] ?? []).map(s => s.id)
@@ -810,8 +838,20 @@ function getViewMode(p) { return viewModes[p] ?? 'grid' }
 function setViewMode(p, mode) { viewModes[p] = mode }
 function toggleSpec(id) {
   const i = selectedSpecIds.value.indexOf(id)
-  if (i >= 0) selectedSpecIds.value.splice(i, 1)
-  else selectedSpecIds.value.push(id)
+  if (i >= 0) {
+    selectedSpecIds.value.splice(i, 1)
+    const s = new Set(safeZoneVisibleIds.value)
+    s.delete(id)
+    safeZoneVisibleIds.value = s
+  } else {
+    selectedSpecIds.value.push(id)
+    const spec = allSpecs.value.find(sp => sp.id === id)
+    if (spec && getSafeZoneMetrics(spec)) {
+      const s = new Set(safeZoneVisibleIds.value)
+      s.add(id)
+      safeZoneVisibleIds.value = s
+    }
+  }
 }
 function removeSpec(id) {
   selectedSpecIds.value = selectedSpecIds.value.filter(x => x !== id)
@@ -910,16 +950,44 @@ function formatFileSize(kb) {
 }
 
 function hasParsedSafeZone(spec) {
-  return spec?.safeZoneParseStatus === 'parsed_text' && spec.safeTop != null
+  return spec?.safeZoneParseStatus === 'parsed_text' && (
+    spec.safeTop != null || spec.safeRight != null ||
+    spec.safeBottom != null || spec.safeLeft != null
+  )
 }
 
-function szOverlayStyle(spec) {
-  if (!hasParsedSafeZone(spec)) return {}
+function getSafeZoneMetrics(spec) {
+  if (spec?.safeZoneParseStatus !== 'parsed_text') return null
+  const w = Number(spec?.width)
+  const h = Number(spec?.height)
+  if (!w || !h || w <= 0 || h <= 0) return null
+  const top    = spec.safeTop    != null ? Number(spec.safeTop)    : null
+  const right  = spec.safeRight  != null ? Number(spec.safeRight)  : null
+  const bottom = spec.safeBottom != null ? Number(spec.safeBottom) : null
+  const left   = spec.safeLeft   != null ? Number(spec.safeLeft)   : null
+  if (top == null || right == null || bottom == null || left == null) return null
+  if (top < 0 || right < 0 || bottom < 0 || left < 0) return null
+  const safeWidth  = w - left - right
+  const safeHeight = h - top - bottom
+  if (safeWidth <= 0 || safeHeight <= 0 || !isFinite(safeWidth) || !isFinite(safeHeight)) return null
   return {
-    top:    ((spec.safeTop    / spec.height) * 100).toFixed(2) + '%',
-    right:  ((spec.safeRight  / spec.width)  * 100).toFixed(2) + '%',
-    bottom: ((spec.safeBottom / spec.height) * 100).toFixed(2) + '%',
-    left:   ((spec.safeLeft   / spec.width)  * 100).toFixed(2) + '%',
+    top, right, bottom, left,
+    topPct:    top    / h * 100,
+    rightPct:  right  / w * 100,
+    bottomPct: bottom / h * 100,
+    leftPct:   left   / w * 100,
+    safeWidth, safeHeight,
+  }
+}
+
+function szInnerStyle(spec) {
+  const m = getSafeZoneMetrics(spec)
+  if (!m) return {}
+  return {
+    top:    m.topPct.toFixed(2)    + '%',
+    right:  m.rightPct.toFixed(2)  + '%',
+    bottom: m.bottomPct.toFixed(2) + '%',
+    left:   m.leftPct.toFixed(2)   + '%',
   }
 }
 
@@ -1694,16 +1762,37 @@ onMounted(loadSpecs)
 .hcards-list .hcard-guide,
 .hcards-list .hcard-details { display: none; }
 
-/* 세이프존 시각화 오버레이 — .spec-preview-frame(position:relative) 내부에만 표시 */
-.sz-frame-overlay {
-  position: absolute;
-  box-sizing: border-box;
-  border: 1.5px dashed rgba(124,58,237,0.80);
-  border-radius: 1px;
+/* 세이프존 도식 — .spec-preview-frame(position:relative) 내부에만 표시 */
+.sz-diagram {
+  position: absolute; inset: 0;
+  background: rgba(124, 58, 237, 0.07);
   pointer-events: none;
-  z-index: 2;
-  box-shadow: inset 0 0 0 1px rgba(124,58,237,0.15);
 }
+.sz-safe-inner {
+  position: absolute; box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1.5px dashed rgba(124, 58, 237, 0.78);
+  border-radius: 1px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.sz-inner-dim {
+  font-size: 7px; font-weight: 700; color: #5B21B6;
+  white-space: nowrap; line-height: 1; padding: 1px;
+  pointer-events: none;
+}
+.sz-lbl {
+  position: absolute;
+  font-size: 6.5px; font-weight: 700; color: #6D28D9;
+  background: rgba(255, 255, 255, 0.93);
+  padding: 1px 2px; border-radius: 2px;
+  white-space: nowrap; line-height: 1.3;
+  pointer-events: none; z-index: 3;
+}
+.sz-lbl-top    { left: 50%; transform: translateX(-50%); }
+.sz-lbl-right  { top: 50%;  transform: translateY(-50%); }
+.sz-lbl-bottom { left: 50%; transform: translateX(-50%); }
+.sz-lbl-left   { top: 50%;  transform: translateY(-50%); }
 
 /* 제작 가이드 */
 .hcard-guide { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
@@ -1760,7 +1849,7 @@ details[open] > .hcard-details-lbl::before { content: '▼ '; }
 .hcard-no-detail { font-size: 9.5px; color: #9CA3AF; font-style: italic; }
 
 .hcard-preview {
-  width: 155px; flex-shrink: 0; overflow: hidden; background: #F2F4F6;
+  width: 210px; flex-shrink: 0; overflow: hidden; background: #F2F4F6;
   display: flex; align-items: center; justify-content: center;
 }
 .spec-preview-canvas {
@@ -1769,20 +1858,20 @@ details[open] > .hcard-details-lbl::before { content: '▼ '; }
   padding: 10px; box-sizing: border-box;
 }
 .spec-preview-frame {
-  max-width: 133px; max-height: 108px;
+  max-width: 185px; max-height: 150px;
   background: #fff;
   border: 1px solid rgba(148, 163, 184, 0.3);
   border-radius: 7px; overflow: hidden;
   box-shadow: 0 3px 10px rgba(15, 23, 42, 0.1);
   min-height: 20px;
-  position: relative; /* sz-frame-overlay의 containing block */
+  position: relative;
 }
 .spec-preview-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.spec-preview-frame.ultra-wide { width: 133px; }
-.spec-preview-frame.wide       { width: 133px; }
-.spec-preview-frame.square     { width: 90px; }
-.spec-preview-frame.vertical   { height: 108px; width: auto; }
-.spec-preview-frame.tall       { height: 108px; width: auto; }
+.spec-preview-frame.ultra-wide { width: 185px; }
+.spec-preview-frame.wide       { width: 185px; }
+.spec-preview-frame.square     { width: 120px; }
+.spec-preview-frame.vertical   { height: 150px; width: auto; }
+.spec-preview-frame.tall       { height: 150px; width: auto; }
 .spec-preview-ph {
   width: 100%; height: 100%; min-width: 40px; min-height: 20px;
   display: flex; align-items: center; justify-content: center;
