@@ -49,8 +49,10 @@ class ForegroundCompositeResult:
 
     layer_count: int = 0        # total input layers (including duplicates)
     unique_object_count: int = 0
-    placed_count: int = 0
-    skipped_count: int = 0
+    placed_count: int = 0       # legacy: unique role count (kept for compat)
+    skipped_count: int = 0      # legacy: unique skipped role count (kept for compat)
+    placed_object_count: int = 0   # Bundle C-1: actual placed object count
+    skipped_object_count: int = 0  # Bundle C-1: actual skipped object count
     duplicate_count: int = 0
     duplicate_object_ids: list[str] = field(default_factory=list)
     all_objects_composited_once: bool = True
@@ -200,9 +202,13 @@ def composite_foreground(
 
         manifest.append(entry)
 
-    placed_count = len(placed)
+    placed_count = len(placed)  # unique roles (legacy)
+    # Bundle C-1: object-level counters (count entries, not unique roles)
+    placed_object_count = sum(1 for e in manifest if e.get("compositedCount", 0) == 1)
+    skipped_object_count = sum(1 for e in manifest if "skippedReason" in e)
     all_once = (
         res.duplicate_count == 0
+        and skipped_object_count == 0
         and all(e.get("compositedCount") == 1 for e in manifest if "skippedReason" not in e)
     )
 
@@ -218,6 +224,8 @@ def composite_foreground(
     res.success = True
     res.placed_count = placed_count
     res.skipped_count = len(skipped)
+    res.placed_object_count = placed_object_count
+    res.skipped_object_count = skipped_object_count
     res.all_objects_composited_once = all_once
     res.object_manifest = manifest
 
