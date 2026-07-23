@@ -274,7 +274,7 @@
         </div>
 
         <!-- AI 객체 분석 섹션 (PSD 전용) -->
-        <div v-if="isPsdFile && psdLayerAnalysis && !psdLayerAnalyzing" class="oa-section">
+        <div v-if="isPsdFile && psdLayerAnalysis" class="oa-section">
           <!-- 툴바 -->
           <div class="oa-toolbar">
             <div class="oa-toolbar-left">
@@ -296,9 +296,17 @@
                 전체 보기
               </button>
               <button class="oa-btn" :disabled="objAnalyzing" @click="runObjectAnalysis">
-                {{ objAnalyzing ? '분석 중…' : 'AI 객체 분석' }}
+                <span v-if="objAnalyzing" class="oa-btn-spin" />
+                {{ objAnalyzing ? '분석 중…' : objAnalysisResult ? '재분석' : 'AI 객체 분석' }}
               </button>
             </div>
+          </div>
+
+          <!-- IDLE 상태: PSD 분석 완료 후 객체 분석 전 -->
+          <div v-if="!objAnalysisResult && !objAnalyzing && !objAnalysisError" class="oa-idle-state">
+            <div class="oa-idle-icon">✦</div>
+            <div class="oa-idle-title">AI 객체분석 시작하기</div>
+            <div class="oa-idle-desc">PSD의 텍스트, 제품, 로고, 인물, 배경을 분석하고<br>각 레이어에 역할을 자동으로 할당합니다.</div>
           </div>
 
           <!-- 로딩 -->
@@ -312,6 +320,15 @@
 
           <!-- 결과 -->
           <template v-if="objAnalysisResult && !objAnalyzing">
+            <!-- 분석 메타 요약 바 -->
+            <div class="oa-meta-bar">
+              <span class="oa-meta-badge-cached" v-if="objAnalysisMeta?.cacheHit">↩ 저장된 분석 재사용</span>
+              <span class="oa-meta-badge-new" v-else>✦ 새 AI 분석</span>
+              <span class="oa-meta-sep">·</span>
+              <span class="oa-meta-count">객체 {{ objAnalysisResult.objects?.length ?? 0 }}개</span>
+              <span v-if="objAnalysisMeta?.model" class="oa-meta-model">{{ objAnalysisMeta.model }}</span>
+              <span v-if="objAnalysisResult.id" class="oa-meta-saved" title="Object Map MongoDB에 저장됨">Object Map 저장됨</span>
+            </div>
             <!-- compact 상태 바 -->
             <div class="oa-status-bar">
               <span class="oa-rf-badge" :class="objAnalysisResult.reflowReady ? 'rf-ok' : 'rf-ng'">
@@ -381,8 +398,22 @@
               <!-- 인스펙터 패널 -->
               <div class="oa-inspector">
                 <div class="oa-inspector-hint">객체를 클릭하면 이미지에서 해당 영역을 강조해서 볼 수 있습니다.</div>
+                <!-- 필터 칩 -->
+                <div class="oa-filter-row">
+                  <button
+                    v-for="f in OBJ_FILTERS"
+                    :key="f.value"
+                    class="oa-filter-chip"
+                    :class="{ active: objFilter === f.value }"
+                    @click="objFilter = f.value"
+                  >{{ f.label }}<span class="oa-filter-cnt">{{ getFilterCount(f.value) }}</span></button>
+                </div>
+                <!-- 필터 결과 없음 -->
+                <div v-if="filteredVisibleObjects.length === 0 && objFilter !== 'all'" class="oa-filter-empty">
+                  해당 카테고리에 객체가 없습니다.
+                </div>
                 <div
-                  v-for="obj in visibleObjects"
+                  v-for="obj in filteredVisibleObjects"
                   :key="'ins-' + obj.id"
                   class="oa-ins-card"
                   :class="{
@@ -430,6 +461,41 @@
                       <span class="oa-role-dot" :class="'oa-dot-' + obj.role" />
                       <span class="oa-ins-role">{{ objRoleLabel(obj.role) }}</span>
                       <span class="oa-ins-label">{{ obj.label }}</span>
+                    </div>
+                  </div>
+                </details>
+
+                <!-- 기술 정보 접기 -->
+                <details v-if="objAnalysisMeta || objAnalysisResult?.id" class="oa-tech-details">
+                  <summary class="oa-tech-summary">기술 정보</summary>
+                  <div class="oa-tech-body">
+                    <div v-if="objAnalysisResult?.id" class="oa-tech-row">
+                      <span class="oa-tech-key">분석 ID</span>
+                      <span class="oa-tech-val oa-tech-mono oa-tech-truncate" :title="objAnalysisResult.id">{{ objAnalysisResult.id }}</span>
+                    </div>
+                    <div v-if="objAnalysisMeta?.sourceFileSha256" class="oa-tech-row">
+                      <span class="oa-tech-key">소스 SHA-256</span>
+                      <span class="oa-tech-val oa-tech-mono oa-tech-truncate" :title="objAnalysisMeta.sourceFileSha256">{{ objAnalysisMeta.sourceFileSha256.slice(0, 16) }}…</span>
+                    </div>
+                    <div v-if="objAnalysisMeta?.model" class="oa-tech-row">
+                      <span class="oa-tech-key">모델</span>
+                      <span class="oa-tech-val oa-tech-mono">{{ objAnalysisMeta.model }}</span>
+                    </div>
+                    <div v-if="objAnalysisMeta?.analysisVersion" class="oa-tech-row">
+                      <span class="oa-tech-key">버전</span>
+                      <span class="oa-tech-val oa-tech-mono">{{ objAnalysisMeta.analysisVersion }}</span>
+                    </div>
+                    <div class="oa-tech-row">
+                      <span class="oa-tech-key">캐시 히트</span>
+                      <span class="oa-tech-val">{{ objAnalysisMeta?.cacheHit ? '예 (저장된 분석 재사용)' : '아니오 (새 AI 분석)' }}</span>
+                    </div>
+                    <div v-if="objAnalysisMeta?.gptRequestCount !== null" class="oa-tech-row">
+                      <span class="oa-tech-key">GPT 호출 횟수</span>
+                      <span class="oa-tech-val oa-tech-mono">{{ objAnalysisMeta.gptRequestCount }}</span>
+                    </div>
+                    <div v-if="objAnalysisMeta?.analyzedAt" class="oa-tech-row">
+                      <span class="oa-tech-key">분석 일시</span>
+                      <span class="oa-tech-val">{{ new Date(objAnalysisMeta.analyzedAt).toLocaleString('ko-KR') }}</span>
                     </div>
                   </div>
                 </details>
@@ -547,6 +613,8 @@ const previewWrapRef      = ref(null)
 const previewImgMeta      = ref(null)
 const hoveredObjId        = ref(null)
 const selectedObjId       = ref(null)
+const objFilter           = ref('all')
+const objAnalysisMeta     = ref(null)
 const allSpecs     = ref([])
 const specsLoading = ref(true)
 const naverLoadError = ref(false)
@@ -771,6 +839,7 @@ function clearFile() {
   objAnalysisArtboardId.value = null; previewImgMeta.value = null
   objAnalysisId.value = null
   hoveredObjId.value = null; selectedObjId.value = null
+  objFilter.value = 'all'; objAnalysisMeta.value = null
 }
 
 async function runAiAnalyze() {
@@ -818,6 +887,49 @@ const visibleObjects = computed(() => {
 const hiddenObjects = computed(() => {
   const objs = objAnalysisResult.value?.objects || []
   return objs.filter(o => HIDDEN_ROLES.has(o.role))
+})
+
+const OBJ_FILTERS = [
+  { value: 'all',        label: '전체' },
+  { value: 'image',      label: '제품·이미지' },
+  { value: 'text',       label: '텍스트' },
+  { value: 'logo_cta',   label: '로고·CTA' },
+  { value: 'person',     label: '인물' },
+  { value: 'bg_deco',    label: '배경·장식' },
+  { value: 'unmatched',  label: '매칭실패' },
+]
+
+const FILTER_ROLE_MAP = {
+  image:     ['main_image'],
+  text:      ['title', 'body_text'],
+  logo_cta:  ['logo', 'cta', 'badge'],
+  person:    ['person'],
+  bg_deco:   ['background', 'decoration'],
+  unmatched: null,
+}
+
+const filteredVisibleObjects = computed(() => {
+  const objs = visibleObjects.value
+  if (objFilter.value === 'all') return objs
+  if (objFilter.value === 'unmatched') return objs.filter(o => o.matchStatus !== 'ready')
+  const roles = FILTER_ROLE_MAP[objFilter.value]
+  if (!roles) return objs
+  return objs.filter(o => roles.includes(o.role))
+})
+
+function getFilterCount(filterVal) {
+  const objs = visibleObjects.value
+  if (filterVal === 'all') return objs.length
+  if (filterVal === 'unmatched') return objs.filter(o => o.matchStatus !== 'ready').length
+  const roles = FILTER_ROLE_MAP[filterVal]
+  if (!roles) return 0
+  return objs.filter(o => roles.includes(o.role)).length
+}
+
+watch(objFilter, () => {
+  if (selectedObjId.value && !filteredVisibleObjects.value.find(o => o.id === selectedObjId.value)) {
+    selectedObjId.value = null
+  }
 })
 
 function toggleSelectObj(id) {
@@ -916,7 +1028,16 @@ async function runObjectAnalysis() {
     }
     const { data } = await analyzePsdObjects(fd)
     objAnalysisResult.value = data
-    objAnalysisId.value = data?.id ?? null   // 캐시 재사용을 위해 분석 ID 보관
+    objAnalysisId.value = data?.id ?? null
+    objAnalysisMeta.value = {
+      cacheHit: data?.analysisCacheHit ?? false,
+      model: data?.model ?? null,
+      analysisVersion: data?.analysisVersion ?? null,
+      gptRequestCount: data?.gptRequestCount ?? null,
+      sourceFileSha256: data?.sourceFileSha256 ?? null,
+      analyzedAt: data?.analyzedAt ?? null,
+    }
+    objFilter.value = 'all'
     if (objReflowCanActivate.value) {
       psdMode.value = 'object-reflow'
     }
@@ -1573,7 +1694,7 @@ onMounted(loadSpecs)
 .oa-preview-panel { flex: 0 0 58%; min-width: 0; }
 .oa-preview-wrap {
   position: relative; width: 100%;
-  min-height: 520px; height: 520px;
+  min-height: 360px; height: 360px;
   background: #111; border-radius: 8px; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
 }
@@ -1738,6 +1859,87 @@ onMounted(loadSpecs)
 .toast-enter-from { opacity: 0; transform: translateY(16px); }
 .toast-leave-to   { opacity: 0; transform: translateY(16px); }
 
+/* oa-btn-spin */
+.oa-btn-spin {
+  display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: middle;
+  border: 1.5px solid rgba(255,255,255,0.35); border-top-color: #fff;
+  border-radius: 50%; animation: oa-spin 0.7s linear infinite;
+}
+
+/* IDLE state */
+.oa-idle-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 28px 16px; text-align: center; gap: 6px;
+}
+.oa-idle-icon { font-size: 24px; color: #7C3AED; opacity: 0.6; }
+.oa-idle-title { font-size: 13px; font-weight: 700; color: #374151; }
+.oa-idle-desc { font-size: 11px; color: #9CA3AF; line-height: 1.6; }
+
+/* meta bar */
+.oa-meta-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 4px 8px; border-radius: 6px; background: #F1F5F9;
+  font-size: 10px; margin-bottom: 6px;
+}
+.oa-meta-badge-new {
+  font-weight: 700; padding: 1px 6px; border-radius: 6px;
+  background: #EDE9FE; color: #7C3AED;
+}
+.oa-meta-badge-cached {
+  font-weight: 700; padding: 1px 6px; border-radius: 6px;
+  background: #D1FAE5; color: #065F46;
+}
+.oa-meta-sep { color: #D1D5DB; }
+.oa-meta-count { color: #6B7280; font-weight: 600; }
+.oa-meta-model {
+  color: #9CA3AF; font-family: monospace; font-size: 9.5px;
+  background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 4px; padding: 1px 5px;
+}
+.oa-meta-saved {
+  color: #059669; font-size: 9.5px; font-weight: 600;
+  background: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 4px; padding: 1px 5px; margin-left: auto;
+}
+
+/* filter chips */
+.oa-filter-row {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;
+}
+.oa-filter-chip {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 100px;
+  border: 1.5px solid #E5E7EB; background: #fff; color: #6B7280;
+  cursor: pointer; transition: all 0.1s; font-family: inherit;
+}
+.oa-filter-chip:hover { border-color: #C4B5FD; color: #7C3AED; }
+.oa-filter-chip.active { border-color: #7C3AED; background: #EDE9FE; color: #7C3AED; }
+.oa-filter-cnt {
+  font-size: 9px; font-weight: 700; min-width: 14px; text-align: center;
+  background: #F3F4F6; color: #9CA3AF; border-radius: 100px; padding: 0 4px;
+}
+.oa-filter-chip.active .oa-filter-cnt { background: #DDD6FE; color: #5B21B6; }
+.oa-filter-empty {
+  font-size: 11px; color: #9CA3AF; text-align: center; padding: 16px 0;
+}
+
+/* tech details collapse */
+.oa-tech-details {
+  margin-top: 6px; border-radius: 7px;
+  border: 1px solid #E5E7EB; background: #F9FAFB; overflow: hidden;
+}
+.oa-tech-summary {
+  font-size: 10.5px; font-weight: 600; color: #9CA3AF;
+  padding: 6px 10px; cursor: pointer; list-style: none; user-select: none;
+}
+.oa-tech-summary::-webkit-details-marker { display: none; }
+.oa-tech-summary::before { content: '▶ '; font-size: 8px; }
+details[open] .oa-tech-summary::before { content: '▼ '; }
+.oa-tech-body { padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 3px; }
+.oa-tech-row { display: flex; align-items: flex-start; gap: 6px; font-size: 10.5px; }
+.oa-tech-key { color: #9CA3AF; white-space: nowrap; min-width: 80px; flex-shrink: 0; }
+.oa-tech-val { color: #374151; flex: 1; min-width: 0; }
+.oa-tech-mono { font-family: monospace; font-size: 10px; }
+.oa-tech-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* mobile responsive */
 @media (max-width: 900px) {
   .oa-body { flex-direction: column; }
@@ -1772,5 +1974,17 @@ onMounted(loadSpecs)
   .oa-inspector-hint { background: #252836; color: #6B7280; }
   .psd-auto-badge { background: #2D1F4A; color: #C4B5FD; }
   .oa-view-all-btn { background: #252836; border-color: #4C3D6E; color: #C4B5FD; }
+  .oa-idle-title { color: #E5E7EB; }
+  .oa-meta-bar { background: #252836; }
+  .oa-meta-model { background: #1F2937; border-color: #374151; color: #9CA3AF; }
+  .oa-meta-saved { background: #064E3B; border-color: #065F46; color: #6EE7B7; }
+  .oa-filter-chip { background: #1F2937; border-color: #374151; color: #9CA3AF; }
+  .oa-filter-chip:hover { border-color: #7C3AED; color: #C4B5FD; }
+  .oa-filter-chip.active { background: #2D1F4A; border-color: #7C3AED; color: #C4B5FD; }
+  .oa-filter-cnt { background: #374151; color: #6B7280; }
+  .oa-tech-details { background: #1F2937; border-color: #374151; }
+  .oa-tech-summary { color: #6B7280; }
+  .oa-tech-key { color: #6B7280; }
+  .oa-tech-val { color: #E5E7EB; }
 }
 </style>
