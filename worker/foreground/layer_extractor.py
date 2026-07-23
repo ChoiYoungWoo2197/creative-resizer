@@ -46,6 +46,10 @@ def extract_foreground_layers(
 
     scale_x = target_w / canvas_w
     scale_y = target_h / canvas_h
+    # Uniform scale preserves aspect ratios of foreground objects.
+    # Positions use individual scale_x/scale_y (proportional placement),
+    # but dimensions always use the smaller axis scale to avoid distortion.
+    scale_uniform = min(scale_x, scale_y)
 
     result = []
     for layer in psd_layers:
@@ -74,14 +78,25 @@ def extract_foreground_layers(
             print(f"[FG_EXTRACT] skip layer={layer.get('name')!r} role={role}: {e}")
             continue
 
-        # Scale bbox to target coordinate space
+        # Positions: proportional to target canvas (preserves relative layout)
         sx = round(ox * scale_x)
         sy = round(oy * scale_y)
-        sw = max(1, round(ow * scale_x))
-        sh = max(1, round(oh * scale_y))
+        # Dimensions: uniform scale to preserve aspect ratio (no distortion)
+        sw = max(1, round(ow * scale_uniform))
+        sh = max(1, round(oh * scale_uniform))
 
         if limg.width != sw or limg.height != sh:
             limg = limg.resize((sw, sh), Image.LANCZOS)
+
+        src_aspect = ow / oh if oh > 0 else 1.0
+        dst_aspect = sw / sh if sh > 0 else 1.0
+        if abs(src_aspect - dst_aspect) > 0.005:
+            print(
+                f"[FG_EXTRACT] NON_UNIFORM_FOREGROUND_SCALE"
+                f" role={role} name={layer.get('name')!r}"
+                f" srcAspect={src_aspect:.3f} dstAspect={dst_aspect:.3f}",
+                flush=True,
+            )
 
         result.append({
             "role":    role,
@@ -93,7 +108,8 @@ def extract_foreground_layers(
         })
         print(
             f"[FG_EXTRACT] role={role} name={layer.get('name')!r}"
-            f" src={ow}x{oh} -> {sw}x{sh} @ ({sx},{sy})",
+            f" src={ow}x{oh} -> {sw}x{sh} @ ({sx},{sy})"
+            f" scale_uniform={scale_uniform:.4f}",
             flush=True,
         )
 

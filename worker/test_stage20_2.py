@@ -609,3 +609,198 @@ class TestStage19Regression:
         req = BackgroundRequest(source_image=source, target_width=100, target_height=100, options=opts)
         result = BackgroundPipeline().process(req)
         assert result.verdict in ("PASS", "PARTIAL", "FAIL", "PENDING")
+
+
+# ── 13. Foreground uniform scale ───────────────────────────────────────────────
+
+class _FakeLayerObj:
+    """Stub for psd-tools layer object: returns a solid-colour RGBA image."""
+    def __init__(self, w, h, color=(200, 100, 50, 255)):
+        self._img = Image.new("RGBA", (w, h), color)
+    def composite(self):
+        return self._img.copy()
+
+
+def _make_psd_layer(role, ox, oy, ow, oh, canvas_w, canvas_h, ltype="pixel"):
+    return {
+        "role": role,
+        "name": f"{role}_layer",
+        "type": ltype,
+        "id": f"id_{role}",
+        "depth": 0,
+        "bbox": {"x": ox, "y": oy, "width": ow, "height": oh},
+        "canvasWidth": canvas_w,
+        "canvasHeight": canvas_h,
+        "_layer_obj": _FakeLayerObj(ow, oh),
+    }
+
+
+class TestForegroundUniformScale:
+    """E category: foreground scale must preserve aspect ratio."""
+
+    def _extract(self, layers, canvas_w, canvas_h, target_w, target_h):
+        from foreground.layer_extractor import extract_foreground_layers
+        return extract_foreground_layers(layers, canvas_w, canvas_h, target_w, target_h)
+
+    def _aspect(self, w, h):
+        return w / h if h > 0 else 1.0
+
+    def test_product_tall_aspect_preserved_square_to_wide(self):
+        """1200x1200 → 1250x560: product 200x732 must keep ~0.273 aspect (not 0.608)."""
+        layer = _make_psd_layer("product", 920, 140, 200, 732, 1200, 1200)
+        extracted = self._extract([layer], 1200, 1200, 1250, 560)
+        assert len(extracted) == 1
+        bbox = extracted[0]["bbox"]
+        src_aspect = self._aspect(200, 732)
+        dst_aspect = self._aspect(bbox["width"], bbox["height"])
+        assert abs(src_aspect - dst_aspect) <= 0.02, (
+            f"Aspect distorted: src={src_aspect:.3f} dst={dst_aspect:.3f} "
+            f"(size={bbox['width']}x{bbox['height']})"
+        )
+
+    def test_title_wide_aspect_preserved_square_to_wide(self):
+        """1200x1200 → 1250x560: title 1038x81 must keep ~12.8 aspect (not 28.4)."""
+        layer = _make_psd_layer("title", 80, 50, 1038, 81, 1200, 1200, ltype="type")
+        extracted = self._extract([layer], 1200, 1200, 1250, 560)
+        assert len(extracted) == 1
+        bbox = extracted[0]["bbox"]
+        src_aspect = self._aspect(1038, 81)
+        dst_aspect = self._aspect(bbox["width"], bbox["height"])
+        assert abs(src_aspect - dst_aspect) <= 0.5, (
+            f"Title aspect distorted: src={src_aspect:.3f} dst={dst_aspect:.3f}"
+        )
+
+    def test_same_size_no_change(self):
+        """Same canvas and target: scale_uniform=1.0, no resize needed."""
+        layer = _make_psd_layer("product", 100, 100, 200, 300, 600, 600)
+        extracted = self._extract([layer], 600, 600, 600, 600)
+        assert len(extracted) == 1
+        bbox = extracted[0]["bbox"]
+        assert bbox["width"] == 200
+        assert bbox["height"] == 300
+
+    def test_square_to_tall_aspect_preserved(self):
+        """600x600 → 400x800: scale_uniform = min(400/600, 800/600) = 0.667."""
+        layer = _make_psd_layer("human_subject", 100, 100, 200, 400, 600, 600)
+        extracted = self._extract([layer], 600, 600, 400, 800)
+        assert len(extracted) == 1
+        bbox = extracted[0]["bbox"]
+        src_aspect = self._aspect(200, 400)
+        dst_aspect = self._aspect(bbox["width"], bbox["height"])
+        assert abs(src_aspect - dst_aspect) <= 0.02
+
+    def test_non_uniform_canvas_aspect_uses_min_scale(self):
+        """Verify scale_uniform = min(scale_x, scale_y) for arbitrary canvas."""
+        # canvas 800x600 → target 400x600
+        # scale_x = 400/800 = 0.5, scale_y = 600/600 = 1.0 → min = 0.5
+        layer = _make_psd_layer("product", 0, 0, 200, 100, 800, 600)
+        extracted = self._extract([layer], 800, 600, 400, 600)
+        assert len(extracted) == 1
+        bbox = extracted[0]["bbox"]
+        # With scale_uniform=0.5: sw=100, sh=50 → aspect 2.0 same as src 200/100=2.0
+        assert abs(self._aspect(200, 100) - self._aspect(bbox["width"], bbox["height"])) <= 0.02
+
+
+# ── 14. Human immutable protection after Object Map ────────────────────────────
+
+class TestHumanImmutableProtection:
+    """C category: human_subject pixel/smartobject cannot be downgraded by Object Map."""
+
+    def _apply(self, layers, object_results, strict=True):
+        from object_map_applicator import apply_object_map
+        return apply_object_map(layers, object_results, strict=strict)
+
+    def _human_layer(self, ltype="pixel"):
+        return {
+            "id": "layer_human_001",
+            "name": "모델_손",
+            "type": ltype,
+            "role": "human_subject",
+            "priority": "required",
+            "bbox": {"x": 0, "y": 0, "width": 100, "height": 200},
+        }
+
+    def test_human_pixel_not_downgraded_by_object_map(self):
+        """Object Map assigns 'product' to a human_subject pixel layer → rejected."""
+        layer = self._human_layer("pixel")
+        obj_results = [{
+            "matchedLayerId": "layer_human_001",
+            "matchedLayerName": "모델_손",
+            "role": "product",
+            "matchStatus": "ready",
+            "confidence": 0.95,
+        }]
+        updated, logs = self._apply([layer], obj_results, strict=True)
+        assert updated[0]["role"] == "human_subject", (
+            f"human_subject was downgraded to {updated[0]['role']!r}"
+        )
+        assert any(
+            lg.get("rejectReason") == "human_subject_immutable"
+            for lg in logs
+        ), f"Expected human_subject_immutable reject log, got: {logs}"
+
+    def test_human_smartobject_not_downgraded_by_object_map(self):
+        """Object Map assigns 'background' to a human_subject smartobject → rejected."""
+        layer = self._human_layer("smartobject")
+        layer["id"] = "layer_human_002"
+        obj_results = [{
+            "matchedLayerId": "layer_human_002",
+            "matchedLayerName": "모델_손",
+            "role": "background",
+            "matchStatus": "ready",
+            "confidence": 0.9,
+        }]
+        updated, logs = self._apply([layer], obj_results, strict=True)
+        assert updated[0]["role"] == "human_subject"
+        assert any(lg.get("rejectReason") == "human_subject_immutable" for lg in logs)
+
+    def test_human_can_be_confirmed_as_human_by_object_map(self):
+        """Object Map assigning same role (human_subject) is fine — no log needed."""
+        layer = self._human_layer("pixel")
+        layer["id"] = "layer_human_003"
+        obj_results = [{
+            "matchedLayerId": "layer_human_003",
+            "matchedLayerName": "모델_손",
+            "role": "human_subject",
+            "matchStatus": "ready",
+            "confidence": 0.99,
+        }]
+        updated, logs = self._apply([layer], obj_results, strict=True)
+        assert updated[0]["role"] == "human_subject"
+        assert not any(lg.get("rejectReason") == "human_subject_immutable" for lg in logs)
+
+    def test_non_human_pixel_can_be_overridden(self):
+        """Object Map can override a 'product' pixel layer — no immutable guard fires."""
+        layer = {
+            "id": "layer_prod_001",
+            "name": "제품_박스",
+            "type": "pixel",
+            "role": "product",
+            "priority": "required",
+            "bbox": {"x": 0, "y": 0, "width": 100, "height": 100},
+        }
+        obj_results = [{
+            "matchedLayerId": "layer_prod_001",
+            "matchedLayerName": "제품_박스",
+            "role": "main_image",
+            "matchStatus": "ready",
+            "confidence": 0.88,
+        }]
+        updated, logs = self._apply([layer], obj_results, strict=True)
+        assert updated[0]["role"] == "main_image"
+        assert not any(lg.get("rejectReason") == "human_subject_immutable" for lg in logs)
+
+    def test_human_text_layer_is_not_protected(self):
+        """A text layer misclassified as human_subject is NOT immutable (text cannot be human)."""
+        layer = self._human_layer("type")  # text layer
+        layer["id"] = "layer_human_text_001"
+        obj_results = [{
+            "matchedLayerId": "layer_human_text_001",
+            "matchedLayerName": "모델_손",
+            "role": "body_text",
+            "matchStatus": "ready",
+            "confidence": 0.91,
+        }]
+        updated, logs = self._apply([layer], obj_results, strict=True)
+        # Text layer human_subject is a contradiction — Object Map override allowed
+        assert updated[0]["role"] == "body_text"
