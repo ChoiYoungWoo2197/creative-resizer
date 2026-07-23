@@ -1255,6 +1255,14 @@ def _generate_ai_only(
     results = []
     actual_provider_request_count = 0
 
+    # D-1: Background generation mode — determines Provider input strategy.
+    # semantic_scene_cleanup → full composite → semantic edit (Bundle D-1)
+    # source_faithful_repair → background plate → targeted repair (legacy)
+    _bg_mode = os.environ.get("BACKGROUND_GENERATION_MODE", "source_faithful_repair").strip()
+    if _bg_mode not in ("source_faithful_repair", "semantic_scene_cleanup"):
+        raise RuntimeError(f"UNKNOWN_BACKGROUND_GENERATION_MODE: {_bg_mode!r}")
+    print(f"[BG_MODE] jobId={jid} backgroundGenerationMode={_bg_mode}", flush=True)
+
     _work_base = os.environ.get("AI_WORK_DIR", "/app/storage/work")
 
     for spec_idx, spec in enumerate(specs):
@@ -1287,82 +1295,120 @@ def _generate_ai_only(
         # Save source composite as first debug artifact
         render_ctx.save_debug_artifact("01-source-composite", img)
 
-        # Bundle A: build background-only plate for AI provider input.
-        # Fail-closed: if plate build fails, raise rather than fall back to full composite.
-        _bg_plate_img: object = None
-        _bg_plate_removal_mask: object = None
-        if psd_layers_classified and source_type == "psd":
-            try:
-                from background.background_plate_builder import build_background_plate
-                _bg_plate_result = build_background_plate(
-                    source_composite=img,
-                    psd_layers=psd_layers_classified,
-                    canvas_w=psd_canvas_w,
-                    canvas_h=psd_canvas_h,
-                    render_context=render_ctx,
+        # D-1: Background pipeline — mode-conditional.
+        # semantic_scene_cleanup → full composite → semantic scene edit
+        # source_faithful_repair → background plate → targeted repair (legacy)
+        sfr = None
+        _scene_result = None
+        _ai_scene_dir = os.path.join(output_dir, "stage20_3", spec_id)
+
+        if _bg_mode == "semantic_scene_cleanup":
+            from scene_cleanup.semantic_scene_cleanup import run_semantic_scene_cleanup
+            _scene_result = run_semantic_scene_cleanup(
+                source_path=psd_path,
+                source_type=source_type,
+                source_image=img,
+                source_file_sha256=_source_file_sha256,
+                composite_sha256=_composite_sha256,
+                target_w=w,
+                target_h=h,
+                provider=provider,
+                output_dir=_ai_scene_dir,
+                render_ctx=render_ctx,
+                has_native_layers=bool(psd_layers_classified),
+                composite_render_method="psd_composite" if source_type == "psd" else source_type,
+                max_attempts=max_attempts,
+                job_id=jid,
+                spec_id=spec_id,
+            )
+            actual_provider_request_count += _scene_result.actual_provider_request_count
+            if not _scene_result.success or _scene_result.scene_plate_image is None:
+                raise RuntimeError(
+                    f"SEMANTIC_SCENE_CLEANUP_FAIL_CLOSED: spec={name} {w}x{h}"
+                    f" reason={_scene_result.failure_reason}"
                 )
-                if _bg_plate_result.success:
-                    _bg_plate_img = _bg_plate_result.image
-                    _bg_plate_removal_mask = _bg_plate_result.foreground_removal_mask
-                    render_ctx.save_debug_artifact("02-background-plate", _bg_plate_result.image)
-                    print(
-                        f"[BACKGROUND_PLATE_OK] jobId={jid} specId={spec_id}"
-                        f" strategy={_bg_plate_result.strategy!r}"
-                        f" sha256={_bg_plate_result.background_pixel_sha256[:16]}"
-                        f" excludedFg={len(_bg_plate_result.excluded_layer_ids)}",
-                        flush=True,
+            result_img = _scene_result.scene_plate_image
+            if result_img.size != (w, h):
+                result_img = result_img.resize((w, h), Image.LANCZOS)
+        else:
+            # Legacy: Bundle A background plate + Source Faithful Repair
+            _bg_plate_img: object = None
+            _bg_plate_removal_mask: object = None
+            if psd_layers_classified and source_type == "psd":
+                try:
+                    from background.background_plate_builder import build_background_plate
+                    _bg_plate_result = build_background_plate(
+                        source_composite=img,
+                        psd_layers=psd_layers_classified,
+                        canvas_w=psd_canvas_w,
+                        canvas_h=psd_canvas_h,
+                        render_context=render_ctx,
                     )
-                else:
-                    raise RuntimeError(
-                        f"BACKGROUND_PLATE_BUILD_FAILED:"
-                        f" reason={_bg_plate_result.failure_reason}"
-                        f" warnings={_bg_plate_result.warnings}"
-                    )
-            except RuntimeError:
-                raise  # propagate fail-closed
-            except Exception as _bp_err:
-                raise RuntimeError(f"BACKGROUND_PLATE_BUILD_FAILED: {_bp_err}") from _bp_err
+                    if _bg_plate_result.success:
+                        _bg_plate_img = _bg_plate_result.image
+                        _bg_plate_removal_mask = _bg_plate_result.foreground_removal_mask
+                        render_ctx.save_debug_artifact("02-background-plate", _bg_plate_result.image)
+                        print(
+                            f"[BACKGROUND_PLATE_OK] jobId={jid} specId={spec_id}"
+                            f" strategy={_bg_plate_result.strategy!r}"
+                            f" sha256={_bg_plate_result.background_pixel_sha256[:16]}"
+                            f" excludedFg={len(_bg_plate_result.excluded_layer_ids)}",
+                            flush=True,
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"BACKGROUND_PLATE_BUILD_FAILED:"
+                            f" reason={_bg_plate_result.failure_reason}"
+                            f" warnings={_bg_plate_result.warnings}"
+                        )
+                except RuntimeError:
+                    raise
+                except Exception as _bp_err:
+                    raise RuntimeError(f"BACKGROUND_PLATE_BUILD_FAILED: {_bp_err}") from _bp_err
 
-        sfr_dir = os.path.join(output_dir, "stage20_3", spec_id)
-        sfr = run_source_faithful_repair(
-            source_image=img,
-            classified_layers=psd_layers_classified,  # Stage 21: removal + immutable masks
-            target_w=w,
-            target_h=h,
-            provider=provider,
-            max_attempts=max_attempts,
-            request_id=f"{jid}_{w}x{h}",
-            output_dir=sfr_dir,
-            render_ctx=render_ctx,
-            background_plate=_bg_plate_img,
-            background_plate_removal_mask=_bg_plate_removal_mask,
-        )
-        actual_provider_request_count += sfr.background_ai_attempt_count
+            sfr = run_source_faithful_repair(
+                source_image=img,
+                classified_layers=psd_layers_classified,
+                target_w=w,
+                target_h=h,
+                provider=provider,
+                max_attempts=max_attempts,
+                request_id=f"{jid}_{w}x{h}",
+                output_dir=_ai_scene_dir,
+                render_ctx=render_ctx,
+                background_plate=_bg_plate_img,
+                background_plate_removal_mask=_bg_plate_removal_mask,
+            )
+            actual_provider_request_count += sfr.background_ai_attempt_count
 
-        spec_elapsed_ms = int((_time.time() - t_spec) * 1000)
-        print(
-            f"[AI_SPEC_END] jobId={jid} spec={name} size={w}x{h}"
-            f" verdict={sfr.verdict} success={sfr.success}"
-            f" provider={sfr.background_ai_provider} attempts={sfr.background_ai_attempt_count}"
-            f" faithfulness={sfr.source_faithfulness_score:.1f}"
-            f" elapsedMs={spec_elapsed_ms}",
-            flush=True,
-        )
-
-        if not sfr.success or sfr.repair_image is None:
-            raise RuntimeError(
-                f"AI_ONLY_RENDERING fail_closed: spec={name} {w}x{h}"
-                f" reason={sfr.failure_reason} verdict={sfr.verdict}"
+            spec_elapsed_ms = int((_time.time() - t_spec) * 1000)
+            print(
+                f"[AI_SPEC_END] jobId={jid} spec={name} size={w}x{h}"
+                f" verdict={sfr.verdict} success={sfr.success}"
+                f" provider={sfr.background_ai_provider} attempts={sfr.background_ai_attempt_count}"
+                f" faithfulness={sfr.source_faithfulness_score:.1f}"
+                f" elapsedMs={spec_elapsed_ms}",
+                flush=True,
             )
 
-        result_img = sfr.repair_image
-        if result_img.size != (w, h):
-            result_img = result_img.resize((w, h), Image.LANCZOS)
+            if not sfr.success or sfr.repair_image is None:
+                raise RuntimeError(
+                    f"AI_ONLY_RENDERING fail_closed: spec={name} {w}x{h}"
+                    f" reason={sfr.failure_reason} verdict={sfr.verdict}"
+                )
+
+            result_img = sfr.repair_image
+            if result_img.size != (w, h):
+                result_img = result_img.resize((w, h), Image.LANCZOS)
 
         # Stage 21: Foreground compositor — place product/logo/text/CTA over AI background
         # P0: record AI background sha256 before foreground compositing
-        if sfr.repair_image is not None:
-            render_ctx.record_ai_background(sfr.repair_image)
+        if _bg_mode == "semantic_scene_cleanup":
+            if _scene_result is not None and _scene_result.scene_plate_image is not None:
+                render_ctx.record_ai_background(_scene_result.scene_plate_image)
+        else:
+            if sfr is not None and sfr.repair_image is not None:
+                render_ctx.record_ai_background(sfr.repair_image)
 
         fg_result = None
         layout_plan = None
@@ -1427,6 +1473,13 @@ def _generate_ai_only(
         render_ctx.record_final_artifact(result_img)
         render_ctx.save_debug_artifact("06-final", result_img)
 
+        # D-1: Resolve mode-agnostic AI provider name for C-1 verdict
+        _ai_provider_name = (
+            (_scene_result.provider_name if _scene_result else "")
+            or (sfr.background_ai_provider if sfr else "")
+            or ""
+        )
+
         # Bundle C-1: Stage21 verdict pipeline
         _verdict_summary = None
         _verdict_manifest = None
@@ -1451,7 +1504,7 @@ def _generate_ai_only(
                 output_size=None,      # placeholder — updated after write
                 file_size=0,
                 target_w=w, target_h=h,
-                ai_provider=sfr.background_ai_provider or "",
+                ai_provider=_ai_provider_name,
                 fail_closed=True,
                 exception_occurred=False,
                 blurFillUsed=False,
@@ -1464,6 +1517,7 @@ def _generate_ai_only(
             _ext_verdict = evaluate_extraction(
                 _verdict_manifest,
                 source_type="psd_layer" if source_type == "psd" else "unknown",
+                d2_required=(_scene_result.d2_required if _scene_result else False),
                 job_id=jid, spec_id=spec_id,
             )
             _comp_verdict = evaluate_composition(
@@ -1513,11 +1567,22 @@ def _generate_ai_only(
                     output_size=(actual_w, actual_h),
                     file_size=file_size,
                     target_w=w, target_h=h,
-                    ai_provider=sfr.background_ai_provider or "",
+                    ai_provider=_ai_provider_name,
                     fail_closed=True,
                     exception_occurred=False,
                     blurFillUsed=False,
                     forcedSmartFit=False,
+                    background_generation_mode=_bg_mode,
+                    provider_input_source=(
+                        _scene_result.provider_input_source if _scene_result
+                        else "background_plate"
+                    ),
+                    scene_plate_sha256=(
+                        _scene_result.scene_plate_sha256 if _scene_result else ""
+                    ),
+                    background_plate_builder_used=(_bg_mode == "source_faithful_repair"),
+                    legacy_repair_mask_used=False,
+                    foreground_bbox_mask_used=False,
                     job_id=jid, spec_id=spec_id,
                 )
                 _verdict_summary = aggregate_stage21_verdict(
@@ -1533,6 +1598,83 @@ def _generate_ai_only(
                 print(f"[STAGE21] verdict aggregation error: {_vagg_err}", flush=True)
                 _verdict_summary = None
 
+        # D-1: mode-specific result fields
+        if _bg_mode == "semantic_scene_cleanup":
+            _bg_result_mode = {
+                "actualPsdRenderMode": "ai-semantic-scene-cleanup",
+                "resizeStrategy": "full-image-semantic-scene-cleanup",
+                "backgroundMode": "semantic_scene_cleanup",
+                "layoutScore": None,
+                "candidateCount": 1,
+                "selectedCandidateId": (
+                    layout_plan.selectedCandidateId if layout_plan
+                    else (f"ssc:{_scene_result.prompt_version}" if _scene_result else None)
+                ),
+                "bestEvaluatedBackgroundSource": "full_composite",
+                "appliedBackgroundSource": "full_composite",
+                "appliedBackgroundScore": None,
+                "externalInpaintAttempted": bool(
+                    _scene_result and _scene_result.actual_provider_request_count > 0
+                ),
+                "outpaintAttempted": bool(
+                    _scene_result and _scene_result.canvas_transform
+                    and _scene_result.canvas_transform.outpaint_required
+                ),
+            }
+        else:
+            _bg_result_mode = {
+                "actualPsdRenderMode": "ai-source-faithful-repair",
+                "resizeStrategy": "source-faithful-ai-repair",
+                "backgroundMode": "source_faithful_repair",
+                "layoutScore": sfr.overall_repair_score if sfr else None,
+                "candidateCount": sfr.background_ai_candidate_count if sfr else 0,
+                "selectedCandidateId": (
+                    layout_plan.selectedCandidateId if layout_plan
+                    else (f"sfr:{sfr.background_ai_provider}" if sfr else None)
+                ),
+                "bestEvaluatedBackgroundSource": sfr.applied_background_source if sfr else "",
+                "appliedBackgroundSource": sfr.applied_background_source if sfr else "",
+                "appliedBackgroundScore": sfr.source_faithfulness_score if sfr else 0,
+                "externalInpaintAttempted": sfr.background_ai_executed if sfr else False,
+                "outpaintAttempted": sfr.outpaint_mask_ratio > 0 if sfr else False,
+            }
+
+        # D-1: mode-specific renderProvenance fields
+        if _bg_mode == "semantic_scene_cleanup":
+            from scene_cleanup.serializer import extract_d1_provenance_fields as _ext_d1_prov
+            _prov_mode = {
+                "effectiveRenderer": "semantic-scene-cleanup",
+                "selectedMode": "ai-semantic-scene",
+                "backgroundGenerationMode": "semantic_scene_cleanup",
+                "backgroundAiExecuted": bool(
+                    _scene_result and _scene_result.actual_provider_request_count > 0
+                ),
+                "backgroundAiProvider": _scene_result.provider_name if _scene_result else "",
+                "backgroundAiModel": _scene_result.provider_model if _scene_result else "",
+                "backgroundAiSucceeded": _scene_result.success if _scene_result else False,
+                "backgroundAiAttemptCount": _scene_result.attempt_count if _scene_result else 0,
+                "sourceFaithfulnessScore": None,
+                "sourceFaithfulRepairUsed": False,
+                "semanticSceneCleanupUsed": True,
+                "visibleHandMutationCount": 0,
+                **(_ext_d1_prov(_scene_result) if _scene_result else {}),
+            }
+        else:
+            _prov_mode = {
+                "effectiveRenderer": "source-faithful-ai-repair",
+                "selectedMode": "ai-source-faithful",
+                "backgroundGenerationMode": "source_faithful_repair",
+                "backgroundAiExecuted": sfr.background_ai_executed if sfr else False,
+                "backgroundAiProvider": sfr.background_ai_provider if sfr else "",
+                "backgroundAiModel": sfr.background_ai_model if sfr else "",
+                "backgroundAiSucceeded": sfr.background_ai_succeeded if sfr else False,
+                "backgroundAiAttemptCount": sfr.background_ai_attempt_count if sfr else 0,
+                "sourceFaithfulnessScore": sfr.source_faithfulness_score if sfr else 0,
+                "sourceFaithfulRepairUsed": True,
+                "semanticSceneCleanupUsed": False,
+                "visibleHandMutationCount": sfr.visible_hand_mutation_count if sfr else 0,
+            }
+
         results.append({
             "media": media,
             "name": name,
@@ -1546,7 +1688,6 @@ def _generate_ai_only(
             "validationMessage": "정상" if valid else f"expected={w}x{h} actual={actual_w}x{actual_h}",
             "selectedArtboardId": None,
             "selectedArtboardName": None,
-            "actualPsdRenderMode": "ai-source-faithful-repair",
             "renderSource": source_meta.get("renderSource", "unknown"),
             "fallbackUsed": source_meta.get("fallbackUsed", False),
             "fallbackReason": source_meta.get("fallbackReason"),
@@ -1563,7 +1704,6 @@ def _generate_ai_only(
                 else ("deterministic-original-positions" if fg_result and fg_result.success else None)
             ),
             "usedLayerRoles": fg_result.placed_roles if fg_result else [],
-            "resizeStrategy": "source-faithful-ai-repair",
             "candidateType": layout_plan.selectedCandidateId if layout_plan else None,
             "candidateScore": None,
             "blurAreaRatio": None,
@@ -1583,45 +1723,25 @@ def _generate_ai_only(
             "renderMode": "ai-only",
             "objectReflowUsed": layout_plan is not None,
             "objectReflowFallbackUsed": False,
-            "layoutScore": sfr.overall_repair_score,
-            "backgroundMode": "source_faithful_repair",
-            "candidateCount": sfr.background_ai_candidate_count,
-            "selectedCandidateId": (
-                layout_plan.selectedCandidateId if layout_plan
-                else f"sfr:{sfr.background_ai_provider}"
-            ),
             "backgroundPipelineExecuted": True,
             "backgroundPipelineEnabled": True,
             "backgroundCompareOnly": False,
-            "bestEvaluatedBackgroundSource": sfr.applied_background_source,
-            "appliedBackgroundSource": sfr.applied_background_source,
-            "appliedBackgroundScore": sfr.source_faithfulness_score,
             "backgroundFallbackUsed": False,
             "backgroundFallbackReason": "",
-            "externalInpaintAttempted": sfr.background_ai_executed,
-            "outpaintAttempted": sfr.outpaint_mask_ratio > 0,
             "shadowApplied": False,
+            **_bg_result_mode,
             "renderProvenance": {
                 "renderPolicy": "ai-only",
                 "requestedResizeMode": resize_mode,
                 "effectiveResizeMode": "ai-auto",
-                "effectiveRenderer": "source-faithful-ai-repair",
-                "selectedMode": "ai-source-faithful",
-                "backgroundGenerationMode": "source_faithful_repair",
-                "backgroundAiExecuted": sfr.background_ai_executed,
-                "backgroundAiProvider": sfr.background_ai_provider,
-                "backgroundAiModel": sfr.background_ai_model,
-                "backgroundAiSucceeded": sfr.background_ai_succeeded,
-                "backgroundAiAttemptCount": sfr.background_ai_attempt_count,
-                "sourceFaithfulnessScore": sfr.source_faithfulness_score,
                 "blurFillUsed": False,
                 "forcedSmartFit": False,
                 "sourceType": source_type,
                 "psdMode": psd_mode if source_type == "psd" else None,
                 "backgroundPipelineUsed": True,
-                "sourceFaithfulRepairUsed": True,
                 "failClosed": True,
-                "verdict": sfr.verdict,
+                # D-1: mode-specific provenance (effectiveRenderer, backgroundGenerationMode, etc.)
+                **_prov_mode,
                 # Stage 21: Foreground compositor provenance
                 "foregroundCompositor": "deterministic-layer-compositor" if fg_result and fg_result.success else None,
                 "productPlaced": fg_result.product_placed if fg_result else False,
@@ -1631,7 +1751,6 @@ def _generate_ai_only(
                 "ctaPresent": bool(psd_layers_classified and any(l.get("role") == "cta" for l in psd_layers_classified)),
                 "ctaPlaced": fg_result.cta_placed if fg_result else False,
                 "humanSubjectPreserved": fg_result.human_subject_preserved if fg_result else False,
-                "visibleHandMutationCount": sfr.visible_hand_mutation_count,
                 "backgroundCacheHit": False,
                 # Bundle B: deterministic reflow provenance
                 "layoutPlanUsed": layout_plan is not None,
@@ -1661,10 +1780,12 @@ def _generate_ai_only(
                 **({} if _verdict_summary is None else extract_provenance_fields(
                     _verdict_summary, _verdict_manifest
                 )),
-                # verdict field: derived from overallVerdict (C-1) or SFR verdict (legacy)
+                # verdict field: derived from overallVerdict (C-1) or mode-specific
                 "verdict": (
                     _verdict_summary.overallStatus if _verdict_summary is not None
-                    else sfr.verdict
+                    else (sfr.verdict if sfr else (
+                        "success" if (_scene_result and _scene_result.success) else "fail"
+                    ))
                 ),
             },
         })

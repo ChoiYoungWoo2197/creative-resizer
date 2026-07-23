@@ -26,6 +26,13 @@ def evaluate_technical(
     exception_occurred: bool,
     blurFillUsed: bool,
     forcedSmartFit: bool,
+    # Bundle D-1: semantic scene cleanup guard params (all optional)
+    background_generation_mode: str = "source_faithful_repair",
+    provider_input_source: str = "",
+    scene_plate_sha256: str = "",
+    background_plate_builder_used: bool = False,
+    legacy_repair_mask_used: bool = False,
+    foreground_bbox_mask_used: bool = False,
     job_id: str = "",
     spec_id: str = "",
 ) -> VerdictResult:
@@ -53,6 +60,12 @@ def evaluate_technical(
         "exceptionOccurred": exception_occurred,
         "blurFillUsed": blurFillUsed,
         "forcedSmartFit": forcedSmartFit,
+        "backgroundGenerationMode": background_generation_mode,
+        "providerInputSource": provider_input_source,
+        "scenePlateSha256": scene_plate_sha256[:16] if scene_plate_sha256 else "",
+        "backgroundPlateBuilderUsed": background_plate_builder_used,
+        "legacyRepairMaskUsed": legacy_repair_mask_used,
+        "foregroundBboxMaskUsed": foreground_bbox_mask_used,
     }
 
     if exception_occurred:
@@ -98,6 +111,31 @@ def evaluate_technical(
     }:
         reason_codes.append(RC.TECH_FALLBACK_USED)
         messages.append(f"AI provider is a forbidden fallback: {ai_provider!r}")
+
+    # Bundle D-1: semantic scene cleanup integrity guards
+    if background_generation_mode == "semantic_scene_cleanup":
+        if provider_input_source and provider_input_source != "full_composite":
+            reason_codes.append(RC.TECH_SEMANTIC_SCENE_PROVIDER_INPUT_INVALID)
+            messages.append(
+                f"D-1 provider_input_source must be 'full_composite', "
+                f"got {provider_input_source!r}"
+            )
+        if not scene_plate_sha256:
+            reason_codes.append(RC.TECH_SEMANTIC_SCENE_PLATE_MISSING)
+            messages.append("D-1 scene_plate_sha256 is empty — scene plate not produced")
+        if background_plate_builder_used:
+            reason_codes.append(RC.TECH_SEMANTIC_SCENE_BACKGROUND_PLATE_USED)
+            messages.append(
+                "D-1 background_plate_builder was used in semantic mode (forbidden)"
+            )
+        if legacy_repair_mask_used:
+            reason_codes.append(RC.TECH_SEMANTIC_SCENE_LEGACY_MASK_USED)
+            messages.append("D-1 legacy repair mask was used in semantic mode (forbidden)")
+        if foreground_bbox_mask_used:
+            reason_codes.append(RC.TECH_SEMANTIC_SCENE_BBOX_MASK_USED)
+            messages.append(
+                "D-1 foreground bbox union mask was used in semantic mode (forbidden)"
+            )
 
     status = FAIL if reason_codes else PASS
     reason_codes_sorted = sorted(set(reason_codes))

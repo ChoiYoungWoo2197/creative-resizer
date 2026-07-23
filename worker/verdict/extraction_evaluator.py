@@ -19,6 +19,7 @@ def evaluate_extraction(
     manifest: UnifiedObjectManifest | None,
     *,
     source_type: str = SOURCE_TYPE_PSD_LAYER,
+    d2_required: bool = False,
     job_id: str = "",
     spec_id: str = "",
 ) -> VerdictResult:
@@ -43,7 +44,27 @@ def evaluate_extraction(
     reason_codes: list[str] = []
     messages: list[str] = []
 
-    # NOT_APPLICABLE for non-PSD paths
+    # Bundle D-1: flattened input (PNG/JPG without layers) requires D-2 segmentation
+    if d2_required and source_type != SOURCE_TYPE_PSD_LAYER:
+        print(
+            f"[VERDICT_EXTRACTION]"
+            f" jobId={job_id} specId={spec_id}"
+            f" status=FAIL reasonCodes=[EXTRACTION_D2_REQUIRED_FOR_FLATTENED_INPUT]"
+            f" d2Required=True sourceType={source_type!r}",
+            flush=True,
+        )
+        return VerdictResult(
+            name="extractionVerdict",
+            status=FAIL,
+            required=True,
+            reasonCodes=[RC.EXTRACTION_D2_REQUIRED_FOR_FLATTENED_INPUT],
+            messages=[
+                f"source_type={source_type!r} without native layers — "
+                "D-2 segmentation required for foreground extraction (not implemented in D-1)"
+            ],
+        )
+
+    # NOT_APPLICABLE for non-PSD paths (legacy behavior when d2_required=False)
     if source_type != SOURCE_TYPE_PSD_LAYER:
         print(
             f"[VERDICT_EXTRACTION]"
