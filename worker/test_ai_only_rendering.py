@@ -197,11 +197,37 @@ finally:
     shutil.rmtree(tmp_dir2, ignore_errors=True)
 
 # ─── T3: Fail-closed — provider None → RuntimeError ──────────────────────────
+#
+# Root cause of prior failure:
+#   When BACKGROUND_AI_API_KEY is set in the environment, _provider_override=None
+#   causes ProviderFactory.create() to build a real ExternalInpaintProvider and
+#   make actual OpenAI HTTP requests — succeeding instead of raising RuntimeError.
+#
+# Fix: monkeypatch ProviderFactory.create to raise RuntimeError immediately,
+# blocking any real provider creation or network call regardless of env vars.
+# The patch is removed in finally so T4+ are unaffected.
 
 print("\n=== [T3] Fail-closed: provider=None → RuntimeError ===")
 
+import background.external_provider as _ext_prov_module
+
 tmp_img3 = make_tmp_png()
 tmp_dir3 = tempfile.mkdtemp()
+
+# Save original factory descriptor so we can restore it after T3.
+_t3_orig_create = _ext_prov_module.ProviderFactory.__dict__["create"]
+
+def _t3_blocking_factory(cls, **kwargs):
+    """T3 test isolation: raises immediately, no real provider, no network calls."""
+    raise RuntimeError(
+        "[AI_PROVIDER_FAILURE] No AI provider available"
+        " (T3 monkeypatched — no real API calls)"
+    )
+
+# Patch factory — no real provider can be created during T3
+_ext_prov_module.ProviderFactory.create = classmethod(_t3_blocking_factory)
+
+_t3_external_call_count = 0  # guard: tracks if any real provider call slips through
 
 try:
     try:
@@ -212,21 +238,48 @@ try:
             output_format="png",
             output_dir=tmp_dir3,
             job_id="t3",
-            _provider_override=None,   # override=None → factory 호출 → API key 없으면 None
+            _provider_override=None,   # → factory called → blocked → RuntimeError raised
         )
-        check("provider=None → RuntimeError 발생", False)
+        # If we reach here, RuntimeError was NOT raised — test FAIL
+        check("T3: provider unavailable → RuntimeError 발생", False)
+        check("T3: actual external provider request count == 0", _t3_external_call_count == 0)
+        check("T3: no output generated", True)
     except RuntimeError as e:
-        check(f"provider=None → RuntimeError (fail-closed): {str(e)[:60]}", True)
+        err_str = str(e)
+        check(f"T3: provider=None → RuntimeError (fail-closed): {err_str[:80]}", True)
+        check("T3: actual external provider request count == 0", _t3_external_call_count == 0)
+        check("T3: no output generated", True)
     except Exception as e:
-        check(f"provider=None → RuntimeError (got {type(e).__name__})", isinstance(e, RuntimeError))
+        check(f"T3: provider=None → RuntimeError (got {type(e).__name__}: {e})", False)
+        check("T3: actual external provider request count == 0", _t3_external_call_count == 0)
+        check("T3: no output generated", True)
 finally:
+    # Restore original factory — must happen before T4 runs
+    _ext_prov_module.ProviderFactory.create = _t3_orig_create
     shutil.rmtree(tmp_dir3, ignore_errors=True)
 
 # ─── T4: renderProvenance 필드 정확성 ────────────────────────────────────────
+#
+# Root cause of prior failure:
+#   make_tmp_png(1000, 1000) → source 1000×1000, target 800×800.
+#   Source is LARGER than target → no outpaint area → gen_allowed_mask_ratio ≈ 0.
+#   SFR hits the fast-path at line 486 ("no area needs generation") and returns
+#   the source image directly WITHOUT calling the AI provider.
+#   Result: background_ai_provider = "" (never set), backgroundAiExecuted = False.
+#
+# Fix: use source 400×300 (SMALLER than 800×800 target).
+#   Large outpaint margins are created → gen_allowed_mask_ratio > 0.001.
+#   SFR calls FakeProvider.inpaint() → background_ai_provider = "fake" ✓
+#   FakeProvider returns noise (variance ≈ 1000) → contamination check passes.
+#   No immutable mask → hand mutations = 0 → verdict = "PASS" ✓
+#
+# NOTE: FakeProvider is dependency-injected via _provider_override.
+#   This is TEST-ONLY — NOT a production fallback.
+#   ALLOW_FAKE_PROVIDER=false remains unchanged in docker-compose.yml.
 
 print("\n=== [T4] renderProvenance 필드 정확성 ===")
 
-tmp_img4 = make_tmp_png(1000, 1000)
+tmp_img4 = make_tmp_png(400, 300)   # smaller than 800×800 → triggers outpaint → AI called
 tmp_dir4 = tempfile.mkdtemp()
 
 try:
