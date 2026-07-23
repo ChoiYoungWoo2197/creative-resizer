@@ -242,23 +242,50 @@ class TestExternalInpaintProviderDelegation:
 
 class TestProviderFactory:
     def test_factory_use_fake_returns_fake(self):
+        """use_fake_for_test=True always returns FakeBackgroundProvider regardless of env."""
         from background.external_provider import ProviderFactory, FakeBackgroundProvider
         p = ProviderFactory.create(use_fake_for_test=True)
         assert isinstance(p, FakeBackgroundProvider)
 
-    def test_factory_no_key_returns_fake_even_with_external_enabled(self, monkeypatch):
+    def test_factory_no_key_allow_fake_false_raises(self, monkeypatch):
+        """Fail-closed: no key + ALLOW_FAKE_PROVIDER=false → RuntimeError."""
         monkeypatch.delenv("BACKGROUND_AI_API_KEY", raising=False)
+        monkeypatch.setenv("ALLOW_FAKE_PROVIDER", "false")
+        from background.external_provider import ProviderFactory
+        with pytest.raises(RuntimeError, match="AI_PROVIDER_FAILURE"):
+            ProviderFactory.create(enable_external=True, use_fake_for_test=False)
+
+    def test_factory_no_key_allow_fake_true_returns_fake(self, monkeypatch):
+        """With ALLOW_FAKE_PROVIDER=true and no key, returns FakeBackgroundProvider."""
+        monkeypatch.delenv("BACKGROUND_AI_API_KEY", raising=False)
+        monkeypatch.setenv("ALLOW_FAKE_PROVIDER", "true")
         from background.external_provider import ProviderFactory, FakeBackgroundProvider
         p = ProviderFactory.create(enable_external=True, use_fake_for_test=False)
-        # Without a key, should fall back to FakeBackgroundProvider
         assert isinstance(p, FakeBackgroundProvider)
 
-    def test_factory_with_key_enable_external_returns_chain(self, monkeypatch):
+    def test_factory_with_key_allow_fake_false_returns_external_only(self, monkeypatch):
+        """Production path: key set + ALLOW_FAKE_PROVIDER=false → ExternalInpaintProvider (no fake)."""
         monkeypatch.setenv("BACKGROUND_AI_API_KEY", "sk-fake-test-key")
+        monkeypatch.setenv("ALLOW_FAKE_PROVIDER", "false")
+        from background.external_provider import ProviderFactory, ExternalInpaintProvider, ProviderFallbackChain
+        p = ProviderFactory.create(enable_external=True, use_fake_for_test=False)
+        assert isinstance(p, ExternalInpaintProvider)
+        assert not isinstance(p, ProviderFallbackChain)
+
+    def test_factory_with_key_allow_fake_true_returns_chain(self, monkeypatch):
+        """ALLOW_FAKE_PROVIDER=true + key set → ProviderFallbackChain with fake as last resort."""
+        monkeypatch.setenv("BACKGROUND_AI_API_KEY", "sk-fake-test-key")
+        monkeypatch.setenv("ALLOW_FAKE_PROVIDER", "true")
         from background.external_provider import ProviderFactory, ProviderFallbackChain
         p = ProviderFactory.create(enable_external=True, use_fake_for_test=False)
-        # With a key and enable_external=True, should be a chain
         assert isinstance(p, ProviderFallbackChain)
+
+    def test_factory_enable_external_false_allow_fake_false_raises(self, monkeypatch):
+        """Fail-closed: enable_external=False + ALLOW_FAKE_PROVIDER=false → RuntimeError."""
+        monkeypatch.setenv("ALLOW_FAKE_PROVIDER", "false")
+        from background.external_provider import ProviderFactory
+        with pytest.raises(RuntimeError, match="AI_PROVIDER_FAILURE"):
+            ProviderFactory.create(enable_external=False, use_fake_for_test=False)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

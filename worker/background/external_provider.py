@@ -367,7 +367,18 @@ class ProviderFallbackChain:
 # ── factory ───────────────────────────────────────────────────────────────────
 
 class ProviderFactory:
-    """Creates the appropriate provider chain from environment config."""
+    """Creates the appropriate provider chain from environment config.
+
+    Production (ALLOW_FAKE_PROVIDER=false, the default):
+      - enable_external=True + key set  → ExternalInpaintProvider only (no fake fallback)
+      - enable_external=True + no key   → RuntimeError (fail-closed)
+      - enable_external=False           → RuntimeError (fail-closed)
+
+    Testing (ALLOW_FAKE_PROVIDER=true):
+      - enable_external=True + key set  → ProviderFallbackChain([external, fake])
+      - enable_external=False           → FakeBackgroundProvider
+      use_fake_for_test=True always returns FakeBackgroundProvider regardless of env.
+    """
 
     @staticmethod
     def create(
@@ -377,13 +388,34 @@ class ProviderFactory:
         if use_fake_for_test:
             return FakeBackgroundProvider()
 
+        allow_fake = os.environ.get("ALLOW_FAKE_PROVIDER", "false").lower() in ("true", "1", "yes")
+
         external = ExternalInpaintProvider(
             timeout=int(os.environ.get("BACKGROUND_AI_TIMEOUT_SECONDS", 120)),
             max_retries=int(os.environ.get("BACKGROUND_AI_MAX_RETRIES", 1)),
         )
-        if enable_external and external.health()["available"]:
-            return ProviderFallbackChain([external, FakeBackgroundProvider()])
-        return FakeBackgroundProvider()
+        key_available = external.health()["available"]
+
+        if enable_external and key_available:
+            if allow_fake:
+                return ProviderFallbackChain([external, FakeBackgroundProvider()])
+            return external
+
+        if allow_fake:
+            return FakeBackgroundProvider()
+
+        # Fail-closed: no AI provider available and fake is not permitted.
+        print(
+            f"[AI_PROVIDER_FAILURE] No AI provider available"
+            f" (enable_external={enable_external}, key_available={key_available},"
+            f" ALLOW_FAKE_PROVIDER=false). Set BACKGROUND_AI_API_KEY or"
+            f" ALLOW_FAKE_PROVIDER=true for local testing.",
+            flush=True,
+        )
+        raise RuntimeError(
+            "[AI_PROVIDER_FAILURE] No AI provider available and fake is not permitted in production."
+            " Set BACKGROUND_AI_API_KEY or ALLOW_FAKE_PROVIDER=true for local testing."
+        )
 
 
 # ── external inpaint runner ───────────────────────────────────────────────────
