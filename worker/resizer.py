@@ -1265,6 +1265,59 @@ def _generate_ai_only(
 
     _work_base = os.environ.get("AI_WORK_DIR", "/app/storage/work")
 
+    # D-2: Virtual Foreground Extraction (job-level, once per job).
+    # Applicable only when input has no native PSD layers (PNG/JPG flattened input).
+    # Native layers always take priority — D-2 skipped when psd_layers_classified is set.
+    _d2_result = None
+    _d2_enabled = os.environ.get("VIRTUAL_FOREGROUND_D2_ENABLED", "true").lower() == "true"
+    _is_flattened_input = (source_type != "psd") or not bool(psd_layers_classified)
+
+    if _d2_enabled and _is_flattened_input:
+        try:
+            from virtual_foreground.manifest_assembler import run_virtual_foreground_extraction
+            from virtual_foreground.object_analyzer import FakeObjectAnalysisProvider
+
+            # In production: replace FakeObjectAnalysisProvider with real analysis provider.
+            # Tests always use the fake provider (ACTUAL_OPENAI_REQUESTS=0).
+            _analysis_provider_cls = os.environ.get("D2_ANALYSIS_PROVIDER", "fake")
+            if _analysis_provider_cls == "fake":
+                _analysis_provider = FakeObjectAnalysisProvider()
+            else:
+                _analysis_provider = FakeObjectAnalysisProvider()  # safe default
+
+            _d2_result = run_virtual_foreground_extraction(
+                source_image=img,
+                source_path=psd_path,
+                source_sha256=_source_file_sha256,
+                source_type=source_type,
+                native_layers=psd_layers_classified,
+                background_provider=provider,
+                analysis_provider=_analysis_provider,
+                output_dir=os.path.join(output_dir, "stage21_d2", jid),
+                job_id=jid,
+            )
+            if _d2_result.success and _d2_result.d2_applicable:
+                print(
+                    f"[D2_EXTRACTION] SUCCESS jobId={jid}"
+                    f" extractedCount={_d2_result.virtual_extracted_count}"
+                    f" fgLayers={len(_d2_result.fg_layers)}",
+                    flush=True,
+                )
+            elif not _d2_result.d2_applicable:
+                print(
+                    f"[D2_EXTRACTION] NOT_APPLICABLE jobId={jid}"
+                    f" reason={_d2_result.d2_reason}",
+                    flush=True,
+                )
+        except Exception as _d2_pre_err:
+            print(
+                f"[D2_EXTRACTION] PRE_LOOP_FAILED jobId={jid}: {_d2_pre_err}",
+                flush=True,
+            )
+            _d2_result = None
+    elif not _d2_enabled:
+        print(f"[D2_EXTRACTION] DISABLED jobId={jid}", flush=True)
+
     for spec_idx, spec in enumerate(specs):
         media = spec["media"]
         w = spec["width"]
@@ -1412,6 +1465,32 @@ def _generate_ai_only(
 
         fg_result = None
         layout_plan = None
+        _active_fg_layers: list = []     # populated by PSD or D-2 path
+
+        # D-2: scale virtual fg_layers to this spec's target dimensions
+        _virtual_fg_for_spec: list = []
+        if (
+            _d2_result is not None
+            and _d2_result.success
+            and _d2_result.d2_applicable
+            and _d2_result.fg_layers
+        ):
+            try:
+                from virtual_foreground.manifest_assembler import scale_virtual_fg_layers
+                _virtual_fg_for_spec = scale_virtual_fg_layers(
+                    _d2_result.fg_layers,
+                    source_w=img.width,
+                    source_h=img.height,
+                    target_w=w,
+                    target_h=h,
+                )
+            except Exception as _scale_err:
+                print(
+                    f"[D2_SCALE] failed spec={name}: {_scale_err}",
+                    flush=True,
+                )
+                _virtual_fg_for_spec = []
+
         if psd_layers_classified:
             try:
                 from foreground.layer_extractor import extract_foreground_layers
@@ -1459,6 +1538,7 @@ def _generate_ai_only(
                 )
                 if fg_result.success and fg_result.composite_image is not None:
                     result_img = fg_result.composite_image
+                    _active_fg_layers = fg_layers
                     print(
                         f"[STAGE21] foreground composited spec={name} {w}x{h}"
                         f" placed={fg_result.placed_roles}",
@@ -1466,6 +1546,63 @@ def _generate_ai_only(
                     )
             except Exception as _fg_err:
                 print(f"[STAGE21] foreground compositor error spec={name}: {_fg_err}", flush=True)
+                fg_result = None
+                layout_plan = None
+
+        # D-2: Virtual foreground compositor path (flattened inputs without native PSD layers)
+        elif _virtual_fg_for_spec:
+            try:
+                from foreground.compositor import composite_foreground
+                from layout.reflow_engine import plan_foreground_layout
+
+                # Bundle B reflow for virtual fg_layers
+                try:
+                    layout_plan = plan_foreground_layout(
+                        fg_layers=_virtual_fg_for_spec,
+                        spec=spec,
+                        canvas_w=img.width,
+                        canvas_h=img.height,
+                        target_w=w,
+                        target_h=h,
+                        psd_layers=[],
+                        apply_logs=[],
+                        job_id=jid,
+                        spec_id=spec_id,
+                    )
+                    render_ctx.save_debug_artifact(
+                        "10-layout-plan",
+                        {
+                            "selectedCandidateId": layout_plan.selectedCandidateId,
+                            "success": layout_plan.success,
+                            "safeZoneRect": layout_plan.safeZoneRect,
+                            "safeZoneViolationCount": layout_plan.safeZoneViolationCount,
+                            "allRequiredObjectsPlaced": layout_plan.allRequiredObjectsPlaced,
+                            "hardFailReasons": layout_plan.hardFailReasons,
+                        },
+                    )
+                except Exception as _vfg_lp_err:
+                    print(
+                        f"[D2] layout planner error spec={name}: {_vfg_lp_err}",
+                        flush=True,
+                    )
+                    layout_plan = None
+
+                fg_result = composite_foreground(
+                    result_img, _virtual_fg_for_spec, job_id=jid, spec_id=spec_id
+                )
+                if fg_result.success and fg_result.composite_image is not None:
+                    result_img = fg_result.composite_image
+                    _active_fg_layers = _virtual_fg_for_spec
+                    print(
+                        f"[D2] virtual foreground composited spec={name} {w}x{h}"
+                        f" placed={fg_result.placed_roles}",
+                        flush=True,
+                    )
+            except Exception as _vfg_err:
+                print(
+                    f"[D2] virtual fg compositor error spec={name}: {_vfg_err}",
+                    flush=True,
+                )
                 fg_result = None
                 layout_plan = None
 
@@ -1493,9 +1630,18 @@ def _generate_ai_only(
             from verdict.serializer import serialize_verdict_summary, extract_provenance_fields
             from verdict.models import VerdictResult
 
+            # D-2: determine manifest source type and fg_layers input
+            _d2_active = bool(
+                _d2_result and _d2_result.success and _d2_result.d2_applicable
+                and _active_fg_layers
+            )
+            _manifest_source_type = (
+                "psd_layer" if psd_layers_classified
+                else ("ai_segmentation" if _d2_active else "unknown")
+            )
             _verdict_manifest = build_manifest_from_fg_layers(
-                fg_layers if psd_layers_classified else [],
-                source_type="psd_layer" if source_type == "psd" else "unknown",
+                _active_fg_layers,
+                source_type=_manifest_source_type,
                 job_id=jid, spec_id=spec_id,
             )
 
@@ -1514,20 +1660,25 @@ def _generate_ai_only(
             # Mark as pending — will be finalized after file write
             _tech_verdict_pending = True
 
+            # D-2: if D-2 succeeded, d2_required is resolved (not a failure)
+            _d2_required_for_extraction = (
+                (_scene_result.d2_required if _scene_result else False)
+                and not _d2_active
+            )
             _ext_verdict = evaluate_extraction(
                 _verdict_manifest,
-                source_type="psd_layer" if source_type == "psd" else "unknown",
-                d2_required=(_scene_result.d2_required if _scene_result else False),
+                source_type=_manifest_source_type,
+                d2_required=_d2_required_for_extraction,
                 job_id=jid, spec_id=spec_id,
             )
             _comp_verdict = evaluate_composition(
                 fg_result, _verdict_manifest,
-                source_type="psd_layer" if source_type == "psd" else "unknown",
+                source_type=_manifest_source_type,
                 job_id=jid, spec_id=spec_id,
             )
             _layout_verdict = evaluate_layout(
                 layout_plan,
-                source_type="psd_layer" if source_type == "psd" else "unknown",
+                source_type=_manifest_source_type,
                 safe_zone_status=spec.get("safeZoneParseStatus", ""),
                 job_id=jid, spec_id=spec_id,
             )
@@ -1675,6 +1826,13 @@ def _generate_ai_only(
                 "visibleHandMutationCount": sfr.visible_hand_mutation_count if sfr else 0,
             }
 
+        # D-2: virtual foreground provenance fields
+        try:
+            from virtual_foreground.serializer import extract_d2_provenance_fields as _ext_d2_prov
+            _d2_prov_fields = _ext_d2_prov(_d2_result)
+        except Exception:
+            _d2_prov_fields = {}
+
         results.append({
             "media": media,
             "name": name,
@@ -1769,6 +1927,8 @@ def _generate_ai_only(
                     else (fg_result.duplicate_count == 0 if fg_result else True)
                 ),
                 "layoutHardFailReasons": layout_plan.hardFailReasons if layout_plan else [],
+                # D-2: virtual foreground provenance (computed before this block)
+                **_d2_prov_fields,
                 # P0: SHA-256 provenance fields for cross-job audit
                 "sourceFileSha256": render_ctx.source_file_sha256[:16] if render_ctx.source_file_sha256 else "",
                 "compositeSha256": render_ctx.composite_sha256[:16] if render_ctx.composite_sha256 else "",

@@ -8,8 +8,13 @@ from __future__ import annotations
 
 from verdict.models import (
     VerdictResult, PASS, FAIL, NOT_APPLICABLE, NOT_TESTED,
-    SOURCE_TYPE_PSD_LAYER,
+    SOURCE_TYPE_PSD_LAYER, SOURCE_TYPE_AI_SEGMENTATION,
 )
+
+_EVALUATABLE_SOURCE_TYPES = frozenset({
+    SOURCE_TYPE_PSD_LAYER,
+    SOURCE_TYPE_AI_SEGMENTATION,
+})
 from verdict import reason_codes as RC
 
 
@@ -44,7 +49,7 @@ def evaluate_layout(
     reason_codes: list[str] = []
     messages: list[str] = []
 
-    if source_type != SOURCE_TYPE_PSD_LAYER:
+    if source_type not in _EVALUATABLE_SOURCE_TYPES:
         _log_layout(job_id, spec_id, NOT_APPLICABLE, [], {})
         return VerdictResult(
             name="layoutVerdict",

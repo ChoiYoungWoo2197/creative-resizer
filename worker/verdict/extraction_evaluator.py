@@ -8,11 +8,17 @@ from __future__ import annotations
 from verdict.models import (
     VerdictResult, UnifiedObjectManifest,
     PASS, FAIL, NOT_APPLICABLE,
-    SOURCE_TYPE_PSD_LAYER,
+    SOURCE_TYPE_PSD_LAYER, SOURCE_TYPE_AI_SEGMENTATION,
 )
 from verdict import reason_codes as RC
 
 _REQUIRED_ROLES = frozenset({"product", "title", "headline", "body_text"})
+
+# Source types that support full extraction validation (including D-2 virtual objects)
+_EVALUATABLE_SOURCE_TYPES = frozenset({
+    SOURCE_TYPE_PSD_LAYER,
+    SOURCE_TYPE_AI_SEGMENTATION,  # D-2 virtual foreground objects
+})
 
 
 def evaluate_extraction(
@@ -64,8 +70,9 @@ def evaluate_extraction(
             ],
         )
 
-    # NOT_APPLICABLE for non-PSD paths (legacy behavior when d2_required=False)
-    if source_type != SOURCE_TYPE_PSD_LAYER:
+    # NOT_APPLICABLE for source types without extraction validation
+    # (psd_layer and ai_segmentation both support full evaluation)
+    if source_type not in _EVALUATABLE_SOURCE_TYPES:
         print(
             f"[VERDICT_EXTRACTION]"
             f" jobId={job_id} specId={spec_id}"

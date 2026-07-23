@@ -14,12 +14,18 @@ from __future__ import annotations
 from verdict.models import (
     VerdictResult, UnifiedObjectManifest,
     PASS, FAIL, NOT_APPLICABLE,
-    SOURCE_TYPE_PSD_LAYER, OWNER_FOREGROUND_REFLOW,
+    SOURCE_TYPE_PSD_LAYER, SOURCE_TYPE_AI_SEGMENTATION, OWNER_FOREGROUND_REFLOW,
 )
 from verdict import reason_codes as RC
 
 _REQUIRED_ROLES = frozenset({"product", "title", "headline", "body_text"})
 _FOREGROUND_OWNER_ROLES = frozenset({OWNER_FOREGROUND_REFLOW})
+
+# Source types that support composition evaluation (psd_layer + D-2 virtual)
+_EVALUATABLE_SOURCE_TYPES = frozenset({
+    SOURCE_TYPE_PSD_LAYER,
+    SOURCE_TYPE_AI_SEGMENTATION,
+})
 
 
 def evaluate_composition(
@@ -45,7 +51,7 @@ def evaluate_composition(
     reason_codes: list[str] = []
     messages: list[str] = []
 
-    if source_type != SOURCE_TYPE_PSD_LAYER:
+    if source_type not in _EVALUATABLE_SOURCE_TYPES:
         print(
             f"[VERDICT_COMPOSITION]"
             f" jobId={job_id} specId={spec_id}"
