@@ -1150,6 +1150,7 @@ def _generate_ai_only(
     # Stage 21: Parse + classify PSD layers for foreground compositing.
     # Only attempted when source_type=="psd". PNG/JPG inputs skip this path.
     psd_layers_classified: list = []
+    _object_map_apply_logs: list = []   # Bundle B: used by layout role resolver
     psd_canvas_w: int = img.width
     psd_canvas_h: int = img.height
     if source_type == "psd":
@@ -1209,6 +1210,7 @@ def _generate_ai_only(
                         psd_layers_classified, _apply_logs = apply_object_map(
                             psd_layers_classified, _obj_results, strict=True
                         )
+                        _object_map_apply_logs = _apply_logs  # Bundle B: layout role resolver
 
                         # Re-run contradiction validator after role overrides
                         psd_layers_classified = _validate_roles(psd_layers_classified)
@@ -1363,6 +1365,7 @@ def _generate_ai_only(
             render_ctx.record_ai_background(sfr.repair_image)
 
         fg_result = None
+        layout_plan = None
         if psd_layers_classified:
             try:
                 from foreground.layer_extractor import extract_foreground_layers
@@ -1374,7 +1377,40 @@ def _generate_ai_only(
                     target_w=w,
                     target_h=h,
                 )
-                fg_result = composite_foreground(result_img, fg_layers)
+
+                # Bundle B: deterministic reflow — plan safe-zone-aware positions
+                # before compositing. Updates fg_layer["bbox"] in-place so the
+                # compositor just pastes at planned coords without re-computing.
+                try:
+                    from layout.reflow_engine import plan_foreground_layout
+                    layout_plan = plan_foreground_layout(
+                        fg_layers=fg_layers,
+                        spec=spec,
+                        canvas_w=psd_canvas_w,
+                        canvas_h=psd_canvas_h,
+                        target_w=w,
+                        target_h=h,
+                        psd_layers=psd_layers_classified,
+                        apply_logs=_object_map_apply_logs,
+                        job_id=jid,
+                        spec_id=spec_id,
+                    )
+                    render_ctx.save_debug_artifact(
+                        "10-layout-plan",
+                        {"selectedCandidateId": layout_plan.selectedCandidateId,
+                         "success": layout_plan.success,
+                         "safeZoneRect": layout_plan.safeZoneRect,
+                         "safeZoneViolationCount": layout_plan.safeZoneViolationCount,
+                         "allRequiredObjectsPlaced": layout_plan.allRequiredObjectsPlaced,
+                         "hardFailReasons": layout_plan.hardFailReasons},
+                    )
+                except Exception as _lp_err:
+                    print(f"[STAGE21] layout planner error spec={name}: {_lp_err}", flush=True)
+                    layout_plan = None
+
+                fg_result = composite_foreground(
+                    result_img, fg_layers, job_id=jid, spec_id=spec_id
+                )
                 if fg_result.success and fg_result.composite_image is not None:
                     result_img = fg_result.composite_image
                     print(
@@ -1385,6 +1421,7 @@ def _generate_ai_only(
             except Exception as _fg_err:
                 print(f"[STAGE21] foreground compositor error spec={name}: {_fg_err}", flush=True)
                 fg_result = None
+                layout_plan = None
 
         # P0: record final artifact SHA-256 and save debug artifact before format conversion
         render_ctx.record_final_artifact(result_img)
@@ -1432,26 +1469,38 @@ def _generate_ai_only(
             "layerReflowError": None,
             "layerReflowExtractedLayerCount": fg_result.layer_count if fg_result else 0,
             "layerReflowDetectedRoles": fg_result.placed_roles if fg_result else [],
-            "layerReflowTemplate": "deterministic-original-positions" if fg_result and fg_result.success else None,
+            "layerReflowTemplate": (
+                f"bundle-b-{layout_plan.selectedCandidateId}" if layout_plan and layout_plan.success
+                else ("deterministic-original-positions" if fg_result and fg_result.success else None)
+            ),
             "usedLayerRoles": fg_result.placed_roles if fg_result else [],
             "resizeStrategy": "source-faithful-ai-repair",
-            "candidateType": None,
+            "candidateType": layout_plan.selectedCandidateId if layout_plan else None,
             "candidateScore": None,
             "blurAreaRatio": None,
             "cropRatio": None,
             "subjectScale": None,
             "qualityGate": None,
             "qualityLabel": None,
-            "safeZonePass": None,
-            "safeZoneViolations": [],
-            "requiredLayerMissing": None,
+            "safeZonePass": (
+                layout_plan.safeZoneViolationCount == 0 if layout_plan else None
+            ),
+            "safeZoneViolations": (
+                layout_plan.hardFailReasons if layout_plan else []
+            ),
+            "requiredLayerMissing": (
+                not layout_plan.allRequiredObjectsPlaced if layout_plan else None
+            ),
             "renderMode": "ai-only",
-            "objectReflowUsed": False,
+            "objectReflowUsed": layout_plan is not None,
             "objectReflowFallbackUsed": False,
             "layoutScore": sfr.overall_repair_score,
             "backgroundMode": "source_faithful_repair",
             "candidateCount": sfr.background_ai_candidate_count,
-            "selectedCandidateId": f"sfr:{sfr.background_ai_provider}",
+            "selectedCandidateId": (
+                layout_plan.selectedCandidateId if layout_plan
+                else f"sfr:{sfr.background_ai_provider}"
+            ),
             "backgroundPipelineExecuted": True,
             "backgroundPipelineEnabled": True,
             "backgroundCompareOnly": False,
@@ -1495,6 +1544,23 @@ def _generate_ai_only(
                 "humanSubjectPreserved": fg_result.human_subject_preserved if fg_result else False,
                 "visibleHandMutationCount": sfr.visible_hand_mutation_count,
                 "backgroundCacheHit": False,
+                # Bundle B: deterministic reflow provenance
+                "layoutPlanUsed": layout_plan is not None,
+                "layoutPlanSuccess": layout_plan.success if layout_plan else False,
+                "layoutSelectedCandidate": layout_plan.selectedCandidateId if layout_plan else None,
+                "layoutSafeZoneAvailable": layout_plan.safeZoneAvailable if layout_plan else False,
+                "layoutSafeZoneEnforced": layout_plan.safeZoneEnforced if layout_plan else False,
+                "layoutSafeZoneViolationCount": layout_plan.safeZoneViolationCount if layout_plan else 0,
+                "layoutAllRequiredObjectsPlaced": layout_plan.allRequiredObjectsPlaced if layout_plan else False,
+                "layoutAllObjectsCompositedOnce": (
+                    layout_plan.allObjectsCompositedOnce if layout_plan
+                    else (fg_result.all_objects_composited_once if fg_result else False)
+                ),
+                "layoutNoDuplicateComposition": (
+                    layout_plan.noDuplicateComposition if layout_plan
+                    else (fg_result.duplicate_count == 0 if fg_result else True)
+                ),
+                "layoutHardFailReasons": layout_plan.hardFailReasons if layout_plan else [],
                 # P0: SHA-256 provenance fields for cross-job audit
                 "sourceFileSha256": render_ctx.source_file_sha256[:16] if render_ctx.source_file_sha256 else "",
                 "compositeSha256": render_ctx.composite_sha256[:16] if render_ctx.composite_sha256 else "",

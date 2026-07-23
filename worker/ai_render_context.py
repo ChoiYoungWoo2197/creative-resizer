@@ -166,21 +166,30 @@ class AiRenderContext:
     def save_debug_artifact(
         self,
         stage: str,
-        img: Image.Image,
+        img,  # PIL.Image or dict (saved as JSON)
         label: str = "",
     ) -> Optional[str]:
-        """Save a debug PNG to work_dir.  Silent on failure.
+        """Save a debug artifact to work_dir.  Silent on failure.
 
         stage: "01-source-composite", "02-provider-input", "03-gen-mask",
-               "04-ai-background", "05-composited", "06-final"
+               "04-ai-background", "05-composited", "06-final",
+               "10-layout-plan", "15-safe-zone-overlay", ...
+        img: PIL.Image → saved as PNG; dict → saved as JSON.
         """
         if not self.work_dir:
             return None
         try:
+            import json as _json
             os.makedirs(self.work_dir, exist_ok=True)
-            name = f"{stage}.png" if not label else f"{stage}-{label}.png"
-            path = os.path.join(self.work_dir, name)
-            img.convert("RGB").save(path, format="PNG")
+            if isinstance(img, dict):
+                name = f"{stage}.json" if not label else f"{stage}-{label}.json"
+                path = os.path.join(self.work_dir, name)
+                with open(path, "w", encoding="utf-8") as f:
+                    _json.dump(img, f, ensure_ascii=False, indent=2)
+            else:
+                name = f"{stage}.png" if not label else f"{stage}-{label}.png"
+                path = os.path.join(self.work_dir, name)
+                img.convert("RGB").save(path, format="PNG")
             return path
         except Exception as e:
             print(f"[AiRenderContext] debug artifact save failed stage={stage}: {e}", flush=True)
