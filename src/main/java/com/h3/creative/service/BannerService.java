@@ -367,6 +367,20 @@ public class BannerService {
                 return;
             }
 
+            // Bundle C-1: fail-closed verdict propagation
+            // If any result's renderProvenance has overallVerdict=FAIL → treat job as failed
+            boolean verdictFail = results.stream().anyMatch(r -> {
+                java.util.Map<String, Object> prov = r.getRenderProvenance();
+                if (prov == null) return false;
+                Object ov = prov.get("overallVerdict");
+                return "FAIL".equals(ov);
+            });
+            if (verdictFail) {
+                log.warn("Job verdict-failed={} — overallVerdict=FAIL in renderProvenance", jobId);
+                bannerMongoService.updateFailWithResults(jobId, "Stage21 verdict FAIL — overallVerdict=FAIL", results);
+                return;
+            }
+
             bannerMongoService.updateDone(jobId, response.getZipPath(), results);
         } else {
             log.error("Job failed={} error={}", jobId, response.getError());

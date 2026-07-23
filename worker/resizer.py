@@ -1427,6 +1427,67 @@ def _generate_ai_only(
         render_ctx.record_final_artifact(result_img)
         render_ctx.save_debug_artifact("06-final", result_img)
 
+        # Bundle C-1: Stage21 verdict pipeline
+        _verdict_summary = None
+        _verdict_manifest = None
+        try:
+            from verdict.manifest_builder import build_manifest_from_fg_layers
+            from verdict.technical_evaluator import evaluate_technical
+            from verdict.extraction_evaluator import evaluate_extraction
+            from verdict.composition_evaluator import evaluate_composition
+            from verdict.layout_evaluator import evaluate_layout
+            from verdict.stage21_aggregator import aggregate_stage21_verdict
+            from verdict.serializer import serialize_verdict_summary, extract_provenance_fields
+            from verdict.models import VerdictResult
+
+            _verdict_manifest = build_manifest_from_fg_layers(
+                fg_layers if psd_layers_classified else [],
+                source_type="psd_layer" if source_type == "psd" else "unknown",
+                job_id=jid, spec_id=spec_id,
+            )
+
+            _tech_verdict = evaluate_technical(
+                output_path=None,      # evaluated after file write below
+                output_size=None,      # placeholder — updated after write
+                file_size=0,
+                target_w=w, target_h=h,
+                ai_provider=sfr.background_ai_provider or "",
+                fail_closed=True,
+                exception_occurred=False,
+                blurFillUsed=False,
+                forcedSmartFit=False,
+                job_id=jid, spec_id=spec_id,
+            )
+            # Mark as pending — will be finalized after file write
+            _tech_verdict_pending = True
+
+            _ext_verdict = evaluate_extraction(
+                _verdict_manifest,
+                source_type="psd_layer" if source_type == "psd" else "unknown",
+                job_id=jid, spec_id=spec_id,
+            )
+            _comp_verdict = evaluate_composition(
+                fg_result, _verdict_manifest,
+                source_type="psd_layer" if source_type == "psd" else "unknown",
+                job_id=jid, spec_id=spec_id,
+            )
+            _layout_verdict = evaluate_layout(
+                layout_plan,
+                source_type="psd_layer" if source_type == "psd" else "unknown",
+                safe_zone_status=spec.get("safeZoneParseStatus", ""),
+                job_id=jid, spec_id=spec_id,
+            )
+            _visual_verdict = VerdictResult(
+                name="visualVerdict", status="NOT_TESTED", required=False,
+                reasonCodes=["VISUAL_NOT_TESTED"],
+                messages=["C-1: visual quality assessment not implemented"],
+            )
+        except Exception as _vp_err:
+            print(f"[STAGE21] verdict pipeline error spec={name}: {_vp_err}", flush=True)
+            _verdict_summary = None
+            _verdict_manifest = None
+            _tech_verdict_pending = False
+
         if output_format in ("jpg", "jpeg"):
             result_img = result_img.convert("RGB")
             ext = "jpg"
@@ -1443,6 +1504,34 @@ def _generate_ai_only(
         with Image.open(out_path) as check_img:
             actual_w, actual_h = check_img.size
         valid = (actual_w == w and actual_h == h)
+
+        # Bundle C-1: finalize technical verdict + aggregate
+        if _verdict_manifest is not None and locals().get("_tech_verdict_pending"):
+            try:
+                _tech_verdict = evaluate_technical(
+                    output_path=out_path,
+                    output_size=(actual_w, actual_h),
+                    file_size=file_size,
+                    target_w=w, target_h=h,
+                    ai_provider=sfr.background_ai_provider or "",
+                    fail_closed=True,
+                    exception_occurred=False,
+                    blurFillUsed=False,
+                    forcedSmartFit=False,
+                    job_id=jid, spec_id=spec_id,
+                )
+                _verdict_summary = aggregate_stage21_verdict(
+                    _tech_verdict, _ext_verdict, _comp_verdict,
+                    _layout_verdict, _visual_verdict,
+                    job_id=jid, spec_id=spec_id,
+                )
+                render_ctx.save_debug_artifact(
+                    "23-stage21-verdict-summary",
+                    serialize_verdict_summary(_verdict_summary),
+                )
+            except Exception as _vagg_err:
+                print(f"[STAGE21] verdict aggregation error: {_vagg_err}", flush=True)
+                _verdict_summary = None
 
         results.append({
             "media": media,
@@ -1568,6 +1657,15 @@ def _generate_ai_only(
                 "aiBackgroundSha256": render_ctx.ai_background_sha256[:16] if render_ctx.ai_background_sha256 else "",
                 "finalArtifactSha256": render_ctx.final_artifact_sha256[:16] if render_ctx.final_artifact_sha256 else "",
                 "workDir": render_ctx.work_dir,
+                # Bundle C-1: structured verdict fields (overrides legacy verdict string)
+                **({} if _verdict_summary is None else extract_provenance_fields(
+                    _verdict_summary, _verdict_manifest
+                )),
+                # verdict field: derived from overallVerdict (C-1) or SFR verdict (legacy)
+                "verdict": (
+                    _verdict_summary.overallStatus if _verdict_summary is not None
+                    else sfr.verdict
+                ),
             },
         })
 
