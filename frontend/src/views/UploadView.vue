@@ -538,6 +538,8 @@
                       <div v-else class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
                         <span>{{ spec.width }}×{{ spec.height }}</span>
                       </div>
+                      <!-- 세이프존 시각화 오버레이 -->
+                      <div v-if="hasParsedSafeZone(spec)" class="sz-frame-overlay" :style="szOverlayStyle(spec)" />
                     </div>
                   </div>
                 </div>
@@ -550,6 +552,45 @@
                     <span class="hcard-ratio">{{ getSimpleRatio(spec.width, spec.height) }} 비율</span>
                     <span class="hcard-orient">{{ getOrientation(spec.width, spec.height) }}</span>
                   </div>
+                  <!-- 제작 가이드 요약 -->
+                  <div class="hcard-guide">
+                    <div v-if="spec.fileFormats?.length || spec.maxFileSizeKb" class="hcard-guide-row">
+                      <span v-for="f in (spec.fileFormats ?? [])" :key="f" class="hcard-fmt-chip">{{ f.toUpperCase() }}</span>
+                      <span v-if="spec.maxFileSizeKb" class="hcard-guide-size">{{ formatFileSize(spec.maxFileSizeKb) }} 이하</span>
+                    </div>
+                    <div v-if="hasParsedSafeZone(spec)" class="hcard-guide-row hcard-sz-row">
+                      <span class="hcard-sz-label">세이프존</span>
+                      <span v-if="spec.safeTop != null"    class="hcard-sz-chip">상 {{ spec.safeTop }}px</span>
+                      <span v-if="spec.safeRight != null"  class="hcard-sz-chip">우 {{ spec.safeRight }}px</span>
+                      <span v-if="spec.safeBottom != null" class="hcard-sz-chip">하 {{ spec.safeBottom }}px</span>
+                      <span v-if="spec.safeLeft != null"   class="hcard-sz-chip">좌 {{ spec.safeLeft }}px</span>
+                    </div>
+                    <div v-if="spec.notes" class="hcard-guide-row">
+                      <span class="hcard-notes-text">{{ spec.notes }}</span>
+                    </div>
+                  </div>
+                  <!-- 상세 가이드 (접기) -->
+                  <details class="hcard-details">
+                    <summary class="hcard-details-lbl">상세 가이드</summary>
+                    <div class="hcard-details-body">
+                      <div v-if="spec.headlineMaxChars" class="hcard-dk-row">
+                        <span class="hcard-dk">헤드라인</span><span class="hcard-dv">최대 {{ spec.headlineMaxChars }}자</span>
+                      </div>
+                      <div v-if="spec.descriptionMaxChars" class="hcard-dk-row">
+                        <span class="hcard-dk">설명문</span><span class="hcard-dv">최대 {{ spec.descriptionMaxChars }}자</span>
+                      </div>
+                      <div v-if="spec.safeZoneParseStatus === 'diagram_unreadable'" class="hcard-dk-row">
+                        <span class="hcard-dk">세이프존</span><span class="hcard-dv hcard-dv-muted">공식 가이드 도식 확인 필요</span>
+                      </div>
+                      <div v-if="spec.bgTransparent === false" class="hcard-dk-row">
+                        <span class="hcard-dk">배경</span><span class="hcard-dv">투명 배경 불가</span>
+                      </div>
+                      <div v-if="spec.lastVerified" class="hcard-dk-row">
+                        <span class="hcard-dk">확인일</span><span class="hcard-dv">{{ spec.lastVerified }}</span>
+                      </div>
+                      <a v-if="spec.sourceUrl" :href="spec.sourceUrl" target="_blank" rel="noopener noreferrer" class="hcard-source-link">공식 가이드 보기 →</a>
+                    </div>
+                  </details>
                 </div>
               </div>
             </div>
@@ -825,6 +866,25 @@ function getSimpleRatio(w, h) {
     if (d < minDiff) { minDiff = d; best = [rw, rh] }
   }
   return `${best[0]}:${best[1]}`
+}
+
+function formatFileSize(kb) {
+  if (!kb) return null
+  return kb >= 1000 ? `${(kb / 1000).toFixed(1)}MB` : `${kb}KB`
+}
+
+function hasParsedSafeZone(spec) {
+  return spec?.safeZoneParseStatus === 'parsed_text' && spec.safeTop != null
+}
+
+function szOverlayStyle(spec) {
+  if (!hasParsedSafeZone(spec)) return {}
+  return {
+    top:    ((spec.safeTop    / spec.height) * 100).toFixed(2) + '%',
+    right:  ((spec.safeRight  / spec.width)  * 100).toFixed(2) + '%',
+    bottom: ((spec.safeBottom / spec.height) * 100).toFixed(2) + '%',
+    left:   ((spec.safeLeft   / spec.width)  * 100).toFixed(2) + '%',
+  }
 }
 
 function clearFile() {
@@ -1588,10 +1648,64 @@ onMounted(loadSpecs)
 
 .hcard {
   display: flex; background: #fff; border-radius: 14px;
-  border: 1px solid #EAEDF0; overflow: hidden; height: 130px;
+  border: 1px solid #EAEDF0; overflow: hidden; min-height: 130px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: box-shadow 0.12s;
 }
 .hcard:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.hcards-list .hcard-guide,
+.hcards-list .hcard-details { display: none; }
+
+/* 세이프존 시각화 오버레이 */
+.sz-frame-overlay {
+  position: absolute; border: 1.5px dashed rgba(124,58,237,0.75);
+  border-radius: 1px; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(124,58,237,0.12);
+}
+
+/* 제작 가이드 */
+.hcard-guide { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.hcard-guide-row { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.hcard-fmt-chip {
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+  background: #EEF2FF; color: #4338CA; border: 1px solid #C7D2FE;
+}
+.hcard-guide-size { font-size: 9.5px; color: #6B7280; font-weight: 500; }
+.hcard-sz-label {
+  font-size: 9px; font-weight: 700; color: #7C3AED;
+  background: #F5F3FF; border-radius: 4px; padding: 1px 4px;
+  border: 1px solid #DDD6FE; flex-shrink: 0;
+}
+.hcard-sz-chip {
+  font-size: 9px; font-weight: 600; padding: 1px 4px; border-radius: 3px;
+  background: #EDE9FE; color: #5B21B6; font-family: monospace;
+}
+.hcard-notes-text {
+  font-size: 9.5px; color: #6B7280; line-height: 1.4;
+  background: #FFF7ED; border-radius: 4px; padding: 2px 5px;
+  border: 1px solid #FDE68A;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* 상세 가이드 접기 */
+.hcard-details { margin-top: 6px; }
+.hcard-details-lbl {
+  font-size: 10px; font-weight: 600; color: #9CA3AF;
+  cursor: pointer; list-style: none; user-select: none; padding: 2px 0;
+}
+.hcard-details-lbl::-webkit-details-marker { display: none; }
+.hcard-details-lbl::before { content: '▶ '; font-size: 7px; }
+details[open] > .hcard-details-lbl::before { content: '▼ '; }
+.hcard-details-body {
+  margin-top: 4px; display: flex; flex-direction: column; gap: 3px;
+  padding: 6px 7px; background: #F9FAFB; border-radius: 6px;
+  border: 1px solid #EAEDF0;
+}
+.hcard-dk-row { display: flex; align-items: flex-start; gap: 6px; }
+.hcard-dk { font-size: 9.5px; color: #9CA3AF; min-width: 52px; flex-shrink: 0; }
+.hcard-dv { font-size: 9.5px; color: #374151; }
+.hcard-dv-muted { color: #9CA3AF; }
+.hcard-source-link { font-size: 9.5px; color: #7C3AED; font-weight: 600; text-decoration: none; }
+.hcard-source-link:hover { text-decoration: underline; }
 
 .hcard-preview {
   width: 155px; flex-shrink: 0; overflow: hidden; background: #F2F4F6;

@@ -29,6 +29,12 @@ public class SpecMongoService {
         return mongoTemplate.find(query, BannerSpec.class);
     }
 
+    public List<BannerSpec> findAllActive() {
+        Query query = Query.query(Criteria.where("active").is(true))
+                .with(Sort.by(Sort.Direction.ASC, "sortOrder"));
+        return mongoTemplate.find(query, BannerSpec.class);
+    }
+
     public List<BannerSpec> findByMedia(String media) {
         Query query = Query.query(Criteria.where("media").is(media).and("active").is(true));
         return mongoTemplate.find(query, BannerSpec.class);

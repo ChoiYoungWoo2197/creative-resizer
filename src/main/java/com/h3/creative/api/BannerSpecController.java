@@ -41,7 +41,7 @@ public class BannerSpecController {
         if (placementType != null) {
             return ResponseEntity.ok(specMongoService.findByPlacementType(placementType));
         }
-        return ResponseEntity.ok(specMongoService.findAll());
+        return ResponseEntity.ok(specMongoService.findAllActive());
     }
 
     /** GET /api/banner-specs/{media}/{slug} */
