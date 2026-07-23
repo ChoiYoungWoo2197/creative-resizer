@@ -2,18 +2,35 @@ package com.h3.creative.mongo;
 
 import com.h3.creative.domain.BannerSpec;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SpecMongoService {
+
+    private static final List<String> LEGACY_NAVER_SLUGS = List.of(
+        "smartchannel_horizontal",
+        "pc_display",
+        "pc_leaderboard",
+        "pc_skyscraper",
+        "mobile_banner",
+        "gfa_feed_square",
+        "gfa_feed_landscape",
+        "gfa_mobile_da"
+    );
 
     /** slug 기준 upsert 결과 */
     public enum UpsertStatus {
@@ -99,6 +116,53 @@ public class SpecMongoService {
     /** backward-compat: true=INSERTED, false=UPDATED|UNCHANGED */
     public boolean upsertBySlug(BannerSpec spec) {
         return upsertBySlugStatus(spec) == UpsertStatus.INSERTED;
+    }
+
+    /**
+     * 레거시 Naver 기본 규격 8개를 active=false 처리한다.
+     * - media=naver AND slug IN (8개 slug) 대상만 변경
+     * - 물리 삭제 없음, 다른 매체 무영향
+     * - 재실행해도 안전한 idempotent 작업
+     * - 8개 미만이어도 found 개수만큼만 처리
+     *
+     * @throws IllegalStateException 대상이 8개 초과일 경우 (의도치 않은 데이터 변형 방지)
+     */
+    public Map<String, Object> deactivateLegacyNaverSpecs() {
+        Query findQuery = Query.query(
+            Criteria.where("media").is("naver")
+                    .and("slug").in(LEGACY_NAVER_SLUGS)
+        );
+        List<BannerSpec> targets = mongoTemplate.find(findQuery, BannerSpec.class);
+
+        List<String> foundSlugs = new ArrayList<>();
+        for (BannerSpec s : targets) foundSlugs.add(s.getSlug());
+        log.info("[legacy-naver] 대상 발견: {}개 slugs={}", targets.size(), foundSlugs);
+
+        if (targets.size() > LEGACY_NAVER_SLUGS.size()) {
+            throw new IllegalStateException(
+                "예상 최대 " + LEGACY_NAVER_SLUGS.size() + "개인데 " + targets.size() + "개 발견 — 중단");
+        }
+
+        long activeCount = targets.stream().filter(BannerSpec::isActive).count();
+
+        Query updateQuery = Query.query(
+            Criteria.where("media").is("naver")
+                    .and("slug").in(LEGACY_NAVER_SLUGS)
+                    .and("active").is(true)
+        );
+        com.mongodb.client.result.UpdateResult result =
+            mongoTemplate.updateMulti(updateQuery, Update.update("active", false), BannerSpec.class);
+
+        log.info("[legacy-naver] matchedCount={} modifiedCount={}",
+                result.getMatchedCount(), result.getModifiedCount());
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("foundSlugs",    foundSlugs);
+        out.put("foundCount",    targets.size());
+        out.put("activeAtStart", activeCount);
+        out.put("matchedCount",  result.getMatchedCount());
+        out.put("modifiedCount", result.getModifiedCount());
+        return out;
     }
 
     private boolean sameContent(BannerSpec a, BannerSpec b) {

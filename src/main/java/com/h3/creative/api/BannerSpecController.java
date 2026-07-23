@@ -70,4 +70,16 @@ public class BannerSpecController {
         Map<String, Object> result = bannerSpecSeedService.seed(media);
         return ResponseEntity.ok(result);
     }
+
+    /**
+     * POST /api/banner-specs/deactivate-legacy-naver
+     * 레거시 Naver 기본 규격 8개(smartchannel_horizontal, pc_display, …)를
+     * active=false 처리한다. 물리 삭제 없음. 재실행 idempotent.
+     * 응답: {foundSlugs, foundCount, activeAtStart, matchedCount, modifiedCount}
+     */
+    @PostMapping("/deactivate-legacy-naver")
+    public ResponseEntity<Map<String, Object>> deactivateLegacyNaver() {
+        Map<String, Object> result = specMongoService.deactivateLegacyNaverSpecs();
+        return ResponseEntity.ok(result);
+    }
 }

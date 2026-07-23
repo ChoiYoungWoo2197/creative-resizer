@@ -57,15 +57,8 @@ public class SpecInitService {
             spec("google", "GDN 반응형 가로형",            "gdn_responsive_landscape", 1200, 628,  "1.91:1", 22),
             spec("google", "GDN 반응형 정사각형",          "gdn_responsive_square",    1200, 1200, "1:1",    23),
 
-            // ── Naver ───────────────────────────────────────
-            spec("naver", "스마트채널 가로형",             "smartchannel_horizontal",  1200, 628,  "1.91:1", 101),
-            spec("naver", "PC 디스플레이",                 "pc_display",               300,  250,  "6:5",    102),
-            spec("naver", "PC 리더보드",                   "pc_leaderboard",           728,  90,   "728:90", 103),
-            spec("naver", "PC 스카이스크래퍼",             "pc_skyscraper",            160,  600,  "4:15",   104),
-            spec("naver", "모바일 배너",                   "mobile_banner",            320,  50,   "32:5",   105),
-            spec("naver", "GFA 피드 1대1",                 "gfa_feed_square",          1200, 1200, "1:1",    106),
-            spec("naver", "GFA 피드 16대9",                "gfa_feed_landscape",       1200, 628,  "1.91:1", 107),
-            spec("naver", "GFA 모바일DA",                  "gfa_mobile_da",            1250, 560,  "25:11",  108),
+            // Naver 규격은 banner-specs/naver.json 공식 가이드(68개)를 사용합니다.
+            // POST /api/banner-specs/seed?media=naver 로 시드하세요.
 
             // ── Meta ────────────────────────────────────────
             spec("meta", "피드 1:1",                       "feed_square",              1080, 1080, "1:1",    201),

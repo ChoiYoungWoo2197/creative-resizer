@@ -573,22 +573,25 @@
                   <details class="hcard-details">
                     <summary class="hcard-details-lbl">상세 가이드</summary>
                     <div class="hcard-details-body">
-                      <div v-if="spec.headlineMaxChars" class="hcard-dk-row">
-                        <span class="hcard-dk">헤드라인</span><span class="hcard-dv">최대 {{ spec.headlineMaxChars }}자</span>
-                      </div>
-                      <div v-if="spec.descriptionMaxChars" class="hcard-dk-row">
-                        <span class="hcard-dk">설명문</span><span class="hcard-dv">최대 {{ spec.descriptionMaxChars }}자</span>
-                      </div>
-                      <div v-if="spec.safeZoneParseStatus === 'diagram_unreadable'" class="hcard-dk-row">
-                        <span class="hcard-dk">세이프존</span><span class="hcard-dv hcard-dv-muted">공식 가이드 도식 확인 필요</span>
-                      </div>
-                      <div v-if="spec.bgTransparent === false" class="hcard-dk-row">
-                        <span class="hcard-dk">배경</span><span class="hcard-dv">투명 배경 불가</span>
-                      </div>
-                      <div v-if="spec.lastVerified" class="hcard-dk-row">
-                        <span class="hcard-dk">확인일</span><span class="hcard-dv">{{ spec.lastVerified }}</span>
-                      </div>
-                      <a v-if="spec.sourceUrl" :href="spec.sourceUrl" target="_blank" rel="noopener noreferrer" class="hcard-source-link">공식 가이드 보기 →</a>
+                      <template v-if="hasDetailContent(spec)">
+                        <div v-if="spec.headlineMaxChars" class="hcard-dk-row">
+                          <span class="hcard-dk">헤드라인</span><span class="hcard-dv">최대 {{ spec.headlineMaxChars }}자</span>
+                        </div>
+                        <div v-if="spec.descriptionMaxChars" class="hcard-dk-row">
+                          <span class="hcard-dk">설명문</span><span class="hcard-dv">최대 {{ spec.descriptionMaxChars }}자</span>
+                        </div>
+                        <div v-if="spec.safeZoneParseStatus === 'diagram_unreadable'" class="hcard-dk-row">
+                          <span class="hcard-dk">세이프존</span><span class="hcard-dv hcard-dv-muted">공식 가이드 도식 확인 필요</span>
+                        </div>
+                        <div v-if="spec.bgTransparent === false" class="hcard-dk-row">
+                          <span class="hcard-dk">배경</span><span class="hcard-dv">투명 배경 불가</span>
+                        </div>
+                        <div v-if="spec.lastVerified" class="hcard-dk-row">
+                          <span class="hcard-dk">확인일</span><span class="hcard-dv">{{ spec.lastVerified }}</span>
+                        </div>
+                        <a v-if="spec.sourceUrl" :href="spec.sourceUrl" target="_blank" rel="noopener noreferrer" class="hcard-source-link">공식 가이드 보기 →</a>
+                      </template>
+                      <div v-else class="hcard-no-detail">등록된 상세 제작 가이드가 없습니다.</div>
                     </div>
                   </details>
                 </div>
@@ -866,6 +869,17 @@ function getSimpleRatio(w, h) {
     if (d < minDiff) { minDiff = d; best = [rw, rh] }
   }
   return `${best[0]}:${best[1]}`
+}
+
+function hasDetailContent(spec) {
+  return !!(
+    spec.headlineMaxChars ||
+    spec.descriptionMaxChars ||
+    spec.safeZoneParseStatus === 'diagram_unreadable' ||
+    spec.bgTransparent === false ||
+    spec.lastVerified ||
+    spec.sourceUrl
+  )
 }
 
 function formatFileSize(kb) {
@@ -1292,6 +1306,9 @@ async function loadSpecs() {
     const { data } = await listBannerSpecs()
     allSpecs.value = data
     for (const s of data) { if (!(s.media in expandedPlatforms)) expandedPlatforms[s.media] = false }
+    // API에 존재하지 않는 레거시 ID 자동 제거
+    const availableIds = new Set(data.map(s => s.id))
+    selectedSpecIds.value = selectedSpecIds.value.filter(id => availableIds.has(id))
   } catch {
     naverLoadError.value = true
     ElMessage.error('매체 가이드 로딩 실패')
@@ -1706,6 +1723,7 @@ details[open] > .hcard-details-lbl::before { content: '▼ '; }
 .hcard-dv-muted { color: #9CA3AF; }
 .hcard-source-link { font-size: 9.5px; color: #7C3AED; font-weight: 600; text-decoration: none; }
 .hcard-source-link:hover { text-decoration: underline; }
+.hcard-no-detail { font-size: 9.5px; color: #9CA3AF; font-style: italic; }
 
 .hcard-preview {
   width: 155px; flex-shrink: 0; overflow: hidden; background: #F2F4F6;
