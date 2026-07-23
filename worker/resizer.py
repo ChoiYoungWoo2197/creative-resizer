@@ -1175,19 +1175,70 @@ def _generate_ai_only(
                 _obj_results = (object_analysis or {}).get("objects") or []
                 if _obj_results:
                     try:
+                        # Source hash validation: stored snapshot must match current PSD
+                        _oa_sha = (object_analysis or {}).get("sourceFileSha256", "")
+                        if _oa_sha and not _oa_sha.startswith("__"):
+                            if _oa_sha != _source_file_sha256:
+                                raise RuntimeError(
+                                    f"OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH:"
+                                    f" stored={_oa_sha[:16]}"
+                                    f" actual={_source_file_sha256[:16]}"
+                                )
+
                         from object_map_applicator import apply_object_map
-                        psd_layers_classified, _apply_logs = apply_object_map(
-                            psd_layers_classified, _obj_results
-                        )
-                        _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
+                        from layer_role_classifier import _validate_roles
+
                         _analysis_id = (object_analysis or {}).get("id", "")
+                        _analysis_version = (object_analysis or {}).get("analysisVersion", "")
+                        _analysis_model = (object_analysis or {}).get("model", "")
+
                         print(
-                            f"[PSD_OBJECT_ANALYSIS] objectMapApplied"
+                            f"[PSD_OBJECT_ANALYSIS]"
+                            f" trigger=generate"
+                            f" source=stored-snapshot"
+                            f" analysisCacheHit=true"
+                            f" reused=true"
+                            f" gptRequestCount=0"
                             f" analysisId={_analysis_id}"
-                            f" appliedCount={_applied}/{len(_apply_logs)}"
+                            f" analysisVersion={_analysis_version}"
+                            f" model={_analysis_model}",
+                            flush=True,
+                        )
+
+                        # strict=True: production path uses exact layerId match only
+                        psd_layers_classified, _apply_logs = apply_object_map(
+                            psd_layers_classified, _obj_results, strict=True
+                        )
+
+                        # Re-run contradiction validator after role overrides
+                        psd_layers_classified = _validate_roles(psd_layers_classified)
+
+                        _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
+                        _strict_count = sum(
+                            1 for lg in _apply_logs
+                            if lg.get("applied") and lg.get("matchMethod") == "layerId_exact"
+                        )
+                        _fallback_count = sum(
+                            1 for lg in _apply_logs
+                            if lg.get("applied") and lg.get("matchMethod") != "layerId_exact"
+                        )
+                        _rejected_count = sum(1 for lg in _apply_logs if not lg.get("applied"))
+                        _unmatched_layers = len(psd_layers_classified) - len(_apply_logs)
+
+                        print(
+                            f"[OBJECT_MAP_APPLY]"
+                            f" analysisId={_analysis_id}"
+                            f" roleSource=stored-object-map"
+                            f" matchedLayerCount={len(_apply_logs)}"
+                            f" strictMatchCount={_strict_count}"
+                            f" fallbackMatchCount={_fallback_count}"
+                            f" rejectedMatchCount={_rejected_count}"
+                            f" unmatchedLayerCount={_unmatched_layers}"
                             f" newRoles={sorted({l.get('role') for l in psd_layers_classified})}",
                             flush=True,
                         )
+                    except RuntimeError:
+                        raise  # OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH is fatal
                     except Exception as _omap_err:
                         print(
                             f"[PSD_OBJECT_ANALYSIS] apply_object_map failed: {_omap_err}",

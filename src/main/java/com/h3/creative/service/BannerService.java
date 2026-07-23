@@ -21,6 +21,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -202,8 +205,35 @@ public class BannerService {
         if ((objectReflowEnabled || isAiAutoMode) && message.getObjectAnalysisId() != null) {
             try {
                 PsdObjectAnalysis oa = psdObjectAnalysisMongoService.findById(message.getObjectAnalysisId());
-                if (oa != null) {
-                    objectAnalysisSnapshot = objectMapper.convertValue(oa, Map.class);
+                if (oa == null) {
+                    log.warn("OBJECT_ANALYSIS_NOT_FOUND id={}", message.getObjectAnalysisId());
+                } else if (!"READY".equals(oa.getStatus())) {
+                    log.warn("OBJECT_ANALYSIS_NOT_READY id={} status={}", message.getObjectAnalysisId(), oa.getStatus());
+                } else {
+                    // Source hash validation: stored snapshot must match current PSD file
+                    String storedSha = oa.getSourceFileSha256();
+                    boolean shaValidated = false;
+                    if (storedSha != null && !storedSha.isBlank() && !storedSha.startsWith("__")) {
+                        String actualSha = computeFileSha256(message.getPsdPath());
+                        if (!storedSha.equals(actualSha)) {
+                            String s = storedSha.length() >= 16 ? storedSha.substring(0, 16) : storedSha;
+                            String a = actualSha.length() >= 16 ? actualSha.substring(0, 16) : actualSha;
+                            log.error("OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH id={} stored={} actual={}",
+                                message.getObjectAnalysisId(), s, a);
+                            // fail-closed: mismatched snapshot is not applied
+                        } else {
+                            shaValidated = true;
+                        }
+                    } else {
+                        shaValidated = true; // no hash stored — skip validation
+                    }
+                    if (shaValidated) {
+                        objectAnalysisSnapshot = objectMapper.convertValue(oa, Map.class);
+                        log.info("[PSD_OBJECT_ANALYSIS] trigger=generate source=stored-snapshot"
+                            + " analysisCacheHit=true reused=true gptRequestCount=0"
+                            + " analysisId={} analysisVersion={} model={}",
+                            message.getObjectAnalysisId(), oa.getAnalysisVersion(), oa.getModel());
+                    }
                 }
             } catch (Exception e) {
                 log.warn("PsdObjectAnalysis 로딩 실패 id={}: {}", message.getObjectAnalysisId(), e.getMessage());
@@ -370,5 +400,14 @@ public class BannerService {
 
     public List<BannerJob> listJobs() {
         return bannerMongoService.findAll();
+    }
+
+    private String computeFileSha256(String path) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] data = Files.readAllBytes(Paths.get(path));
+        byte[] digest = md.digest(data);
+        StringBuilder sb = new StringBuilder(64);
+        for (byte b : digest) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 }

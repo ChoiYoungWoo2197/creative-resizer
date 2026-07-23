@@ -81,8 +81,12 @@ services:
       - BACKGROUND_AI_API_KEY=${BACKGROUND_AI_API_KEY}
       # Typography Pipeline (Stage 20.1)
       - TYPOGRAPHY_PIPELINE_ENABLED=false
-      # P2: Disable GPT-4o-mini PSD object analysis for AI-only pipeline
+      # Stage 21.5: PSD Object Analysis — upload-time GPT on, generate-time GPT off, reuse enabled
       - PSD_OBJECT_ANALYSIS_ENABLED=false
+      - PSD_OBJECT_ANALYSIS_ON_UPLOAD=true
+      - PSD_OBJECT_ANALYSIS_REUSE_ENABLED=true
+      - PSD_OBJECT_ANALYSIS_ON_GENERATE=false
+      - PSD_OBJECT_ANALYSIS_REQUIRED_FOR_PSD=true
       # P0: Per-job work directory for debug artifacts + SHA-256 isolation
       - AI_WORK_DIR=/app/storage/work
     volumes:
