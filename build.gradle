@@ -8,11 +8,8 @@ group = 'com.h3'
 version = '0.0.1-SNAPSHOT'
 
 java {
-    // Docker 빌드는 eclipse-temurin:17-jdk-jammy 내부에서 JDK 17 사용
-    // 로컬 테스트는 설치된 JDK 버전(18)으로 실행
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(18)
-    }
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 configurations {
