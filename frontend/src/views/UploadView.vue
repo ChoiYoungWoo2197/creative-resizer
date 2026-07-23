@@ -540,17 +540,13 @@
                           <div class="sz-safe-inner" :style="szInnerStyle(spec)">
                             <span class="sz-inner-dim">{{ getSafeZoneMetrics(spec).safeWidth }}×{{ getSafeZoneMetrics(spec).safeHeight }}</span>
                           </div>
-                          <span v-if="getSafeZoneMetrics(spec).topPct >= 10"
-                                class="sz-lbl sz-lbl-top"
+                          <span class="sz-lbl sz-lbl-top"
                                 :style="{ top: (getSafeZoneMetrics(spec).topPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).top }}px</span>
-                          <span v-if="getSafeZoneMetrics(spec).rightPct >= 10"
-                                class="sz-lbl sz-lbl-right"
+                          <span class="sz-lbl sz-lbl-right"
                                 :style="{ right: (getSafeZoneMetrics(spec).rightPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).right }}px</span>
-                          <span v-if="getSafeZoneMetrics(spec).bottomPct >= 10"
-                                class="sz-lbl sz-lbl-bottom"
+                          <span class="sz-lbl sz-lbl-bottom"
                                 :style="{ bottom: (getSafeZoneMetrics(spec).bottomPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).bottom }}px</span>
-                          <span v-if="getSafeZoneMetrics(spec).leftPct >= 10"
-                                class="sz-lbl sz-lbl-left"
+                          <span class="sz-lbl sz-lbl-left"
                                 :style="{ left: (getSafeZoneMetrics(spec).leftPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).left }}px</span>
                         </div>
                       </template>
@@ -1783,9 +1779,9 @@ onMounted(loadSpecs)
 }
 .sz-lbl {
   position: absolute;
-  font-size: 6.5px; font-weight: 700; color: #6D28D9;
+  font-size: 8px; font-weight: 700; color: #6D28D9;
   background: rgba(255, 255, 255, 0.93);
-  padding: 1px 2px; border-radius: 2px;
+  padding: 1px 3px; border-radius: 2px;
   white-space: nowrap; line-height: 1.3;
   pointer-events: none; z-index: 3;
 }
