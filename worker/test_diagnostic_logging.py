@@ -643,16 +643,19 @@ class TestRootCauseSummaryLog:
 class TestIntegrationDiagnosticLogs:
     """Verify that _generate() with FakeProvider emits all diagnostic log tags."""
 
+    # Stage 2: MASK_ANOMALY is conditional — emitted only when an anomaly exists.
+    # After Stage 2 fix, canonical_at_target eliminates size-mismatch anomalies.
     REQUIRED_TAGS = [
         "SEMANTIC_OBJECT",
         "SEMANTIC_INVENTORY",
         "MASK_LINEAGE",
-        "MASK_ANOMALY",
         "TRANSFORM_GEOMETRY",
         "MANIFEST_AUDIT",
         "RESULT_SEMANTICS",
         "ROOT_CAUSE_SUMMARY",
     ]
+    # MASK_ANOMALY is emitted only when anomalies exist (conditional, not always required)
+    CONDITIONAL_TAGS = ["MASK_ANOMALY"]
     # PIXEL_RESTORE_AUDIT or PIXEL_RESTORE_SKIPPED — at least one must appear
     RESTORE_TAGS = ["PIXEL_RESTORE_AUDIT", "PIXEL_RESTORE_SKIPPED"]
 
@@ -710,12 +713,15 @@ class TestIntegrationDiagnosticLogs:
                            "sha256=", "inputMasks=", "fallbackApplied=", "generatedAt=")
 
     def test_mask_anomaly_fields(self, png_src, tmp_path):
+        # Stage 2: MASK_ANOMALY is only emitted when an anomaly genuinely exists.
+        # After Stage 2 fix (canonical_at_target), size-mismatch anomalies are gone.
+        # IF emitted, verify all required fields are present.
         _, out = self._run(png_src, tmp_path)
         lines = _lines_tagged(out, "MASK_ANOMALY")
-        assert lines, "[MASK_ANOMALY] not emitted — expected at least one (size mismatch)"
-        for line in lines:
-            _assert_fields(line, "jobId=", "specId=", "maskType=",
-                           "anomalyCode=", "actualValue=", "expectedRange=")
+        if lines:
+            for line in lines:
+                _assert_fields(line, "jobId=", "specId=", "maskType=",
+                               "anomalyCode=", "actualValue=", "expectedRange=")
 
     def test_transform_geometry_fields(self, png_src, tmp_path):
         _, out = self._run(png_src, tmp_path)
@@ -780,23 +786,28 @@ class TestIntegrationDiagnosticLogs:
 class TestIntegrationAnomalyConditions:
     """Verify that specific production anomalies produce correct [MASK_ANOMALY] output."""
 
-    def test_source_mapped_coverage_zero_anomaly(self, png_src, tmp_path):
-        """400×300 source into 300×250 target via contain-scale → mask has source region.
-        With crop_x=0,crop_y=0 bug, immutable_metrics returns allowedGenerationCoverage=1.0
-        which triggers IMMUTABLE_METRICS_FULL_CANVAS anomaly."""
+    def test_source_mapped_coverage_correct_after_fix(self, png_src, tmp_path):
+        """Stage 2 fix: 400×300 source into 300×250 target via contain-scale.
+        canonical_at_target eliminates size-mismatch, so allowedGenerationCoverage
+        must reflect the actual outpaint fraction (~0.10), not 1.0.
+        IMMUTABLE_METRICS_FULL_CANVAS anomaly must NOT appear."""
         _, out = _generate(png_src, _specs(300, 250), str(tmp_path))
-        lines = _lines_tagged(out, "MASK_ANOMALY")
-        # Current production bug: allowedGenerationCoverage=1.0 due to size mismatch
-        # This must be detected and logged
-        all_codes = " ".join(lines)
-        assert (
-            "IMMUTABLE_METRICS_FULL_CANVAS" in all_codes
-            or "SOURCE_MAPPED_ZERO" in all_codes
-            or "ALLOWED_GEN_FULL_CANVAS" in all_codes
-        ), (
-            f"Expected at least one anomaly from size-mismatch bug.\nLines:\n" +
-            "\n".join(lines) + "\n\nFull output tail:\n" + out[-2000:]
+        anomaly_lines = _lines_tagged(out, "MASK_ANOMALY")
+        all_codes = " ".join(anomaly_lines)
+        assert "IMMUTABLE_METRICS_FULL_CANVAS" not in all_codes, (
+            "IMMUTABLE_METRICS_FULL_CANVAS should not appear after Stage 2 fix.\n"
+            "Lines:\n" + "\n".join(anomaly_lines)
         )
+        # PIXEL_RESTORE should show real coverage (not fallback 1.0)
+        restore_lines = _lines_tagged(out, "PIXEL_RESTORE") + _lines_tagged(out, "DEFAULT_IMMUTABLE_POLICY")
+        combined = " ".join(restore_lines + _lines_tagged(out, "PIXEL_RESTORE_AUDIT"))
+        # allowedGenerationCoverage should be << 1.0 (size mismatch is fixed)
+        if "allowedGenerationCoverage=" in combined:
+            import re
+            m = re.search(r"allowedGenerationCoverage=([\d.]+)", combined)
+            if m:
+                cov = float(m.group(1))
+                assert cov < 0.999, f"allowedGenerationCoverage={cov} should be < 0.999 after fix"
 
     def test_full_scene_regen_detected_in_root_cause(self, png_src, tmp_path):
         """Size-mismatch bug causes compute_pixel_diff_ratio→1.0 → FULL_SCENE_REGENERATION_DETECTED.

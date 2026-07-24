@@ -1529,6 +1529,7 @@ def _generate_ai_only(
         _scene_result = None
         _visual_verdict = None    # initialized here for diagnostic access after verdict try block
         _immutable_metrics = {}   # initialized here for diagnostic access after Stage 4 try block
+        _canonical_at_target = img  # Stage 2: target-sized canonical (updated in Stage 4)
         _ai_scene_dir = os.path.join(output_dir, "stage20_3", spec_id)
 
         if _bg_mode == "semantic_scene_cleanup":
@@ -1604,8 +1605,24 @@ def _generate_ai_only(
                     if _scene_result.allowed_generation_mask is not None
                     else _np_s4.full((h, w), 255, dtype=_np_s4.uint8)
                 )
-                _restored = _apply_immutable(img, result_img, _ssc_allowed_mask)
-                _immutable_metrics = _compute_immutable_metrics(img, _restored, _ssc_allowed_mask)
+                # Stage 2: build target-sized canonical to match ai result dimensions.
+                # Raw img is at source size; result_img is at target size.
+                # build_canonical_at_target letterboxes img into target canvas using
+                # canvas_transform paste geometry — size mismatch eliminated.
+                try:
+                    from scene_cleanup.canvas_builder import build_canonical_at_target as _build_cat
+                    if _scene_result is not None and _scene_result.canvas_transform is not None:
+                        _canonical_at_target = _build_cat(img, _scene_result.canvas_transform)
+                    else:
+                        _canonical_at_target = img.resize((w, h), Image.LANCZOS) if img.size != (w, h) else img
+                except Exception as _cat_err:
+                    print(
+                        f"[CANONICAL_AT_TARGET_ERROR] jobId={jid} specId={spec_id} err={_cat_err}",
+                        flush=True,
+                    )
+                    _canonical_at_target = img.resize((w, h), Image.LANCZOS) if img.size != (w, h) else img
+                _restored = _apply_immutable(_canonical_at_target, result_img, _ssc_allowed_mask)
+                _immutable_metrics = _compute_immutable_metrics(_canonical_at_target, _restored, _ssc_allowed_mask)
                 _log_immutable(_immutable_metrics, job_id=jid, spec_id=spec_id)
                 _is_outpaint = (
                     _scene_result.canvas_transform is not None
@@ -1973,9 +1990,10 @@ def _generate_ai_only(
             )
             # Stage 6: Use evaluate_extended_visual (15 P1-D metrics) — always required.
             # NOT_TESTED is treated as FAIL by aggregate_stage21_verdict when visual_required=True.
+            # Stage 2: use _canonical_at_target (target-sized) for pixel diff comparison.
             from verdict.visual_evaluator import evaluate_extended_visual as _eval_extended_visual
             _visual_verdict = _eval_extended_visual(
-                source_img=img,
+                source_img=_canonical_at_target,
                 result_img=result_img,
                 target_w=w, target_h=h,
                 job_id=jid, spec_id=spec_id,

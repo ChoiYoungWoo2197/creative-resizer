@@ -158,3 +158,66 @@ def build_provider_canvas_outpaint(
     )
 
     return provider_input, mask, transform, allowed_generation_mask
+
+
+def build_canonical_at_target(
+    source_img: object,
+    canvas_transform: object,
+) -> object:
+    """Build a target-sized canonical reference image from source using transform geometry.
+
+    For subject_preserving_outpaint: contain-scale source and paste at paste_offset.
+    For cover_crop: cover-scale source and crop at crop_x/y.
+    Other strategies: resize to target (best-effort).
+
+    This is the correct canonical for pixel restoration in Stage 4:
+    canonical_at_target.size == (target_w, target_h) == ai_result.size,
+    eliminating the size mismatch that caused allowedGenerationCoverage=1.0.
+    """
+    from PIL import Image
+
+    if source_img is None or canvas_transform is None:
+        raise RuntimeError("CANONICAL_BUILD_NULL_INPUT: source_img and canvas_transform are required")
+
+    tw = int(getattr(canvas_transform, "canvas_w", 0))
+    th = int(getattr(canvas_transform, "canvas_h", 0))
+    if tw <= 0 or th <= 0:
+        raise RuntimeError(f"CANONICAL_BUILD_INVALID_TARGET: canvas={tw}x{th}")
+
+    strategy = str(getattr(canvas_transform, "strategy", ""))
+    scale = float(getattr(canvas_transform, "scale", 1.0))
+
+    if not isinstance(source_img, Image.Image):
+        raise RuntimeError("CANONICAL_BUILD_NOT_PIL_IMAGE")
+
+    src_rgb = source_img.convert("RGB")
+
+    if strategy == "subject_preserving_outpaint":
+        sw = int(getattr(canvas_transform, "scaled_width", 0))
+        sh = int(getattr(canvas_transform, "scaled_height", 0))
+        px = int(getattr(canvas_transform, "paste_offset_x", -1))
+        py = int(getattr(canvas_transform, "paste_offset_y", -1))
+
+        if sw <= 0 or sh <= 0:
+            sw = max(int(src_rgb.width * scale + 0.5), 1)
+            sh = max(int(src_rgb.height * scale + 0.5), 1)
+        if px < 0:
+            px = (tw - sw) // 2
+        if py < 0:
+            py = (th - sh) // 2
+
+        scaled = src_rgb.resize((sw, sh), Image.LANCZOS)
+        canvas = Image.new("RGB", (tw, th), (0, 0, 0))
+        canvas.paste(scaled, (px, py))
+        return canvas
+
+    elif strategy == "cover_crop":
+        cx = int(getattr(canvas_transform, "crop_x", 0))
+        cy = int(getattr(canvas_transform, "crop_y", 0))
+        sw_full = max(int(src_rgb.width * scale + 0.5), tw)
+        sh_full = max(int(src_rgb.height * scale + 0.5), th)
+        scaled_full = src_rgb.resize((sw_full, sh_full), Image.LANCZOS)
+        return scaled_full.crop((cx, cy, cx + tw, cy + th))
+
+    else:
+        return src_rgb.resize((tw, th), Image.LANCZOS)

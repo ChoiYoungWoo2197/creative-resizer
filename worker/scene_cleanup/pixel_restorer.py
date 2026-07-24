@@ -47,9 +47,14 @@ def apply_default_immutable_policy(
     cw, ch = canonical_img.size
     rw, rh = ai_result.size
 
-    # If sizes differ we can't do pixel-level restoration; return AI result
+    # Fail-closed: size mismatch means canonical_at_target was not built correctly.
+    # Callers must pass build_canonical_at_target() output, not the raw source image.
     if (cw, ch) != (rw, rh):
-        return ai_result
+        raise RuntimeError(
+            f"PIXEL_RESTORE_CANONICAL_SIZE_MISMATCH:"
+            f" canonical={cw}x{ch} result={rw}x{rh}"
+            f" — pass build_canonical_at_target(source, canvas_transform) as canonical_img"
+        )
 
     # If no mask provided: all pixels are in allowed region (legacy behavior)
     if allowed_generation_mask_arr is None:
@@ -104,7 +109,11 @@ def compute_immutable_metrics(
     cw, ch = canonical_img.size
     rw, rh = ai_result.size
     if (cw, ch) != (rw, rh):
-        return empty
+        raise RuntimeError(
+            f"PIXEL_METRICS_CANONICAL_SIZE_MISMATCH:"
+            f" canonical={cw}x{ch} result={rw}x{rh}"
+            f" — pass build_canonical_at_target(source, canvas_transform) as canonical_img"
+        )
     if allowed_mask is None:
         return empty
 
