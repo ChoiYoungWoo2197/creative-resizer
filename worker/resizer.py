@@ -1147,6 +1147,29 @@ def _generate_ai_only(
         flush=True,
     )
 
+    # E-1: Canonical Source Image — the sole semantic authority for all formats.
+    # PSD layer hierarchy is NEVER used for semantic decisions.
+    try:
+        from scene_cleanup.canonical_source import (
+            build_canonical_source, log_canonical_source, log_psd_layer_authority,
+        )
+        _canonical_src = build_canonical_source(
+            image=img,
+            source_type=source_type,
+            source_file_sha256=_source_file_sha256,
+            original_filename=os.path.basename(psd_path),
+            input_format=os.path.splitext(psd_path)[1].lstrip(".").lower() or source_type,
+        )
+        log_canonical_source(_canonical_src, job_id=jid)
+    except Exception as _cs_err:
+        _canonical_src = None
+        print(f"[CANONICAL_SOURCE] build failed: {_cs_err}", flush=True)
+
+    # E-1: PSD layer hints — disabled by default; layers are NOT semantic authority.
+    # When true: PSD layers may be used as layout/extraction hints only (debug mode).
+    _psd_layer_hints_enabled = os.environ.get("PSD_LAYER_HINTS_ENABLED", "false").lower() == "true"
+    log_psd_layer_authority(job_id=jid, enabled=_psd_layer_hints_enabled, runtime_decision_count=0)
+
     # Stage 21: Parse + classify PSD layers for foreground compositing.
     # Only attempted when source_type=="psd". PNG/JPG inputs skip this path.
     psd_layers_classified: list = []
@@ -1308,13 +1331,13 @@ def _generate_ai_only(
     _work_base = os.environ.get("AI_WORK_DIR", "/app/storage/work")
 
     # D-2: Virtual Foreground Extraction (job-level, once per job).
-    # Applicable only when input has no native PSD layers (PNG/JPG flattened input).
-    # Native layers always take priority — D-2 skipped when psd_layers_classified is set.
+    # E-1: ALL inputs (PSD/PNG/JPG) are treated as semantically flattened.
+    # PSD native layers are NOT passed to D-2 (not semantic authority).
+    # native_layers is passed only when PSD_LAYER_HINTS_ENABLED=true (debug).
     _d2_result = None
     _d2_enabled = os.environ.get("VIRTUAL_FOREGROUND_D2_ENABLED", "true").lower() == "true"
-    _is_flattened_input = (source_type != "psd") or not bool(psd_layers_classified)
 
-    if _d2_enabled and _is_flattened_input:
+    if _d2_enabled:
         try:
             from virtual_foreground.manifest_assembler import run_virtual_foreground_extraction
             from virtual_foreground.object_analyzer import FakeObjectAnalysisProvider
@@ -1327,12 +1350,14 @@ def _generate_ai_only(
             else:
                 _analysis_provider = FakeObjectAnalysisProvider()  # safe default
 
+            # E-1: never pass PSD layers as native authority (always empty for semantic mode)
+            _d2_native_layers = psd_layers_classified if _psd_layer_hints_enabled else []
             _d2_result = run_virtual_foreground_extraction(
                 source_image=img,
                 source_path=psd_path,
                 source_sha256=_source_file_sha256,
                 source_type=source_type,
-                native_layers=psd_layers_classified,
+                native_layers=_d2_native_layers,
                 background_provider=provider,
                 analysis_provider=_analysis_provider,
                 output_dir=os.path.join(output_dir, "stage21_d2", jid),
@@ -1357,7 +1382,7 @@ def _generate_ai_only(
                 flush=True,
             )
             _d2_result = None
-    elif not _d2_enabled:
+    else:
         print(f"[D2_EXTRACTION] DISABLED jobId={jid}", flush=True)
 
     for spec_idx, spec in enumerate(specs):
@@ -1410,7 +1435,7 @@ def _generate_ai_only(
                 provider=provider,
                 output_dir=_ai_scene_dir,
                 render_ctx=render_ctx,
-                has_native_layers=bool(psd_layers_classified),
+                has_native_layers=bool(psd_layers_classified) if _psd_layer_hints_enabled else False,
                 composite_render_method="psd_composite" if source_type == "psd" else source_type,
                 max_attempts=max_attempts,
                 job_id=jid,
@@ -1534,7 +1559,9 @@ def _generate_ai_only(
                 )
                 _virtual_fg_for_spec = []
 
-        if psd_layers_classified:
+        # E-1: PSD native layer compositor only when PSD_LAYER_HINTS_ENABLED=true.
+        # Default (false): all inputs use D-2 virtual extraction path.
+        if psd_layers_classified and _psd_layer_hints_enabled:
             try:
                 from foreground.layer_extractor import extract_foreground_layers
                 from foreground.compositor import composite_foreground
@@ -1999,6 +2026,17 @@ def _generate_ai_only(
                     else (fg_result.duplicate_count == 0 if fg_result else True)
                 ),
                 "layoutHardFailReasons": layout_plan.hardFailReasons if layout_plan else [],
+                # E-1: Full-image semantic authority provenance
+                "pipelinePolicy": "full-image-semantic-v1",
+                "semanticAuthority": "full_image",
+                "canonicalSourceUsed": True,
+                "psdLayerAuthorityUsed": False,
+                "psdLayerHintUsed": _psd_layer_hints_enabled,
+                "nativeLayerForegroundUsed": (
+                    bool(psd_layers_classified) and _psd_layer_hints_enabled
+                ),
+                "fullImageSemanticExtractionUsed": True,
+                "inputNormalizationVersion": "canonical-source-v1",
                 # D-3: routing and policy provenance
                 "backgroundModeSource": "explicit" if _bg_mode_raw else "default",
                 "semanticDefaultApplied": _bg_mode_default_applied,
