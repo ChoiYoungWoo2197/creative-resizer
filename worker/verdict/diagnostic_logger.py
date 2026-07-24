@@ -511,29 +511,52 @@ def log_transform_geometry(
         canvas_h = int(getattr(canvas_transform, "canvas_h", target_h))
         outpaint_required = bool(getattr(canvas_transform, "outpaint_required", False))
 
-        scaled_w = max(int(ct_src_w * scale + 0.5), 1) if scale > 0 else ct_src_w
-        scaled_h = max(int(ct_src_h * scale + 0.5), 1) if scale > 0 else ct_src_h
+        # Stage 1: prefer paste_offset_x/y (authoritative) over crop_x/y for outpaint mode
+        stored_paste_x = int(getattr(canvas_transform, "paste_offset_x", -1))
+        stored_paste_y = int(getattr(canvas_transform, "paste_offset_y", -1))
+        stored_scaled_w = int(getattr(canvas_transform, "scaled_width", 0))
+        stored_scaled_h = int(getattr(canvas_transform, "scaled_height", 0))
+        stored_mapped_rect = getattr(canvas_transform, "mapped_rect", None) or {}
+
+        if scale > 0:
+            scaled_w = stored_scaled_w if stored_scaled_w > 0 else max(int(ct_src_w * scale + 0.5), 1)
+            scaled_h = stored_scaled_h if stored_scaled_h > 0 else max(int(ct_src_h * scale + 0.5), 1)
+        else:
+            scaled_w = stored_scaled_w if stored_scaled_w > 0 else ct_src_w
+            scaled_h = stored_scaled_h if stored_scaled_h > 0 else ct_src_h
+
         expected_off_x = (canvas_w - scaled_w) // 2
         expected_off_y = (canvas_h - scaled_h) // 2
-        mapped_rect = {
-            "x1": crop_x, "y1": crop_y,
-            "x2": crop_x + scaled_w, "y2": crop_y + scaled_h,
+
+        if strategy == "subject_preserving_outpaint" and stored_paste_x >= 0:
+            actual_off_x = stored_paste_x
+            actual_off_y = stored_paste_y
+        else:
+            actual_off_x = crop_x
+            actual_off_y = crop_y
+
+        mapped_rect = stored_mapped_rect if stored_mapped_rect else {
+            "x1": actual_off_x, "y1": actual_off_y,
+            "x2": actual_off_x + scaled_w, "y2": actual_off_y + scaled_h,
         }
 
         reason_codes = []
         if canvas_w != target_w or canvas_h != target_h:
             reason_codes.append("CANVAS_SIZE_MISMATCH")
         if strategy == "subject_preserving_outpaint":
-            if abs(crop_x - expected_off_x) > 1:
+            if abs(actual_off_x - expected_off_x) > 1:
                 reason_codes.append(
-                    f"OFFSET_X_MISMATCH_expected={expected_off_x}_actual={crop_x}"
+                    f"OFFSET_X_MISMATCH_expected={expected_off_x}_actual={actual_off_x}"
                 )
-            if abs(crop_y - expected_off_y) > 1:
+            if abs(actual_off_y - expected_off_y) > 1:
                 reason_codes.append(
-                    f"OFFSET_Y_MISMATCH_expected={expected_off_y}_actual={crop_y}"
+                    f"OFFSET_Y_MISMATCH_expected={expected_off_y}_actual={actual_off_y}"
                 )
 
-        subject_bbox = {"x1": crop_x, "y1": crop_y, "x2": crop_x + scaled_w, "y2": crop_y + scaled_h}
+        subject_bbox = {
+            "x1": actual_off_x, "y1": actual_off_y,
+            "x2": actual_off_x + scaled_w, "y2": actual_off_y + scaled_h,
+        }
         subject_crop_ratio = (
             round(scaled_w * scaled_h / (canvas_w * canvas_h), 4)
             if canvas_w * canvas_h > 0
@@ -548,7 +571,7 @@ def log_transform_geometry(
             f" scale={scale:.6f}"
             f" scaledSourceSize={scaled_w}x{scaled_h}"
             f" expectedOffset={expected_off_x},{expected_off_y}"
-            f" actualOffset={crop_x},{crop_y}"
+            f" actualOffset={actual_off_x},{actual_off_y}"
             f" mappedRect={mapped_rect}"
             f" subjectBBox={subject_bbox}"
             f" subjectCropRatio={subject_crop_ratio}"

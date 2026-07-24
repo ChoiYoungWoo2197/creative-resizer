@@ -42,6 +42,11 @@ class SceneCanvasTransform:
     Single unified coordinate system — no split BG/FG scales.
     cover_crop: source scaled to fill target exactly, center-cropped.
     outpaint_required: always False for cover_crop (fills without gaps).
+
+    Paste-offset fields (subject_preserving_outpaint only):
+      paste_offset_x / paste_offset_y — where the scaled source is pasted on the canvas.
+      scaled_width / scaled_height     — source dimensions after scale is applied.
+      mapped_rect                      — {x1,y1,x2,y2} source region in canvas space.
     """
     strategy: str = TRANSFORM_STRATEGY_COVER_CROP
     source_w: int = 0
@@ -49,10 +54,16 @@ class SceneCanvasTransform:
     canvas_w: int = 0   # = target_w
     canvas_h: int = 0   # = target_h
     scale: float = 1.0  # uniform scale applied to source
-    crop_x: int = 0     # left offset in scaled-source coordinates
-    crop_y: int = 0     # top offset in scaled-source coordinates
+    crop_x: int = 0     # cover_crop: left offset in scaled-source coordinates
+    crop_y: int = 0     # cover_crop: top offset in scaled-source coordinates
     outpaint_required: bool = False
     mask_strategy: str = MASK_STRATEGY_FULL_CANVAS
+    # subject_preserving_outpaint: paste geometry
+    paste_offset_x: int = 0
+    paste_offset_y: int = 0
+    scaled_width: int = 0
+    scaled_height: int = 0
+    mapped_rect: dict = None  # {x1, y1, x2, y2} in canvas space
 
 
 @dataclass

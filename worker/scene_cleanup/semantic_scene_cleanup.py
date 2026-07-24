@@ -118,8 +118,8 @@ def run_semantic_scene_cleanup(
         log_subject_preserving_transform(
             type("_T", (), {
                 "scale": canvas_transform.scale,
-                "offset_x": canvas_transform.crop_x,
-                "offset_y": canvas_transform.crop_y,
+                "offset_x": canvas_transform.paste_offset_x,
+                "offset_y": canvas_transform.paste_offset_y,
                 "source_w": canvas_transform.source_w,
                 "source_h": canvas_transform.source_h,
                 "target_w": canvas_transform.canvas_w,

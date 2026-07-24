@@ -325,8 +325,23 @@ class TestTransformGeometryLog:
     def _make_transform(self, strategy="subject_preserving_outpaint",
                         scale=0.625, crop_x=0, crop_y=25,
                         src_w=400, src_h=300, canvas_w=300, canvas_h=250,
-                        outpaint=True):
+                        outpaint=True,
+                        paste_offset_x=None, paste_offset_y=None,
+                        scaled_width=None, scaled_height=None):
         from scene_cleanup.models import SceneCanvasTransform
+        # Stage 1: for outpaint, paste_offset_x/y are the authoritative offset fields.
+        # When not explicitly supplied, derive from scale so callers that don't set
+        # paste_offset get a consistent (non-zero) default for geometry tests.
+        if strategy == "subject_preserving_outpaint":
+            _sw = scaled_width if scaled_width is not None else max(int(src_w * scale + 0.5), 1)
+            _sh = scaled_height if scaled_height is not None else max(int(src_h * scale + 0.5), 1)
+            _px = paste_offset_x if paste_offset_x is not None else (canvas_w - _sw) // 2
+            _py = paste_offset_y if paste_offset_y is not None else (canvas_h - _sh) // 2
+        else:
+            _sw = scaled_width or 0
+            _sh = scaled_height or 0
+            _px = paste_offset_x or 0
+            _py = paste_offset_y or 0
         return SceneCanvasTransform(
             strategy=strategy,
             source_w=src_w, source_h=src_h,
@@ -335,6 +350,11 @@ class TestTransformGeometryLog:
             crop_x=crop_x, crop_y=crop_y,
             outpaint_required=outpaint,
             mask_strategy="outpaint_regions",
+            paste_offset_x=_px,
+            paste_offset_y=_py,
+            scaled_width=_sw,
+            scaled_height=_sh,
+            mapped_rect={"x1": _px, "y1": _py, "x2": _px + _sw, "y2": _py + _sh},
         )
 
     def test_required_fields_present(self):
@@ -356,8 +376,10 @@ class TestTransformGeometryLog:
     def test_geometry_valid_true_when_offset_matches(self):
         from verdict.diagnostic_logger import log_transform_geometry
         # 400×300 contain-scaled to 300×250: scale=min(300/400, 250/300)=0.625
-        # scaled: 250×187, offset_x=(300-250)//2=25, offset_y=(250-187)//2=31
-        ct = self._make_transform(scale=0.625, crop_x=25, crop_y=31)
+        # scaled: 250×187(≈188), offset_x=(300-250)//2=25, offset_y=(250-187)//2=31
+        # Stage 1: paste_offset_x/y are the authoritative offset fields.
+        # _make_transform derives them from scale when not explicit, so they match.
+        ct = self._make_transform(scale=0.625)
         out = _capture(log_transform_geometry, ct, 400, 300, 300, 250,
                        job_id="j", spec_id="s")
         lines = _lines_tagged(out, "TRANSFORM_GEOMETRY")
@@ -366,7 +388,9 @@ class TestTransformGeometryLog:
 
     def test_geometry_valid_false_on_offset_mismatch(self):
         from verdict.diagnostic_logger import log_transform_geometry
-        ct = self._make_transform(scale=0.625, crop_x=0, crop_y=0)
+        # Explicitly wrong paste offsets to trigger mismatch
+        ct = self._make_transform(scale=0.625, paste_offset_x=0, paste_offset_y=0,
+                                   scaled_width=250, scaled_height=187)
         out = _capture(log_transform_geometry, ct, 400, 300, 300, 250,
                        job_id="j", spec_id="s")
         lines = _lines_tagged(out, "TRANSFORM_GEOMETRY")

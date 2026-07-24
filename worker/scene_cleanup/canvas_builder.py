@@ -149,6 +149,12 @@ def build_provider_canvas_outpaint(
         crop_y=0,
         outpaint_required=(scaled_w < target_w or scaled_h < target_h),
         mask_strategy=MASK_STRATEGY_OUTPAINT_REGIONS,
+        paste_offset_x=offset_x,
+        paste_offset_y=offset_y,
+        scaled_width=scaled_w,
+        scaled_height=scaled_h,
+        mapped_rect={"x1": offset_x, "y1": offset_y,
+                     "x2": offset_x + scaled_w, "y2": offset_y + scaled_h},
     )
 
     return provider_input, mask, transform, allowed_generation_mask
