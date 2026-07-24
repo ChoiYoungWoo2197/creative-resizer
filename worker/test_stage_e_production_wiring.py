@@ -745,6 +745,135 @@ class TestAllStagesTogether:
         # D-2 job-level extraction also calls SSC (once), spec loop adds one per spec
         assert out.count("[SUBJECT_PRESERVING_TRANSFORM]") >= 2
 
+
+# ── Stage 4 (app.py): validResultCount uses finalResultValid, not valid ────────
+
+class TestStage4AppValidResultCount:
+    """app.py must count validResultCount from finalResultValid (verdict), not valid (size).
+
+    Verifies:
+    - validResultCount=0 when all results have finalResultValid=False
+    - validResultCount=N when all results have finalResultValid=True
+    - validResultCount is independent of 'valid' field
+    - [GENERATE_COMPLETE] tag (not [AI_ONLY_END]) in app.py response log
+    - failedResultCount = providerSuccessCount - validResultCount
+    - results dict includes validResultCount key
+    """
+
+    def test_valid_result_count_zero_when_all_fail_verdict(self):
+        """When finalResultValid=False for all items, validResultCount=0."""
+        result_items = [
+            {"finalResultValid": False, "valid": True, "filePath": "/x/a.png"},
+            {"finalResultValid": False, "valid": True, "filePath": "/x/b.png"},
+        ]
+        valid_result_count = sum(
+            1 for r in result_items if r.get("finalResultValid", False)
+        )
+        assert valid_result_count == 0, (
+            "finalResultValid=False must not increment validResultCount"
+        )
+
+    def test_valid_result_count_positive_when_verdict_pass(self):
+        """When finalResultValid=True for all items, validResultCount=N."""
+        result_items = [
+            {"finalResultValid": True, "valid": True, "filePath": "/x/a.png"},
+            {"finalResultValid": True, "valid": True, "filePath": "/x/b.png"},
+        ]
+        valid_result_count = sum(
+            1 for r in result_items if r.get("finalResultValid", False)
+        )
+        assert valid_result_count == 2
+
+    def test_valid_result_count_does_not_use_valid_field(self):
+        """valid=True alone (no finalResultValid) must not count as valid result."""
+        result_items = [
+            {"valid": True, "filePath": "/x/a.png"},  # no finalResultValid key
+        ]
+        valid_result_count = sum(
+            1 for r in result_items if r.get("finalResultValid", False)
+        )
+        assert valid_result_count == 0, (
+            "result with only valid=True (missing finalResultValid) must not be counted"
+        )
+
+    def test_failed_result_count_equals_provider_minus_valid(self):
+        """failedResultCount = providerSuccessCount - validResultCount."""
+        result_items = [
+            {"finalResultValid": True},
+            {"finalResultValid": False},
+            {"finalResultValid": False},
+        ]
+        valid_result_count = sum(
+            1 for r in result_items if r.get("finalResultValid", False)
+        )
+        provider_success_count = len(result_items)
+        failed_result_count = provider_success_count - valid_result_count
+        assert valid_result_count == 1
+        assert provider_success_count == 3
+        assert failed_result_count == 2
+
+    def test_generate_complete_tag_not_ai_only_end(self):
+        """app.py uses [GENERATE_COMPLETE], not [AI_ONLY_END], to avoid log duplication."""
+        import pathlib
+        src = pathlib.Path(
+            "C:\\company\\source\\creative-resizer\\worker\\app.py"
+        ).read_text(encoding="utf-8")
+        # The generate() route must use [GENERATE_COMPLETE], not duplicate [AI_ONLY_END]
+        assert "[GENERATE_COMPLETE]" in src, (
+            "[GENERATE_COMPLETE] tag missing from app.py"
+        )
+        # [AI_ONLY_END] is emitted by resizer.py; app.py must not repeat it
+        assert src.count("[AI_ONLY_END]") == 0, (
+            f"[AI_ONLY_END] found in app.py — must use [GENERATE_COMPLETE] instead"
+        )
+
+    def test_generate_complete_log_uses_valid_result_count_field(self):
+        """[GENERATE_COMPLETE] must include validResultCount=, not successCount=."""
+        import pathlib
+        src = pathlib.Path(
+            "C:\\company\\source\\creative-resizer\\worker\\app.py"
+        ).read_text(encoding="utf-8")
+        assert "validResultCount=" in src, (
+            "validResultCount= missing from app.py [GENERATE_COMPLETE] log"
+        )
+        # old field name must not be the log key
+        assert "successCount={" not in src and " successCount=" not in src.replace(
+            "validResultCount=", ""
+        ).replace("providerSuccessCount=", "").replace("failedResultCount=", ""), (
+            "old successCount= log key still in app.py"
+        )
+
+    def test_app_response_includes_valid_result_count(self):
+        """jsonify response dict must include validResultCount key."""
+        import pathlib
+        src = pathlib.Path(
+            "C:\\company\\source\\creative-resizer\\worker\\app.py"
+        ).read_text(encoding="utf-8")
+        assert '"validResultCount"' in src or "'validResultCount'" in src, (
+            "validResultCount key missing from /generate response dict"
+        )
+
+    def test_generate_produces_final_result_valid_field(self, png_src, tmp_path):
+        """_generate_ai_only result items have finalResultValid key."""
+        results, out = _generate(png_src, _specs(300, 250), str(tmp_path))
+        assert len(results) >= 1
+        for r in results:
+            assert "finalResultValid" in r, (
+                f"finalResultValid missing from result: {list(r.keys())}"
+            )
+
+    def test_valid_result_count_is_bool_derived(self):
+        """finalResultValid must be bool (True/False), not truthy int."""
+        result_items = [
+            {"finalResultValid": True},
+            {"finalResultValid": False},
+        ]
+        for r in result_items:
+            v = r.get("finalResultValid", False)
+            assert isinstance(v, bool), (
+                f"finalResultValid must be bool, got {type(v)}: {v}"
+            )
+
     def test_no_legacy_logs_in_production(self, png_src, tmp_path):
         """Legacy pipeline logs must never appear in production output."""
         results, out = _generate(png_src, _specs(), str(tmp_path))

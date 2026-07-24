@@ -86,16 +86,22 @@ def generate():
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)
         elapsed_ms = int((time.time() - t_start) * 1000)
-        success_count = sum(1 for r in result_items if r.get("valid"))
+        # Stage 4: use finalResultValid (verdict-derived) not valid (size-check only)
+        valid_result_count = sum(1 for r in result_items if r.get("finalResultValid", False))
+        provider_success_count = len(result_items)
+        failed_result_count = provider_success_count - valid_result_count
         print(
-            f"[AI_ONLY_END] jobId={job_id} elapsedMs={elapsed_ms}"
-            f" successCount={success_count} totalCount={len(result_items)}",
+            f"[GENERATE_COMPLETE] jobId={job_id} elapsedMs={elapsed_ms}"
+            f" validResultCount={valid_result_count}"
+            f" providerSuccessCount={provider_success_count}"
+            f" failedResultCount={failed_result_count}",
             flush=True,
         )
         return jsonify({
             "jobId": job_id,
             "zipPath": zip_path,
             "count": len(result_items),
+            "validResultCount": valid_result_count,
             "results": result_items,
             "missingRatioTypes": missing_ratio_types,
         })
