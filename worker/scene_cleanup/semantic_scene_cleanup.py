@@ -9,6 +9,7 @@ Fail-closed: no legacy fallback, no Smart Fit, no blur fill,
 from __future__ import annotations
 import hashlib
 import os
+import time
 
 from scene_cleanup.models import (
     SemanticSceneCleanupResult, PROVIDER_INPUT_FULL_COMPOSITE,
@@ -143,10 +144,26 @@ def run_semantic_scene_cleanup(
         scene_plate_img = None
         provider_name = "unknown"
         n_attempts = max(max_attempts, 1)
+        _request_id = f"{job_id}_{spec_id}" if (job_id or spec_id) else "unknown"
+        _meta_provider_name = "unknown"
+        if hasattr(provider, "metadata"):
+            try:
+                _meta_provider_name = (provider.metadata() or {}).get("providerName", "unknown")
+            except Exception:
+                pass
 
         for attempt in range(n_attempts):
             attempt_count = attempt + 1
             actual_provider_request_count += 1
+
+            t_attempt = time.time()
+            print(
+                f"[AI_PROVIDER_START] requestId={_request_id}"
+                f" attempt={attempt_count}/{n_attempts}"
+                f" provider={_meta_provider_name}"
+                f" target={target_w}x{target_h}",
+                flush=True,
+            )
 
             try:
                 raw_result = provider.inpaint(
@@ -154,6 +171,15 @@ def run_semantic_scene_cleanup(
                     {"prompt_version": prompt_version},
                 )
             except Exception as _prov_err:
+                _attempt_elapsed_ms = int((time.time() - t_attempt) * 1000)
+                print(
+                    f"[AI_PROVIDER_END] requestId={_request_id}"
+                    f" attempt={attempt_count}/{n_attempts}"
+                    f" provider={_meta_provider_name}"
+                    f" elapsedMs={_attempt_elapsed_ms}"
+                    f" success=False",
+                    flush=True,
+                )
                 if attempt < n_attempts - 1:
                     print(
                         f"[SSC_ATTEMPT_FAIL] jobId={job_id}"
@@ -164,6 +190,16 @@ def run_semantic_scene_cleanup(
                 raise RuntimeError(
                     f"SEMANTIC_PROVIDER_FAILED after {attempt_count} attempts: {_prov_err}"
                 ) from _prov_err
+
+            _attempt_elapsed_ms = int((time.time() - t_attempt) * 1000)
+            print(
+                f"[AI_PROVIDER_END] requestId={_request_id}"
+                f" attempt={attempt_count}/{n_attempts}"
+                f" provider={_meta_provider_name}"
+                f" elapsedMs={_attempt_elapsed_ms}"
+                f" success=True",
+                flush=True,
+            )
 
             # 7: normalize
             scene_plate_img, provider_name = normalize_provider_result(raw_result)

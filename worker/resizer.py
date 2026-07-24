@@ -1804,6 +1804,23 @@ def _generate_ai_only(
                 print(f"[STAGE21] verdict aggregation error: {_vagg_err}", flush=True)
                 _verdict_summary = None
 
+        # D-1: AI_SPEC_END for semantic mode (verdict from Stage21 overallStatus)
+        if _bg_mode == "semantic_scene_cleanup":
+            spec_elapsed_ms = int((_time.time() - t_spec) * 1000)
+            _spec_verdict = (
+                _verdict_summary.overallStatus if _verdict_summary is not None
+                else ("PASS" if (_scene_result and _scene_result.success) else "FAIL")
+            )
+            print(
+                f"[AI_SPEC_END] jobId={jid} spec={name} size={w}x{h}"
+                f" verdict={_spec_verdict}"
+                f" success={_scene_result.success if _scene_result else False}"
+                f" provider={_scene_result.provider_name if _scene_result else ''}"
+                f" attempts={_scene_result.attempt_count if _scene_result else 0}"
+                f" elapsedMs={spec_elapsed_ms}",
+                flush=True,
+            )
+
         # D-1: mode-specific result fields
         if _bg_mode == "semantic_scene_cleanup":
             _bg_result_mode = {
