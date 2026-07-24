@@ -1290,19 +1290,31 @@ def _generate_ai_only(
     results = []
     actual_provider_request_count = 0
 
-    # D-3: Background generation mode — semantic_scene_cleanup is the default.
-    # source_faithful_repair is the legacy rollback path (explicit only).
+    # E-3: Background generation mode — only semantic_scene_cleanup is valid.
+    # source_faithful_repair is permanently forbidden (legacy pipeline removed).
     # Invalid mode → fail-closed (no silent fallback).
-    _VALID_BG_MODES = ("semantic_scene_cleanup", "source_faithful_repair")
+    _VALID_BG_MODES = ("semantic_scene_cleanup",)
     _bg_mode_raw = os.environ.get("BACKGROUND_GENERATION_MODE", "").strip()
     _bg_mode_default_applied = False
     _bg_mode_explicit_rollback = False
     if not _bg_mode_raw:
         _bg_mode = "semantic_scene_cleanup"
         _bg_mode_default_applied = True
+    elif _bg_mode_raw == "source_faithful_repair":
+        # E-3: legacy pipeline permanently removed
+        print(
+            f"[FORBIDDEN_FALLBACK_GUARD] jobId={jid}"
+            f" requestedMode={_bg_mode_raw!r}"
+            f" policy=CONFIG_LEGACY_PIPELINE_FORBIDDEN",
+            flush=True,
+        )
+        raise RuntimeError(
+            f"CONFIG_LEGACY_PIPELINE_FORBIDDEN: source_faithful_repair was explicitly"
+            f" requested but the legacy pipeline is permanently removed."
+            f" Use semantic_scene_cleanup (default)."
+        )
     elif _bg_mode_raw in _VALID_BG_MODES:
         _bg_mode = _bg_mode_raw
-        _bg_mode_explicit_rollback = (_bg_mode_raw == "source_faithful_repair")
     else:
         print(
             f"[BG_MODE_INVALID]"

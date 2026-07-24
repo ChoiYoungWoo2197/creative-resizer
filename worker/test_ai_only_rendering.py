@@ -431,65 +431,58 @@ finally:
     if os.path.exists(t4_src):
         os.unlink(t4_src)
 
-# ─── T4b: Explicit SFR Rollback 계약 ─────────────────────────────────────────
+# ─── T4b: CONFIG_LEGACY_PIPELINE_FORBIDDEN 계약 (Stage E-3) ───────────────────
 #
-# BACKGROUND_GENERATION_MODE=source_faithful_repair 로 명시 설정 시
-# SFR 경로를 타며 legacyRollbackExplicit=True, semanticDefaultApplied=False.
-# 환경변수는 finally에서 반드시 제거하여 이후 테스트에 영향을 주지 않는다.
+# E-3 이후: BACKGROUND_GENERATION_MODE=source_faithful_repair 설정 시
+# [FORBIDDEN_FALLBACK_GUARD] 로그 출력 후 CONFIG_LEGACY_PIPELINE_FORBIDDEN
+# RuntimeError를 즉시 발생시켜야 한다.  legacy SFR 경로는 완전 제거됨.
 
-print("\n=== [T4b] Explicit SFR Rollback 계약 ===")
+print("\n=== [T4b] CONFIG_LEGACY_PIPELINE_FORBIDDEN 계약 ===")
 
 t4b_src = make_tmp_png(400, 300)
 tmp_dir4b = tempfile.mkdtemp()
+_t4b_raised_error = None
+_t4b_log = ""
+
+import io as _io_t4b
+_t4b_buf = _io_t4b.StringIO()
+_t4b_old_stdout = sys.stdout
 
 try:
+    sys.stdout = _t4b_buf
     os.environ["BACKGROUND_GENERATION_MODE"] = "source_faithful_repair"
-    results_4b, _ = _generate_ai_only(
-        psd_path=t4b_src,
-        specs=[SPECS[0]],
-        resize_mode="ai-auto",
-        output_format="png",
-        output_dir=tmp_dir4b,
-        source_type="image",
-        job_id="t4b",
-        _provider_override=FakeProvider(),
-    )
-    check("T4b: 결과 1개 반환", len(results_4b) == 1)
-    r4b = results_4b[0]
-    prov4b = r4b.get("renderProvenance", {})
-    check("T4b: backgroundGenerationMode == 'source_faithful_repair'",
-          prov4b.get("backgroundGenerationMode") == "source_faithful_repair")
-    check("T4b: effectiveRenderer == 'source-faithful-ai-repair'",
-          prov4b.get("effectiveRenderer") == "source-faithful-ai-repair")
-    check("T4b: selectedMode == 'ai-source-faithful'",
-          prov4b.get("selectedMode") == "ai-source-faithful")
-    check("T4b: sourceFaithfulRepairUsed == True",
-          prov4b.get("sourceFaithfulRepairUsed") is True)
-    check("T4b: semanticSceneCleanupUsed != True",
-          not prov4b.get("semanticSceneCleanupUsed"))
-    check("T4b: legacyRollbackExplicit == True",
-          prov4b.get("legacyRollbackExplicit") is True)
-    check("T4b: semanticDefaultApplied == False",
-          prov4b.get("semanticDefaultApplied") is False)
-    check("T4b: legacyFallbackUsed == False",
-          prov4b.get("legacyFallbackUsed") is False)
-    check("T4b: backgroundModeSource == 'explicit'",
-          prov4b.get("backgroundModeSource") == "explicit")
-    check("T4b: backgroundAiProvider == 'fake'",
-          prov4b.get("backgroundAiProvider") == "fake")
-    check("T4b: resizeStrategy == 'source-faithful-ai-repair'",
-          r4b.get("resizeStrategy") == "source-faithful-ai-repair")
-    check("T4b: backgroundMode == 'source_faithful_repair'",
-          r4b.get("backgroundMode") == "source_faithful_repair")
-    check("T4b: verdict == 'PASS'",
-          prov4b.get("verdict") == "PASS")
-except Exception as e:
-    check(f"T4b: 예외 없음 (got {type(e).__name__}: {e})", False)
+    try:
+        _generate_ai_only(
+            psd_path=t4b_src,
+            specs=[SPECS[0]],
+            resize_mode="ai-auto",
+            output_format="png",
+            output_dir=tmp_dir4b,
+            source_type="image",
+            job_id="t4b",
+            _provider_override=FakeProvider(),
+        )
+        _t4b_raised_error = None
+    except RuntimeError as _e4b:
+        _t4b_raised_error = _e4b
+    except Exception as _e4b_other:
+        _t4b_raised_error = _e4b_other
 finally:
+    sys.stdout = _t4b_old_stdout
+    _t4b_log = _t4b_buf.getvalue()
     os.environ.pop("BACKGROUND_GENERATION_MODE", None)
     shutil.rmtree(tmp_dir4b, ignore_errors=True)
     if os.path.exists(t4b_src):
         os.unlink(t4b_src)
+
+check("T4b: CONFIG_LEGACY_PIPELINE_FORBIDDEN 예외 발생",
+      isinstance(_t4b_raised_error, RuntimeError))
+check("T4b: 예외 메시지에 CONFIG_LEGACY_PIPELINE_FORBIDDEN 포함",
+      "CONFIG_LEGACY_PIPELINE_FORBIDDEN" in str(_t4b_raised_error))
+check("T4b: 예외 메시지에 source_faithful_repair 포함",
+      "source_faithful_repair" in str(_t4b_raised_error))
+check("T4b: [FORBIDDEN_FALLBACK_GUARD] 로그 출력",
+      "[FORBIDDEN_FALLBACK_GUARD]" in _t4b_log)
 
 # ─── T4c: Semantic D-2 Fail-Closed ───────────────────────────────────────────
 #
@@ -537,12 +530,12 @@ finally:
     if os.path.exists(t4c_src):
         os.unlink(t4c_src)
 
-# ─── T4d: 환경변수 격리 (Semantic → Rollback → Semantic) ─────────────────────
+# ─── T4d: 환경변수 격리 (Semantic → Forbidden → Semantic) (Stage E-3) ─────────
 #
-# env var를 번갈아 세팅/해제해도 각 호출이 독립적으로 모드를 결정함을 검증한다.
-# Semantic 1회 → SFR 1회 → Semantic 1회.  S1/S2 모드는 동일, Rollback은 다름.
+# E-3 이후: Semantic 1회 → SFR 요청(→CONFIG_LEGACY_PIPELINE_FORBIDDEN) → Semantic 1회.
+# env var는 finally에서 정리되므로 S1/S2의 semantic 모드는 영향을 받지 않는다.
 
-print("\n=== [T4d] 환경변수 격리 (Semantic → Rollback → Semantic) ===")
+print("\n=== [T4d] 환경변수 격리 (Semantic → Forbidden → Semantic) ===")
 
 
 def _t4d_run_semantic(jid: str) -> dict:
@@ -572,19 +565,22 @@ try:
 
     t4d_rb_src = make_tmp_png(400, 300)
     tmp_dir4d_rb = tempfile.mkdtemp()
+    _t4d_rb_error = None
     try:
         os.environ["BACKGROUND_GENERATION_MODE"] = "source_faithful_repair"
-        res_rb, _ = _generate_ai_only(
-            psd_path=t4d_rb_src,
-            specs=[SPECS[0]],
-            resize_mode="ai-auto",
-            output_format="png",
-            output_dir=tmp_dir4d_rb,
-            source_type="image",
-            job_id="t4d-rb",
-            _provider_override=FakeProvider(),
-        )
-        prov_rb = res_rb[0].get("renderProvenance", {}) if res_rb else {}
+        try:
+            _generate_ai_only(
+                psd_path=t4d_rb_src,
+                specs=[SPECS[0]],
+                resize_mode="ai-auto",
+                output_format="png",
+                output_dir=tmp_dir4d_rb,
+                source_type="image",
+                job_id="t4d-rb",
+                _provider_override=FakeProvider(),
+            )
+        except RuntimeError as _e_rb:
+            _t4d_rb_error = _e_rb
     finally:
         os.environ.pop("BACKGROUND_GENERATION_MODE", None)
         shutil.rmtree(tmp_dir4d_rb, ignore_errors=True)
@@ -595,16 +591,14 @@ try:
 
     check("T4d: S1 backgroundGenerationMode == 'semantic_scene_cleanup'",
           prov_s1.get("backgroundGenerationMode") == "semantic_scene_cleanup")
-    check("T4d: Rollback backgroundGenerationMode == 'source_faithful_repair'",
-          prov_rb.get("backgroundGenerationMode") == "source_faithful_repair")
+    check("T4d: Rollback raises CONFIG_LEGACY_PIPELINE_FORBIDDEN",
+          _t4d_rb_error is not None and "CONFIG_LEGACY_PIPELINE_FORBIDDEN" in str(_t4d_rb_error))
     check("T4d: S2 backgroundGenerationMode == 'semantic_scene_cleanup'",
           prov_s2.get("backgroundGenerationMode") == "semantic_scene_cleanup")
     check("T4d: S1.semanticDefaultApplied == S2.semanticDefaultApplied",
           prov_s1.get("semanticDefaultApplied") == prov_s2.get("semanticDefaultApplied"))
     check("T4d: S1.legacyRollbackExplicit == False",
           prov_s1.get("legacyRollbackExplicit") is False)
-    check("T4d: Rollback.legacyRollbackExplicit == True",
-          prov_rb.get("legacyRollbackExplicit") is True)
     check("T4d: S2.legacyRollbackExplicit == False",
           prov_s2.get("legacyRollbackExplicit") is False)
     check("T4d: env var cleared after rollback",
