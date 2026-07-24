@@ -1784,6 +1784,8 @@ def _generate_ai_only(
         # Stage 4: Reject contaminated fg_layers after D-2 scaling.
         # Layers with confidence=0, no evidence, no maskRef, or recompose=False
         # are not composited — they have no meaningful pixel presence.
+        _fg_rejected4: list = []      # hoisted: needed by [LAYOUT_INPUT_FILTER] log
+        _vfg_orig_count: int = len(_virtual_fg_for_spec)  # count before filter
         if _virtual_fg_for_spec:
             try:
                 from foreground.mask_quality import filter_clean_fg_layers as _filt_fg
@@ -1803,6 +1805,45 @@ def _generate_ai_only(
                 _virtual_fg_for_spec = _fg_clean4
             except Exception as _mq4_err:
                 print(f"[MASK_QUALITY] filter error spec={name}: {_mq4_err}", flush=True)
+
+        # Stage 3 wiring: Build pre-layout manifest from filtered fg_layers.
+        # Must be finalized before layout is called; if manifest is not finalized
+        # or no valid layers remain, layout is skipped (fail-closed).
+        _layout_permitted: bool = False
+        _layout_manifest_pre = None
+        _layout_rejected_reasons: list = list({
+            c for _, qr in _fg_rejected4 for c in qr.reasonCodes
+        })
+        _layout_accepted_count: int = len(_virtual_fg_for_spec)
+        _layout_rejected_count: int = _vfg_orig_count - _layout_accepted_count
+        if _virtual_fg_for_spec:
+            try:
+                from verdict.manifest_builder import build_manifest_from_fg_layers as _bmfl_pre
+                from verdict.models import SOURCE_TYPE_FULL_IMAGE_SEMANTIC as _SFM_PRE
+                _layout_manifest_pre = _bmfl_pre(
+                    _virtual_fg_for_spec,
+                    source_type=_SFM_PRE,
+                    job_id=jid, spec_id=spec_id,
+                )
+                _layout_manifest_pre.finalize()
+                _layout_permitted = bool(_layout_manifest_pre.finalized)
+            except Exception as _lmp_err:
+                print(
+                    f"[LAYOUT_MANIFEST_ERROR] jobId={jid} specId={spec_id}: {_lmp_err}",
+                    flush=True,
+                )
+                _layout_permitted = False
+        print(
+            f"[LAYOUT_INPUT_FILTER] jobId={jid} specId={spec_id}"
+            f" inputCount={_vfg_orig_count}"
+            f" acceptedCount={_layout_accepted_count}"
+            f" rejectedCount={_layout_rejected_count}"
+            f" rejectedReasons={_layout_rejected_reasons}"
+            f" manifestFinalized={_layout_manifest_pre.finalized if _layout_manifest_pre else False}"
+            f" manifestFailClosed={_layout_manifest_pre.failClosed if _layout_manifest_pre else False}"
+            f" layoutPermitted={_layout_permitted}",
+            flush=True,
+        )
 
         # Diagnostic A: [SEMANTIC_OBJECT] per virtual fg layer (after D-2 scaling + contamination filter)
         try:
@@ -1884,7 +1925,9 @@ def _generate_ai_only(
                 layout_plan = None
 
         # D-2: Virtual foreground compositor path (flattened inputs without native PSD layers)
-        elif _virtual_fg_for_spec:
+        # Stage 3 wiring: _layout_permitted gate — skips layout when pre-layout manifest
+        # is not finalized or all fg_layers were rejected by contamination filter.
+        elif _virtual_fg_for_spec and _layout_permitted:
             try:
                 from foreground.compositor import composite_foreground
                 from layout.reflow_engine import plan_foreground_layout
