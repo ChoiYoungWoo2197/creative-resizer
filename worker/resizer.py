@@ -1732,6 +1732,7 @@ def _generate_ai_only(
         # Bundle C-1: Stage21 verdict pipeline
         _verdict_summary = None
         _verdict_manifest = None
+        _visual_verdict_enabled = os.environ.get("VISUAL_VERDICT_ENABLED", "false").lower() == "true"
         try:
             from verdict.manifest_builder import build_manifest_from_fg_layers
             from verdict.technical_evaluator import evaluate_technical
@@ -1794,11 +1795,21 @@ def _generate_ai_only(
                 safe_zone_status=spec.get("safeZoneParseStatus", ""),
                 job_id=jid, spec_id=spec_id,
             )
-            _visual_verdict = VerdictResult(
-                name="visualVerdict", status="NOT_TESTED", required=False,
-                reasonCodes=["VISUAL_NOT_TESTED"],
-                messages=["C-1: visual quality assessment not implemented"],
-            )
+            # E-4: Run visual evaluator when VISUAL_VERDICT_ENABLED=true
+            if _visual_verdict_enabled:
+                from verdict.visual_evaluator import evaluate_visual as _eval_visual
+                _visual_verdict = _eval_visual(
+                    source_img=img,
+                    result_img=result_img,
+                    target_w=w, target_h=h,
+                    job_id=jid, spec_id=spec_id,
+                )
+            else:
+                _visual_verdict = VerdictResult(
+                    name="visualVerdict", status="NOT_TESTED", required=False,
+                    reasonCodes=["VISUAL_NOT_TESTED"],
+                    messages=["VISUAL_VERDICT_ENABLED=false: visual assessment skipped"],
+                )
         except Exception as _vp_err:
             print(f"[STAGE21] verdict pipeline error spec={name}: {_vp_err}", flush=True)
             _verdict_summary = None
@@ -1852,6 +1863,7 @@ def _generate_ai_only(
                     _tech_verdict, _ext_verdict, _comp_verdict,
                     _layout_verdict, _visual_verdict,
                     job_id=jid, spec_id=spec_id,
+                    visual_required=_visual_verdict_enabled,
                 )
                 render_ctx.save_debug_artifact(
                     "23-stage21-verdict-summary",
@@ -1972,6 +1984,9 @@ def _generate_ai_only(
             "filePath": out_path,
             "fileSize": file_size,
             "valid": valid,
+            "finalResultValid": bool(
+                _verdict_summary is not None and _verdict_summary.overallStatus == "PASS"
+            ),
             "validationMessage": "정상" if valid else f"expected={w}x{h} actual={actual_w}x{actual_h}",
             "selectedArtboardId": None,
             "selectedArtboardName": None,
@@ -2102,9 +2117,11 @@ def _generate_ai_only(
         })
 
     total_elapsed_ms = int((_time.time() - t_all) * 1000)
+    _valid_count = sum(1 for r in results if r.get("finalResultValid") is True)
     print(
         f"[AI_ONLY_END] jobId={jid} elapsedMs={total_elapsed_ms}"
         f" successCount={len(results)} specCount={len(specs)}"
+        f" validCount={_valid_count}"
         f" actualProviderRequestCount={actual_provider_request_count}",
         flush=True,
     )

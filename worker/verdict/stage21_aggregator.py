@@ -24,6 +24,7 @@ def aggregate_stage21_verdict(
     visual: VerdictResult,
     job_id: str = "",
     spec_id: str = "",
+    visual_required: bool = False,
 ) -> Stage21VerdictSummary:
     """Compute overall verdict with fail-closed aggregation.
 
@@ -38,8 +39,9 @@ def aggregate_stage21_verdict(
       - Any required verdict == NOT_TESTED
       - All required verdicts == NOT_APPLICABLE simultaneously
 
-    visualVerdict is NOT required in C-1 (required=False).
-    NOT_TESTED visual verdict does not cause overall FAIL.
+    visualVerdict: NOT required in C-1 (visual_required=False, default).
+    When visual_required=True (production with VISUAL_VERDICT_ENABLED=true):
+      NOT_TESTED or FAIL visual verdict causes overall FAIL.
     """
     required_results = {
         "technicalVerdict":    technical,
@@ -47,6 +49,9 @@ def aggregate_stage21_verdict(
         "compositionVerdict":  composition,
         "layoutVerdict":       layout,
     }
+    # E-4: visual is required in production when visual_required=True
+    if visual_required:
+        required_results["visualVerdict"] = visual
 
     failed_names: list[str] = []
     not_tested_names: list[str] = []
@@ -83,11 +88,13 @@ def aggregate_stage21_verdict(
 
     overall_reason_codes_sorted = sorted(set(overall_reason_codes))
 
+    _effective_required = list(required_results.keys())
     print(
         f"[STAGE21_VERDICT]"
         f" jobId={job_id} specId={spec_id}"
         f" overallStatus={overall_status}"
-        f" requiredVerdicts={list(_C1_REQUIRED_VERDICTS)}"
+        f" requiredVerdicts={_effective_required}"
+        f" visualRequired={visual_required}"
         f" failedVerdicts={failed_names}"
         f" notTestedVerdicts={not_tested_names}"
         f" reasonCodes={overall_reason_codes_sorted}"
@@ -99,13 +106,14 @@ def aggregate_stage21_verdict(
         flush=True,
     )
 
-    print(
-        f"[VERDICT_VISUAL]"
-        f" jobId={job_id} specId={spec_id}"
-        f" status=NOT_TESTED"
-        f" reasonCodes=['VISUAL_NOT_TESTED']",
-        flush=True,
-    )
+    if not visual_required:
+        print(
+            f"[VERDICT_VISUAL]"
+            f" jobId={job_id} specId={spec_id}"
+            f" status=NOT_TESTED"
+            f" reasonCodes=['VISUAL_NOT_TESTED']",
+            flush=True,
+        )
 
     return Stage21VerdictSummary(
         technicalVerdict=technical,
