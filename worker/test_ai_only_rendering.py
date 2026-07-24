@@ -10,7 +10,10 @@
   T1: resize_mode='ai-auto' → _generate_ai_only() 라우팅
   T2: AI_ONLY_RENDERING=true env var → _generate_ai_only() 라우팅
   T3: Fail-closed — provider None → RuntimeError
-  T4: renderProvenance 필드 정확성 (renderPolicy / effectiveRenderer / etc.)
+  T4:  Semantic 기본 라우팅 + D-2 정상 추출 + 재조합 성공 계약
+  T4b: Explicit SFR rollback 계약 (BACKGROUND_GENERATION_MODE=source_faithful_repair)
+  T4c: Semantic D-2 fail-closed (D2FailSSCPassProvider: call1→blank→D2 pipeline catches, overallVerdict FAIL)
+  T4d: 환경변수 격리 (Semantic → Rollback → Semantic 3회 연속 독립성 검증)
   T5: 결과 이미지 크기가 spec과 일치
   T6: 복수 spec 처리 (7 입력 유형 × 3 규격)
   T7: TupleReturningProvider (ProviderFallbackChain 동일 계약) — 실제 운영 경로 검증
@@ -258,67 +261,356 @@ finally:
     _ext_prov_module.ProviderFactory.create = _t3_orig_create
     shutil.rmtree(tmp_dir3, ignore_errors=True)
 
-# ─── T4: renderProvenance 필드 정확성 ────────────────────────────────────────
-#
-# Root cause of prior failure:
-#   make_tmp_png(1000, 1000) → source 1000×1000, target 800×800.
-#   Source is LARGER than target → no outpaint area → gen_allowed_mask_ratio ≈ 0.
-#   SFR hits the fast-path at line 486 ("no area needs generation") and returns
-#   the source image directly WITHOUT calling the AI provider.
-#   Result: background_ai_provider = "" (never set), backgroundAiExecuted = False.
-#
-# Fix: use source 400×300 (SMALLER than 800×800 target).
-#   Large outpaint margins are created → gen_allowed_mask_ratio > 0.001.
-#   SFR calls FakeProvider.inpaint() → background_ai_provider = "fake" ✓
-#   FakeProvider returns noise (variance ≈ 1000) → contamination check passes.
-#   No immutable mask → hand mutations = 0 → verdict = "PASS" ✓
-#
-# NOTE: FakeProvider is dependency-injected via _provider_override.
-#   This is TEST-ONLY — NOT a production fallback.
-#   ALLOW_FAKE_PROVIDER=false remains unchanged in docker-compose.yml.
+# ─── Semantic D-2 성공 fixture 헬퍼 ──────────────────────────────────────────
 
-print("\n=== [T4] renderProvenance 필드 정확성 ===")
+_D2_BG_COLOR = (180, 180, 180)
+_D2_PRODUCT_COLOR = (50, 100, 200)
 
-tmp_img4 = make_tmp_png(400, 300)   # smaller than 800×800 → triggers outpaint → AI called
+
+def _build_d2_success_source(w: int = 400, h: int = 400) -> str:
+    """Return path to a temp PNG with a non-rectangular product + text stripes.
+
+    Object layout keeps stripes away from bbox borders so border_ratio stays
+    low and D-2 quality_validator passes.
+    """
+    from PIL import ImageDraw
+    img = Image.new("RGB", (w, h), _D2_BG_COLOR)
+    d = ImageDraw.Draw(img)
+    cx, cy = w // 2, h // 2 + h // 8
+    r = min(w, h) // 5
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=_D2_PRODUCT_COLOR)
+    tx1, tx2 = w // 8, 7 * w // 8
+    ty = h // 8 + 15  # offset so stripes don't land on title bbox border
+    for i in range(3):
+        d.rectangle([tx1, ty + i * 10, tx2, ty + i * 10 + 5], fill=(20, 20, 20))
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    img.save(path)
+    return path
+
+
+class FakeSemanticD2SuccessProvider:
+    """Semantic SSC provider that enables D-2 extraction to succeed.
+
+    inpaint() returns (noisy_gray_bg, "fake-semantic") tuple.
+    Noise amplitude ±6: BG pixels (180,180,180) differ from reference by <45
+    → transparent. Product pixels (50,100,200) differ by ~83 → opaque.
+    Result: alpha_coverage ≈ 0.47, border_ratio ≈ 0 → quality PASS.
+    """
+
+    def __init__(self):
+        self._call_count = 0
+
+    def metadata(self):
+        return {"providerName": "fake-semantic", "modelName": "fake-semantic-v1"}
+
+    def inpaint(self, image: Image.Image, mask: Image.Image, prompt: str, options: dict):
+        import numpy as np
+        self._call_count += 1
+        w, h = image.size
+        arr = np.full((h, w, 3), list(_D2_BG_COLOR), dtype=np.uint8)
+        noise = np.random.RandomState(42 + self._call_count).randint(-6, 6, (h, w, 3))
+        arr = np.clip(arr.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        return (Image.fromarray(arr, "RGB"), "fake-semantic")
+
+
+class D2FailSSCPassProvider:
+    """T4c fail-closed fixture: D-2 source reference fails, per-spec SSC succeeds.
+
+    Call 1 (D-2 source reference, run before spec loop): returns all-white.
+    The SSC blank check (variance<5) raises RuntimeError which the D-2 pipeline
+    catches → d2VirtualForegroundSucceeded=False, _d2_active=False.
+
+    Call 2+ (per-spec SSC): returns noisy gray (variance>>5) so blank check
+    passes and a valid background is generated.
+
+    Net result: extractionVerdict=FAIL (D-2 required but failed) → overallVerdict=FAIL.
+
+    Why not FakeProvider: uniform noise gives alpha_coverage≈0.94 < 0.97 threshold
+    so OPAQUE_BBOX_CROP_DETECTED never fires and quality PASSES.
+    """
+
+    def __init__(self):
+        self._call_count = 0
+
+    def metadata(self):
+        return {"providerName": "d2fail-sscpass", "modelName": "d2fail-v1"}
+
+    def inpaint(self, image: Image.Image, mask: Image.Image, prompt: str, options: dict):
+        import numpy as np
+        self._call_count += 1
+        w, h = image.size
+        if self._call_count == 1:
+            return Image.new("RGB", (w, h), (255, 255, 255))
+        arr = np.random.RandomState(100 + self._call_count).randint(30, 200, (h, w, 3), dtype=np.uint8)
+        return Image.fromarray(arr, "RGB")
+
+
+# ─── T4: Semantic 기본 라우팅 + D-2 정상 추출 + 재조합 성공 ─────────────────
+#
+# D-3 이후 기본 모드는 semantic_scene_cleanup.
+# FakeSemanticD2SuccessProvider가 ±6 노이즈 회색 배경을 반환해 D-2 마스크 품질 검사를 통과.
+# BACKGROUND_GENERATION_MODE 환경변수 미설정 → default = semantic_scene_cleanup.
+# 실제 OpenAI 호출 0건: _provider_override가 FakeSemanticD2SuccessProvider를 주입.
+
+print("\n=== [T4] Semantic 기본 라우팅 + D-2 정상 추출 + 재조합 성공 ===")
+
+_T4_ACTUAL_OPENAI_REQUESTS = 0  # guard: 실제 OpenAI 호출 없음 확인
+
+t4_src = _build_d2_success_source(400, 400)
 tmp_dir4 = tempfile.mkdtemp()
+_t4_provider = FakeSemanticD2SuccessProvider()
 
 try:
+    os.environ.pop("BACKGROUND_GENERATION_MODE", None)
     results, missing = _generate_ai_only(
-        psd_path=tmp_img4,
-        specs=[SPECS[0]],
+        psd_path=t4_src,
+        specs=[SPECS[0]],  # 800×800
         resize_mode="ai-auto",
         output_format="png",
         output_dir=tmp_dir4,
         source_type="image",
         job_id="t4",
-        _provider_override=FakeProvider(),
+        _provider_override=_t4_provider,
     )
-    check("결과 1개 반환", len(results) == 1)
+    check("T4: 결과 1개 반환", len(results) == 1)
     r = results[0]
     prov = r.get("renderProvenance", {})
-    check("renderPolicy == 'ai-only'",               prov.get("renderPolicy") == "ai-only")
-    check("effectiveRenderer == 'source-faithful-ai-repair'",
-          prov.get("effectiveRenderer") == "source-faithful-ai-repair")
-    check("selectedMode == 'ai-source-faithful'",    prov.get("selectedMode") == "ai-source-faithful")
-    check("effectiveResizeMode == 'ai-auto'",        prov.get("effectiveResizeMode") == "ai-auto")
-    check("requestedResizeMode == 'ai-auto'",        prov.get("requestedResizeMode") == "ai-auto")
-    check("blurFillUsed == False",                   prov.get("blurFillUsed") is False)
-    check("forcedSmartFit == False",                 prov.get("forcedSmartFit") is False)
-    check("sourceFaithfulRepairUsed == True",        prov.get("sourceFaithfulRepairUsed") is True)
-    check("backgroundPipelineUsed == True",          prov.get("backgroundPipelineUsed") is True)
-    check("failClosed == True",                      prov.get("failClosed") is True)
-    check("backgroundGenerationMode == 'source_faithful_repair'",
-          prov.get("backgroundGenerationMode") == "source_faithful_repair")
-    check("backgroundAiProvider == 'fake'",          prov.get("backgroundAiProvider") == "fake")
-    check("verdict == 'PASS'",                       prov.get("verdict") == "PASS")
-    # resizeStrategy
-    check("resizeStrategy == 'source-faithful-ai-repair'",
-          r.get("resizeStrategy") == "source-faithful-ai-repair")
-    check("renderMode == 'ai-only'",                 r.get("renderMode") == "ai-only")
-    check("backgroundMode == 'source_faithful_repair'",
-          r.get("backgroundMode") == "source_faithful_repair")
+    # --- 기본 라우팅 ---
+    check("T4: renderPolicy == 'ai-only'",
+          prov.get("renderPolicy") == "ai-only")
+    check("T4: effectiveRenderer == 'semantic-scene-cleanup'",
+          prov.get("effectiveRenderer") == "semantic-scene-cleanup")
+    check("T4: selectedMode == 'ai-semantic-scene'",
+          prov.get("selectedMode") == "ai-semantic-scene")
+    check("T4: effectiveResizeMode == 'ai-auto'",
+          prov.get("effectiveResizeMode") == "ai-auto")
+    check("T4: requestedResizeMode == 'ai-auto'",
+          prov.get("requestedResizeMode") == "ai-auto")
+    # --- Semantic 특화 필드 ---
+    check("T4: backgroundGenerationMode == 'semantic_scene_cleanup'",
+          prov.get("backgroundGenerationMode") == "semantic_scene_cleanup")
+    check("T4: sourceFaithfulRepairUsed == False",
+          prov.get("sourceFaithfulRepairUsed") is False)
+    check("T4: semanticSceneCleanupUsed == True",
+          prov.get("semanticSceneCleanupUsed") is True)
+    # --- D-3 provenance ---
+    check("T4: semanticDefaultApplied == True",
+          prov.get("semanticDefaultApplied") is True)
+    check("T4: legacyRollbackExplicit == False",
+          prov.get("legacyRollbackExplicit") is False)
+    check("T4: legacyFallbackUsed == False",
+          prov.get("legacyFallbackUsed") is False)
+    check("T4: backgroundModeSource == 'default'",
+          prov.get("backgroundModeSource") == "default")
+    # --- AI 제공자 ---
+    check("T4: backgroundAiProvider == 'fake-semantic'",
+          prov.get("backgroundAiProvider") == "fake-semantic")
+    # --- D-2 성공 ---
+    check("T4: d2VirtualForegroundSucceeded == True",
+          prov.get("d2VirtualForegroundSucceeded") is True)
+    check("T4: d2VirtualExtractedCount >= 1",
+          (prov.get("d2VirtualExtractedCount") or 0) >= 1)
+    # --- 최종 판정 ---
+    check("T4: overallVerdict == 'PASS'",
+          prov.get("overallVerdict") == "PASS")
+    check("T4: verdict == 'PASS'",
+          prov.get("verdict") == "PASS")
+    # --- 최상위 결과 필드 ---
+    check("T4: resizeStrategy == 'full-image-semantic-scene-cleanup'",
+          r.get("resizeStrategy") == "full-image-semantic-scene-cleanup")
+    check("T4: backgroundMode == 'semantic_scene_cleanup'",
+          r.get("backgroundMode") == "semantic_scene_cleanup")
+    check("T4: renderMode == 'ai-only'",
+          r.get("renderMode") == "ai-only")
+    # --- 실제 OpenAI 호출 0건 확인 ---
+    check(f"T4: actual OpenAI requests == 0 (was {_T4_ACTUAL_OPENAI_REQUESTS})",
+          _T4_ACTUAL_OPENAI_REQUESTS == 0)
 finally:
     shutil.rmtree(tmp_dir4, ignore_errors=True)
+    if os.path.exists(t4_src):
+        os.unlink(t4_src)
+
+# ─── T4b: Explicit SFR Rollback 계약 ─────────────────────────────────────────
+#
+# BACKGROUND_GENERATION_MODE=source_faithful_repair 로 명시 설정 시
+# SFR 경로를 타며 legacyRollbackExplicit=True, semanticDefaultApplied=False.
+# 환경변수는 finally에서 반드시 제거하여 이후 테스트에 영향을 주지 않는다.
+
+print("\n=== [T4b] Explicit SFR Rollback 계약 ===")
+
+t4b_src = make_tmp_png(400, 300)
+tmp_dir4b = tempfile.mkdtemp()
+
+try:
+    os.environ["BACKGROUND_GENERATION_MODE"] = "source_faithful_repair"
+    results_4b, _ = _generate_ai_only(
+        psd_path=t4b_src,
+        specs=[SPECS[0]],
+        resize_mode="ai-auto",
+        output_format="png",
+        output_dir=tmp_dir4b,
+        source_type="image",
+        job_id="t4b",
+        _provider_override=FakeProvider(),
+    )
+    check("T4b: 결과 1개 반환", len(results_4b) == 1)
+    r4b = results_4b[0]
+    prov4b = r4b.get("renderProvenance", {})
+    check("T4b: backgroundGenerationMode == 'source_faithful_repair'",
+          prov4b.get("backgroundGenerationMode") == "source_faithful_repair")
+    check("T4b: effectiveRenderer == 'source-faithful-ai-repair'",
+          prov4b.get("effectiveRenderer") == "source-faithful-ai-repair")
+    check("T4b: selectedMode == 'ai-source-faithful'",
+          prov4b.get("selectedMode") == "ai-source-faithful")
+    check("T4b: sourceFaithfulRepairUsed == True",
+          prov4b.get("sourceFaithfulRepairUsed") is True)
+    check("T4b: semanticSceneCleanupUsed != True",
+          not prov4b.get("semanticSceneCleanupUsed"))
+    check("T4b: legacyRollbackExplicit == True",
+          prov4b.get("legacyRollbackExplicit") is True)
+    check("T4b: semanticDefaultApplied == False",
+          prov4b.get("semanticDefaultApplied") is False)
+    check("T4b: legacyFallbackUsed == False",
+          prov4b.get("legacyFallbackUsed") is False)
+    check("T4b: backgroundModeSource == 'explicit'",
+          prov4b.get("backgroundModeSource") == "explicit")
+    check("T4b: backgroundAiProvider == 'fake'",
+          prov4b.get("backgroundAiProvider") == "fake")
+    check("T4b: resizeStrategy == 'source-faithful-ai-repair'",
+          r4b.get("resizeStrategy") == "source-faithful-ai-repair")
+    check("T4b: backgroundMode == 'source_faithful_repair'",
+          r4b.get("backgroundMode") == "source_faithful_repair")
+    check("T4b: verdict == 'PASS'",
+          prov4b.get("verdict") == "PASS")
+except Exception as e:
+    check(f"T4b: 예외 없음 (got {type(e).__name__}: {e})", False)
+finally:
+    os.environ.pop("BACKGROUND_GENERATION_MODE", None)
+    shutil.rmtree(tmp_dir4b, ignore_errors=True)
+    if os.path.exists(t4b_src):
+        os.unlink(t4b_src)
+
+# ─── T4c: Semantic D-2 Fail-Closed ───────────────────────────────────────────
+#
+# D2FailSSCPassProvider: call1(D-2 소스 참조)→all-white→SSC blank check 예외
+# → D-2 파이프라인이 except로 캐치 → d2VirtualForegroundSucceeded=False.
+# call2+(per-spec SSC)→노이즈→SSC 통과 → 배경 생성 성공.
+# 결과: extractionVerdict=FAIL(D-2 필요하나 실패) → overallVerdict=FAIL.
+#
+# 주의: FakeProvider(랜덤 노이즈)는 alpha_coverage≈0.94 < 0.97 → PASS되어 불가.
+#       AllWhiteProvider는 per-spec SSC에서도 blank 예외를 던져 테스트 실패.
+
+print("\n=== [T4c] Semantic D-2 Opaque Bbox Fail-Closed ===")
+
+t4c_src = _build_d2_success_source(400, 400)
+tmp_dir4c = tempfile.mkdtemp()
+
+try:
+    os.environ.pop("BACKGROUND_GENERATION_MODE", None)
+    results_4c, _ = _generate_ai_only(
+        psd_path=t4c_src,
+        specs=[SPECS[0]],
+        resize_mode="ai-auto",
+        output_format="png",
+        output_dir=tmp_dir4c,
+        source_type="image",
+        job_id="t4c",
+        _provider_override=D2FailSSCPassProvider(),
+    )
+    check("T4c: 결과 1개 반환", len(results_4c) == 1)
+    prov4c = results_4c[0].get("renderProvenance", {})
+    check("T4c: backgroundGenerationMode == 'semantic_scene_cleanup'",
+          prov4c.get("backgroundGenerationMode") == "semantic_scene_cleanup")
+    check("T4c: semanticDefaultApplied == True",
+          prov4c.get("semanticDefaultApplied") is True)
+    check("T4c: d2VirtualForegroundSucceeded == False",
+          prov4c.get("d2VirtualForegroundSucceeded") is False)
+    check("T4c: extractionVerdict == 'FAIL'",
+          prov4c.get("extractionVerdict") == "FAIL")
+    check("T4c: overallVerdict == 'FAIL'",
+          prov4c.get("overallVerdict") == "FAIL")
+except Exception as e:
+    check(f"T4c: 예외 없음 (got {type(e).__name__}: {e})", False)
+finally:
+    shutil.rmtree(tmp_dir4c, ignore_errors=True)
+    if os.path.exists(t4c_src):
+        os.unlink(t4c_src)
+
+# ─── T4d: 환경변수 격리 (Semantic → Rollback → Semantic) ─────────────────────
+#
+# env var를 번갈아 세팅/해제해도 각 호출이 독립적으로 모드를 결정함을 검증한다.
+# Semantic 1회 → SFR 1회 → Semantic 1회.  S1/S2 모드는 동일, Rollback은 다름.
+
+print("\n=== [T4d] 환경변수 격리 (Semantic → Rollback → Semantic) ===")
+
+
+def _t4d_run_semantic(jid: str) -> dict:
+    src = _build_d2_success_source(400, 400)
+    tmp_d = tempfile.mkdtemp()
+    try:
+        os.environ.pop("BACKGROUND_GENERATION_MODE", None)
+        res, _ = _generate_ai_only(
+            psd_path=src,
+            specs=[SPECS[0]],
+            resize_mode="ai-auto",
+            output_format="png",
+            output_dir=tmp_d,
+            source_type="image",
+            job_id=jid,
+            _provider_override=FakeSemanticD2SuccessProvider(),
+        )
+        return res[0].get("renderProvenance", {}) if res else {}
+    finally:
+        shutil.rmtree(tmp_d, ignore_errors=True)
+        if os.path.exists(src):
+            os.unlink(src)
+
+
+try:
+    prov_s1 = _t4d_run_semantic("t4d-s1")
+
+    t4d_rb_src = make_tmp_png(400, 300)
+    tmp_dir4d_rb = tempfile.mkdtemp()
+    try:
+        os.environ["BACKGROUND_GENERATION_MODE"] = "source_faithful_repair"
+        res_rb, _ = _generate_ai_only(
+            psd_path=t4d_rb_src,
+            specs=[SPECS[0]],
+            resize_mode="ai-auto",
+            output_format="png",
+            output_dir=tmp_dir4d_rb,
+            source_type="image",
+            job_id="t4d-rb",
+            _provider_override=FakeProvider(),
+        )
+        prov_rb = res_rb[0].get("renderProvenance", {}) if res_rb else {}
+    finally:
+        os.environ.pop("BACKGROUND_GENERATION_MODE", None)
+        shutil.rmtree(tmp_dir4d_rb, ignore_errors=True)
+        if os.path.exists(t4d_rb_src):
+            os.unlink(t4d_rb_src)
+
+    prov_s2 = _t4d_run_semantic("t4d-s2")
+
+    check("T4d: S1 backgroundGenerationMode == 'semantic_scene_cleanup'",
+          prov_s1.get("backgroundGenerationMode") == "semantic_scene_cleanup")
+    check("T4d: Rollback backgroundGenerationMode == 'source_faithful_repair'",
+          prov_rb.get("backgroundGenerationMode") == "source_faithful_repair")
+    check("T4d: S2 backgroundGenerationMode == 'semantic_scene_cleanup'",
+          prov_s2.get("backgroundGenerationMode") == "semantic_scene_cleanup")
+    check("T4d: S1.semanticDefaultApplied == S2.semanticDefaultApplied",
+          prov_s1.get("semanticDefaultApplied") == prov_s2.get("semanticDefaultApplied"))
+    check("T4d: S1.legacyRollbackExplicit == False",
+          prov_s1.get("legacyRollbackExplicit") is False)
+    check("T4d: Rollback.legacyRollbackExplicit == True",
+          prov_rb.get("legacyRollbackExplicit") is True)
+    check("T4d: S2.legacyRollbackExplicit == False",
+          prov_s2.get("legacyRollbackExplicit") is False)
+    check("T4d: env var cleared after rollback",
+          os.environ.get("BACKGROUND_GENERATION_MODE") is None)
+except Exception as e:
+    check(f"T4d: 예외 없음 (got {type(e).__name__}: {e})", False)
 
 # ─── T5: 결과 이미지 크기 일치 ───────────────────────────────────────────────
 

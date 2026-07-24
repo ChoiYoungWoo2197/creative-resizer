@@ -84,7 +84,7 @@ def plan_foreground_layout(
     if not safe_zone_available:
         msg = (
             f"SAFE_ZONE_UNAVAILABLE: safeZoneParseStatus={parse_status!r}"
-            f" — using ratio-based fallback safe zone"
+            f" - using ratio-based fallback safe zone"
         )
         print(f"[LAYOUT] WARNING: {msg}", flush=True)
         result.warnings.append(msg)
