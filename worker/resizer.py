@@ -1170,6 +1170,17 @@ def _generate_ai_only(
     _psd_layer_hints_enabled = os.environ.get("PSD_LAYER_HINTS_ENABLED", "false").lower() == "true"
     log_psd_layer_authority(job_id=jid, enabled=_psd_layer_hints_enabled, runtime_decision_count=0)
 
+    # P0-A: Pipeline sequence tracker — records canonical size immediately after load.
+    # Analysis and extraction sizes are recorded after D-2 (below).
+    # Target size is recorded per-spec (in the spec loop).
+    try:
+        from scene_cleanup.pipeline_sequence import PipelineSequenceTracker, log_pipeline_sequence
+        _seq_tracker = PipelineSequenceTracker()
+        _seq_tracker.record_canonical(img.width, img.height)
+    except Exception as _seq_err:
+        _seq_tracker = None
+        print(f"[PIPELINE_SEQUENCE] init failed: {_seq_err}", flush=True)
+
     # Stage 21: Parse + classify PSD layers for foreground compositing.
     # Only attempted when source_type=="psd". PNG/JPG inputs skip this path.
     psd_layers_classified: list = []
@@ -1396,6 +1407,13 @@ def _generate_ai_only(
             _d2_result = None
     else:
         print(f"[D2_EXTRACTION] DISABLED jobId={jid}", flush=True)
+
+    # P0-A: Record analysis and extraction sizes after D-2 (canonical full-image sizes).
+    # D-2 always operates on img (canonical), so both sizes == canonical.
+    if _seq_tracker is not None:
+        _seq_tracker.record_semantic_analysis(img.width, img.height)
+        _seq_tracker.record_foreground_extraction(img.width, img.height)
+        log_pipeline_sequence(_seq_tracker, job_id=jid)
 
     for spec_idx, spec in enumerate(specs):
         media = spec["media"]
@@ -2082,6 +2100,23 @@ def _generate_ai_only(
                 ),
                 "fullImageSemanticExtractionUsed": True,
                 "inputNormalizationVersion": "canonical-source-v1",
+                # P0-A: Pipeline sequence provenance
+                **({} if _seq_tracker is None else {
+                    "semanticAnalysisSourceSize": (
+                        f"{img.width}x{img.height}"
+                        if _seq_tracker.semantic_analysis_size is None
+                        else f"{_seq_tracker.semantic_analysis_size[0]}x{_seq_tracker.semantic_analysis_size[1]}"
+                    ),
+                    "foregroundExtractionSourceSize": (
+                        f"{img.width}x{img.height}"
+                        if _seq_tracker.foreground_extraction_size is None
+                        else f"{_seq_tracker.foreground_extraction_size[0]}x{_seq_tracker.foreground_extraction_size[1]}"
+                    ),
+                    "foregroundExtractionSource": _seq_tracker.foreground_extraction_source,
+                    "analysisBeforeTargetTransform": True,
+                    "extractionBeforeTargetTransform": True,
+                    "pipelineSequenceValid": len(_seq_tracker.validate_sequence()) == 0,
+                }),
                 # D-3: routing and policy provenance
                 "backgroundModeSource": "explicit" if _bg_mode_raw else "default",
                 "semanticDefaultApplied": _bg_mode_default_applied,
