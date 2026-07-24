@@ -1981,6 +1981,17 @@ def _generate_ai_only(
                 job_id=jid, spec_id=spec_id,
             )
 
+            # Stage 5: seal integrity chain before any verdict evaluator runs
+            _verdict_manifest.finalize()
+            print(
+                f"[MANIFEST_FINALIZED] jobId={jid} specId={spec_id}"
+                f" sha256={_verdict_manifest.manifestSha256[:16]}..."
+                f" uniqueObjects={_verdict_manifest.uniqueObjectCount}"
+                f" required={_verdict_manifest.requiredObjectCount}"
+                f" version={_verdict_manifest.manifestVersion}",
+                flush=True,
+            )
+
             # Diagnostic D: [SEMANTIC_INVENTORY], [MANIFEST_AUDIT] after manifest is built
             try:
                 from verdict.diagnostic_logger import (
@@ -1991,6 +2002,18 @@ def _generate_ai_only(
                 _dl_maud(_verdict_manifest, _active_fg_layers, job_id=jid, spec_id=spec_id)
             except Exception as _dl_d_err:
                 print(f"[DIAG_LOG_ERROR] manifest audit: {_dl_d_err}", flush=True)
+
+            # Stage 5: fail-closed guard — evaluators must not run on an unfinalized manifest
+            if not _verdict_manifest.finalized:
+                print(
+                    f"[MANIFEST_NOT_FINALIZED] jobId={jid} specId={spec_id}"
+                    f" — verdict evaluation aborted (finalize() was not called)",
+                    flush=True,
+                )
+                raise RuntimeError(
+                    "MANIFEST_NOT_FINALIZED: call _verdict_manifest.finalize()"
+                    " before running verdict evaluators"
+                )
 
             _tech_verdict = evaluate_technical(
                 output_path=None,      # evaluated after file write below

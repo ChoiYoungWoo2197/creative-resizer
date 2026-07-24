@@ -115,6 +115,9 @@ class UnifiedObjectManifest:
 
     manifestSha256 is computed from canonical serializable metadata only
     (no PIL memory addresses, no random ordering).
+
+    Stage 5: finalized and failClosed must be True before verdict evaluation.
+    Call finalize() after building the manifest and before passing it to evaluators.
     """
     sourceType: str = SOURCE_TYPE_PSD_LAYER
     inputObjectCount: int = 0
@@ -125,6 +128,34 @@ class UnifiedObjectManifest:
     invalidObjectIds: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     manifestSha256: str = ""
+    # Stage 5: integrity chain fields — set by finalize()
+    finalized: bool = False
+    failClosed: bool = False
+    manifestVersion: str = "c1.1"
+
+    def finalize(self) -> None:
+        """Compute manifestSha256 from canonical fields and mark as finalized.
+
+        Must be called after all objects are added and before verdict evaluation.
+        Once finalized, further mutation should not occur (checked by callers).
+        """
+        import hashlib, json
+        canonical = {
+            "sourceType": self.sourceType,
+            "uniqueObjectCount": self.uniqueObjectCount,
+            "requiredObjectCount": self.requiredObjectCount,
+            "objectIds": sorted(
+                getattr(o, "objectId", "") for o in (self.objects or [])
+            ),
+            "duplicateObjectIds": sorted(self.duplicateObjectIds or []),
+            "invalidObjectIds": sorted(self.invalidObjectIds or []),
+            "manifestVersion": self.manifestVersion,
+        }
+        self.manifestSha256 = hashlib.sha256(
+            json.dumps(canonical, sort_keys=True).encode()
+        ).hexdigest()
+        self.finalized = True
+        self.failClosed = True
 
 
 # ── Top-level verdict summary ─────────────────────────────────────────────────
