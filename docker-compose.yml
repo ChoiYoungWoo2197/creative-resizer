@@ -58,8 +58,8 @@ services:
     environment:
       - OUTPUT_DIR=/app/storage/outputs
       - ZIP_DIR=/app/storage/zips
-      # ── Stage 20.3 AI-Only Rendering (Source-Faithful Repair) ────────────────
-      # AI_ONLY_RENDERING=true: 모든 렌더링을 Stage 20.3 AI 파이프라인으로 라우팅.
+      # ── Stage 20.3 AI-Only Rendering (Semantic Scene Cleanup) ───────────────
+      # AI_ONLY_RENDERING=true: 모든 렌더링을 semantic_scene_cleanup 파이프라인으로 라우팅.
       # resize_mode='ai-auto'로 들어온 요청도 동일하게 라우팅됨.
       # Fail-closed: AI 실패 시 fallback 없이 에러 반환.
       - AI_ONLY_RENDERING=true
@@ -73,10 +73,11 @@ services:
       - BACKGROUND_BLUR_FILL_ALLOWED=false
       - BACKGROUND_MIRROR_FILL_ALLOWED=false
       - BACKGROUND_STRETCH_FILL_ALLOWED=false
-      # Stage 20.3 Source-Faithful Repair (OpenAI gpt-image-1)
+      # Stage E: Semantic Scene Cleanup (subject-preserving outpaint + pixel restore)
+      # source_faithful_repair는 영구 제거됨 — CONFIG_LEGACY_PIPELINE_FORBIDDEN
       # BACKGROUND_AI_API_KEY는 서버 .env 파일에 설정 필요
-      - BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED=true
-      - BACKGROUND_GENERATION_MODE=source_faithful_repair
+      - BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED=false
+      - BACKGROUND_GENERATION_MODE=semantic_scene_cleanup
       - BACKGROUND_AI_MAX_ATTEMPTS=1
       - BACKGROUND_AI_API_KEY=${BACKGROUND_AI_API_KEY}
       # ALLOW_FAKE_PROVIDER=false: 운영 환경에서 FakeBackgroundProvider 허용 금지.

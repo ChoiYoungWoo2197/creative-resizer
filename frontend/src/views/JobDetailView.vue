@@ -88,7 +88,7 @@
         </div>
 
         <div class="img-grid">
-          <div class="img-card" v-for="r in job.results" :key="r.fileName" :class="{ invalid: r.valid === false }">
+          <div class="img-card" v-for="r in job.results" :key="r.fileName" :class="{ invalid: r.valid === false || r.finalResultValid === false }">
             <div class="img-thumb" :style="thumbStyle(r)">
               <img
                 :src="resultPreviewUrl(r)"
@@ -639,15 +639,17 @@ function qualityLabelClass(label) {
   return 'ql-bad'
 }
 
-// 결과 카드 상태 뱃지: qualityLabel 우선, 없으면 valid 기준
+// 결과 카드 상태 뱃지: 우선순위 — 규격 불일치 > 검증 실패(verdict) > qualityLabel > 정상
 function resultStatusLabel(r) {
-  if (r.valid === false) return '규격 불일치'
-  if (r.qualityLabel)   return r.qualityLabel
+  if (r.valid === false)              return '규격 불일치'
+  if (r.finalResultValid === false)   return '검증 실패'
+  if (r.qualityLabel)                 return r.qualityLabel
   return '정상'
 }
 function resultStatusClass(r) {
-  if (r.valid === false)             return 'invalid'
-  if (r.qualityLabel === '주의')     return 'warn'
+  if (r.valid === false)              return 'invalid'
+  if (r.finalResultValid === false)   return 'verdict-fail'
+  if (r.qualityLabel === '주의')      return 'warn'
   if (r.qualityLabel === '품질 낮음') return 'quality-bad'
   return 'ok'
 }
@@ -920,6 +922,7 @@ onUnmounted(stopPolling)
 .img-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
 .img-card.invalid { border-color: #FECACA; }
 
+
 .img-thumb {
   position: relative;
   width: 100%;
@@ -956,10 +959,11 @@ onUnmounted(stopPolling)
   padding: 1px 7px;
   border-radius: 20px;
 }
-.valid-badge.ok          { background: #D1FAE5; color: #065F46; }
-.valid-badge.invalid     { background: #FEE2E2; color: #991B1B; }
-.valid-badge.warn        { background: #FEF3C7; color: #92400E; }
-.valid-badge.quality-bad { background: #FEE2E2; color: #991B1B; }
+.valid-badge.ok           { background: #D1FAE5; color: #065F46; }
+.valid-badge.invalid      { background: #FEE2E2; color: #991B1B; }
+.valid-badge.verdict-fail { background: #FDE8D8; color: #92400E; }
+.valid-badge.warn         { background: #FEF3C7; color: #92400E; }
+.valid-badge.quality-bad  { background: #FEE2E2; color: #991B1B; }
 .valid-msg { font-size: 11px; color: #EF4444; margin-top: 2px; line-height: 1.4; word-break: break-all; }
 
 .card-actions { display: flex; gap: 6px; margin: 0 14px 14px; }
