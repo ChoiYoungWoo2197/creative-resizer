@@ -1424,6 +1424,23 @@ def _generate_ai_only(
 
         if _bg_mode == "semantic_scene_cleanup":
             from scene_cleanup.semantic_scene_cleanup import run_semantic_scene_cleanup
+            # E-2: Build unified semantic manifest from D-2 result
+            _semantic_manifest = None
+            try:
+                from verdict.unified_semantic_manifest import (
+                    build_semantic_manifest, log_semantic_group,
+                )
+                _d2_fg = (_d2_result.fg_layers if _d2_result is not None else []) or []
+                _semantic_manifest = build_semantic_manifest(
+                    job_id=jid,
+                    spec_id=spec_id,
+                    d2_fg_layers=_d2_fg,
+                )
+                if _semantic_manifest.cta_group_ids:
+                    log_semantic_group(_semantic_manifest, job_id=jid, spec_id=spec_id)
+            except Exception as _sm_err:
+                print(f"[SEMANTIC_MANIFEST_BUILD_ERROR] jobId={jid} err={_sm_err}", flush=True)
+
             _scene_result = run_semantic_scene_cleanup(
                 source_path=psd_path,
                 source_type=source_type,
@@ -1440,6 +1457,7 @@ def _generate_ai_only(
                 max_attempts=max_attempts,
                 job_id=jid,
                 spec_id=spec_id,
+                semantic_manifest=_semantic_manifest,
             )
             actual_provider_request_count += _scene_result.actual_provider_request_count
             if not _scene_result.success or _scene_result.scene_plate_image is None:

@@ -57,6 +57,7 @@ def run_semantic_scene_cleanup(
     max_attempts: int = 1,
     job_id: str = "",
     spec_id: str = "",
+    semantic_manifest: object = None,
 ) -> SemanticSceneCleanupResult:
     """Run full-image semantic scene cleanup (Bundle D-1).
 
@@ -139,6 +140,14 @@ def run_semantic_scene_cleanup(
             f" d2Required={d2_required}",
             flush=True,
         )
+
+        # E-2: Emit unified semantic manifest logs before provider call
+        if semantic_manifest is not None:
+            try:
+                from verdict.unified_semantic_manifest import emit_all_manifest_logs
+                emit_all_manifest_logs(semantic_manifest, job_id=job_id, spec_id=spec_id)
+            except Exception as _em_err:
+                print(f"[SEMANTIC_MANIFEST_LOG_ERROR] jobId={job_id} err={_em_err}", flush=True)
 
         # 6: Call provider — fail-closed, no fallback
         scene_plate_img = None
