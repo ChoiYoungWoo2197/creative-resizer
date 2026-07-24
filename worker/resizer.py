@@ -1527,6 +1527,8 @@ def _generate_ai_only(
         # source_faithful_repair → background plate → targeted repair (legacy)
         sfr = None
         _scene_result = None
+        _visual_verdict = None    # initialized here for diagnostic access after verdict try block
+        _immutable_metrics = {}   # initialized here for diagnostic access after Stage 4 try block
         _ai_scene_dir = os.path.join(output_dir, "stage20_3", spec_id)
 
         if _bg_mode == "semantic_scene_cleanup":
@@ -1576,6 +1578,18 @@ def _generate_ai_only(
             if result_img.size != (w, h):
                 result_img = result_img.resize((w, h), Image.LANCZOS)
 
+            # Diagnostic B: [TRANSFORM_GEOMETRY] after SSC delivers scene plate
+            try:
+                from verdict.diagnostic_logger import log_transform_geometry as _dl_tg
+                _dl_tg(
+                    _scene_result.canvas_transform,
+                    source_w=img.width, source_h=img.height,
+                    target_w=w, target_h=h,
+                    job_id=jid, spec_id=spec_id,
+                )
+            except Exception as _dl_b_err:
+                print(f"[DIAG_LOG_ERROR] log_transform_geometry: {_dl_b_err}", flush=True)
+
             # Stage 4: Apply immutable pixel restoration to SSC output.
             # allowed_generation_mask from Stage 5 outpaint transform (or full-white for cover-crop).
             try:
@@ -1605,6 +1619,20 @@ def _generate_ai_only(
                     f" restoredPixelCount={_immutable_metrics.get('restoredOriginalPixelCount', 0)}",
                     flush=True,
                 )
+                # Diagnostic C: [MASK_LINEAGE], [MASK_ANOMALY], [PIXEL_RESTORE_AUDIT]
+                # result_img captured here (pre-restoration) for audit; _restored is post
+                try:
+                    from verdict.diagnostic_logger import (
+                        log_mask_lineage as _dl_ml,
+                        log_mask_anomalies as _dl_ma,
+                        log_pixel_restore_audit as _dl_pra,
+                    )
+                    _dl_ml(_ssc_allowed_mask, w, h, job_id=jid, spec_id=spec_id)
+                    _dl_ma(_ssc_allowed_mask, _immutable_metrics, w, h, job_id=jid, spec_id=spec_id)
+                    _dl_pra(result_img, _restored, _ssc_allowed_mask, _immutable_metrics,
+                            job_id=jid, spec_id=spec_id)
+                except Exception as _dl_c_err:
+                    print(f"[DIAG_LOG_ERROR] mask+restore audit: {_dl_c_err}", flush=True)
                 result_img = _restored
             except Exception as _pr_err:
                 print(f"[PIXEL_RESTORE] failed jobId={jid} specId={spec_id}: {_pr_err}", flush=True)
@@ -1717,6 +1745,13 @@ def _generate_ai_only(
                     flush=True,
                 )
                 _virtual_fg_for_spec = []
+
+        # Diagnostic A: [SEMANTIC_OBJECT] per virtual fg layer (after D-2 scaling)
+        try:
+            from verdict.diagnostic_logger import log_semantic_objects as _dl_sem_obj
+            _dl_sem_obj(_virtual_fg_for_spec, job_id=jid, spec_id=spec_id)
+        except Exception as _dl_a_err:
+            print(f"[DIAG_LOG_ERROR] log_semantic_objects: {_dl_a_err}", flush=True)
 
         # E-1: PSD native layer compositor only when PSD_LAYER_HINTS_ENABLED=true.
         # Default (false): all inputs use D-2 virtual extraction path.
@@ -1888,6 +1923,17 @@ def _generate_ai_only(
                 job_id=jid, spec_id=spec_id,
             )
 
+            # Diagnostic D: [SEMANTIC_INVENTORY], [MANIFEST_AUDIT] after manifest is built
+            try:
+                from verdict.diagnostic_logger import (
+                    log_semantic_inventory as _dl_si,
+                    log_manifest_audit as _dl_maud,
+                )
+                _dl_si(_active_fg_layers, _verdict_manifest, job_id=jid, spec_id=spec_id)
+                _dl_maud(_verdict_manifest, _active_fg_layers, job_id=jid, spec_id=spec_id)
+            except Exception as _dl_d_err:
+                print(f"[DIAG_LOG_ERROR] manifest audit: {_dl_d_err}", flush=True)
+
             _tech_verdict = evaluate_technical(
                 output_path=None,      # evaluated after file write below
                 output_size=None,      # placeholder — updated after write
@@ -1996,6 +2042,20 @@ def _generate_ai_only(
             except Exception as _vagg_err:
                 print(f"[STAGE21] verdict aggregation error: {_vagg_err}", flush=True)
                 _verdict_summary = None
+
+        # Diagnostic E: [RESULT_SEMANTICS], [ROOT_CAUSE_SUMMARY] before AI_SPEC_END
+        if _bg_mode == "semantic_scene_cleanup":
+            try:
+                from verdict.diagnostic_logger import (
+                    log_result_semantics as _dl_rs,
+                    log_root_cause_summary as _dl_rcs,
+                )
+                _dl_rs(_scene_result, _verdict_summary, _visual_verdict,
+                       job_id=jid, spec_id=spec_id)
+                _dl_rcs(_verdict_summary, _scene_result, _visual_verdict, _immutable_metrics,
+                        job_id=jid, spec_id=spec_id)
+            except Exception as _dl_e_err:
+                print(f"[DIAG_LOG_ERROR] result+root_cause: {_dl_e_err}", flush=True)
 
         # D-1: AI_SPEC_END for semantic mode (verdict from Stage21 overallStatus)
         if _bg_mode == "semantic_scene_cleanup":
