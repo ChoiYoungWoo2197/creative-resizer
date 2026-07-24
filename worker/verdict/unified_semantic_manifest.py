@@ -68,6 +68,10 @@ class SemanticManifest:
 
     Built from D-2 virtual foreground extraction results and object roles.
     All downstream stages reference this single instance.
+
+    P0-C: Once finalize() is called, semantic role fields are frozen.
+    Any attempt to mutate them via try_mutate_field() raises
+    MANIFEST_MUTATION_AFTER_FINALIZE and increments the counter.
     """
     job_id: str = ""
     spec_id: str = ""
@@ -81,6 +85,10 @@ class SemanticManifest:
     object_count: int = 0
     manifest_sha256: str = ""
     version: str = MANIFEST_VERSION
+    # P0-C: Finalization guard
+    finalized: bool = False
+    manifest_owner: str = "worker"
+    manifest_mutation_count_after_finalization: int = 0
 
 
 # ── Builder ───────────────────────────────────────────────────────────────────
@@ -250,3 +258,46 @@ def emit_all_manifest_logs(
         log_semantic_group(manifest, group_type="cta_title", job_id=job_id, spec_id=spec_id)
     if manifest.text_human_contradictions:
         log_text_human_contradictions(manifest, job_id=job_id, spec_id=spec_id)
+
+
+# ── P0-C: Manifest finalization guard ────────────────────────────────────────
+
+# Fields that are frozen after finalize()
+_IMMUTABLE_FIELDS = frozenset({
+    "preserve_roles",
+    "removal_roles",
+    "preserve_object_ids",
+    "removal_object_ids",
+    "cta_group_ids",
+    "mask_conflict_ids",
+    "text_human_contradictions",
+})
+
+
+def finalize(manifest: SemanticManifest) -> None:
+    """Mark the manifest as finalized. After this point, role fields are frozen.
+
+    Downstream stages (SSC, compositor, validator) must reference this manifest
+    without mutating it. Use try_mutate_field() to detect violations.
+    """
+    manifest.finalized = True
+
+
+def try_mutate_field(manifest: SemanticManifest, field_name: str, value: object) -> None:
+    """Attempt to mutate a manifest field.
+
+    If the manifest is finalized and the field is in the immutable set,
+    increments manifest_mutation_count_after_finalization and raises
+    MANIFEST_MUTATION_AFTER_FINALIZE.
+
+    For non-immutable fields or non-finalized manifests, sets the value normally.
+    """
+    if manifest.finalized and field_name in _IMMUTABLE_FIELDS:
+        manifest.manifest_mutation_count_after_finalization += 1
+        raise RuntimeError(
+            f"MANIFEST_MUTATION_AFTER_FINALIZE:"
+            f" field={field_name!r}"
+            f" manifestSha={manifest.manifest_sha256}"
+            f" mutationCount={manifest.manifest_mutation_count_after_finalization}"
+        )
+    setattr(manifest, field_name, value)
