@@ -26,6 +26,8 @@ SOURCE_TYPE_AI_SEGMENTATION = "ai_segmentation"
 SOURCE_TYPE_OCR_RENDER = "ocr_render"
 SOURCE_TYPE_GENERATED_SHAPE = "generated_shape"
 SOURCE_TYPE_UNKNOWN = "unknown"
+# Stage 3: full-image semantic pipeline — sole authority in production.
+SOURCE_TYPE_FULL_IMAGE_SEMANTIC = "full_image_semantic"
 
 VALID_SOURCE_TYPES = frozenset({
     SOURCE_TYPE_PSD_LAYER,
@@ -35,6 +37,7 @@ VALID_SOURCE_TYPES = frozenset({
     SOURCE_TYPE_OCR_RENDER,
     SOURCE_TYPE_GENERATED_SHAPE,
     SOURCE_TYPE_UNKNOWN,
+    SOURCE_TYPE_FULL_IMAGE_SEMANTIC,
 })
 
 # ── compositionOwner enum values ──────────────────────────────────────────────

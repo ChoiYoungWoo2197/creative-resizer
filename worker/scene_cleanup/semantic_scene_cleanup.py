@@ -74,13 +74,13 @@ def run_semantic_scene_cleanup(
       10. Return SemanticSceneCleanupResult
     """
     from scene_cleanup.full_image_source import build_full_image_source
-    from scene_cleanup.canvas_builder import build_provider_canvas
     from scene_cleanup.prompt_builder import build_semantic_prompt, _TEMPLATE_SHA256
     from background.external_provider import normalize_provider_result
     from PIL import Image
 
     attempt_count = 0
     actual_provider_request_count = 0
+    _allowed_gen_mask = None  # Stage 4: set by outpaint canvas builder
 
     # Flattened input: PNG/JPG without native layers requires D-2 (not implemented)
     d2_required = (not has_native_layers) and (source_type not in ("psd",))
@@ -108,9 +108,29 @@ def run_semantic_scene_cleanup(
             composite_render_method=composite_render_method,
         )
 
-        # 3: Cover-crop to target + full-white mask
-        provider_input, mask, canvas_transform = build_provider_canvas(
+        # Stage 5: Subject-preserving outpaint replaces cover-crop.
+        # Contain-scale source into target canvas; AI fills outpaint regions only.
+        from scene_cleanup.canvas_builder import build_provider_canvas_outpaint
+        from scene_cleanup.subject_preserving_transform import log_subject_preserving_transform
+        provider_input, mask, canvas_transform, _allowed_gen_mask = build_provider_canvas_outpaint(
             full_source, target_w, target_h
+        )
+        log_subject_preserving_transform(
+            type("_T", (), {
+                "scale": canvas_transform.scale,
+                "offset_x": canvas_transform.crop_x,
+                "offset_y": canvas_transform.crop_y,
+                "source_w": canvas_transform.source_w,
+                "source_h": canvas_transform.source_h,
+                "target_w": canvas_transform.canvas_w,
+                "target_h": canvas_transform.canvas_h,
+                "source_mapped_region_mask": None,
+                "new_canvas_region_mask": None,
+                "required_subjects_cropped": False,
+                "background_scene_transform": canvas_transform.strategy,
+            })(),
+            job_id=job_id or "",
+            spec_id=spec_id or "",
         )
 
         # 4: Build prompt (SHA guard runs inside)
@@ -277,6 +297,7 @@ def run_semantic_scene_cleanup(
             source_h=full_source.height,
             target_w=target_w,
             target_h=target_h,
+            allowed_generation_mask=_allowed_gen_mask,
         )
 
     except Exception as err:

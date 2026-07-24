@@ -1181,6 +1181,43 @@ def _generate_ai_only(
         _seq_tracker = None
         print(f"[PIPELINE_SEQUENCE] init failed: {_seq_err}", flush=True)
 
+    # Stage 1: Early-exit cache rejection for all source types.
+    # If object_analysis carries a legacy version (psd-object-map-v1/v2,
+    # source-faithful-repair-*, legacy-object-map-*) we log and discard it
+    # before any type-specific processing runs.  This ensures PNG/JPG inputs
+    # also emit [CACHE_VERSION_INCOMPATIBLE] if a stale payload is passed.
+    if object_analysis:
+        _early_av = (object_analysis or {}).get("analysisVersion", "")
+        if _early_av:
+            try:
+                from verdict.semantic_cache_validator import (
+                    INCOMPATIBLE_PREFIXES as _EARLY_INCOMPAT,
+                    log_cache_reject as _early_log_rej,
+                )
+                _early_is_legacy = any(
+                    _early_av.startswith(_p) for _p in _EARLY_INCOMPAT
+                )
+                if _early_is_legacy:
+                    _early_log_rej(
+                        "INCOMPATIBLE_VERSION",
+                        cached_version=_early_av,
+                        required_version="full-image-semantic-v1",
+                        job_id=jid,
+                    )
+                    print(
+                        f"[CACHE_VERSION_INCOMPATIBLE] jobId={jid}"
+                        f" analysisVersion={_early_av!r}"
+                        f" action=reject"
+                        f" requiredVersion=full-image-semantic-v1",
+                        flush=True,
+                    )
+                    object_analysis = None  # discard legacy payload
+            except Exception as _early_cv_err:
+                print(
+                    f"[CACHE_VERSION_CHECK_ERROR] jobId={jid}: {_early_cv_err}",
+                    flush=True,
+                )
+
     # Stage 21: Parse + classify PSD layers for foreground compositing.
     # Only attempted when source_type=="psd". PNG/JPG inputs skip this path.
     psd_layers_classified: list = []
@@ -1227,14 +1264,36 @@ def _generate_ai_only(
                         _analysis_version = (object_analysis or {}).get("analysisVersion", "")
                         _analysis_model = (object_analysis or {}).get("model", "")
 
-                        # D-3: stale version guard — v1 snapshots are outdated
-                        _CURRENT_ANALYSIS_VERSION = "psd-object-map-v2"
-                        if _analysis_version and _analysis_version != _CURRENT_ANALYSIS_VERSION:
+                        # Stage 1: Reject legacy object analysis caches.
+                        # psd-object-map-v1/v2, source-faithful-repair-*, legacy-object-map-*
+                        # are permanently incompatible with the full-image semantic pipeline.
+                        from verdict.semantic_cache_validator import (
+                            INCOMPATIBLE_PREFIXES as _INCOMPAT_PREFIXES,
+                            log_cache_reject as _log_cache_rej,
+                        )
+                        _cache_is_legacy = _analysis_version and any(
+                            _analysis_version.startswith(_p) for _p in _INCOMPAT_PREFIXES
+                        )
+                        if _cache_is_legacy:
+                            _log_cache_rej(
+                                "INCOMPATIBLE_VERSION",
+                                cached_version=_analysis_version,
+                                required_version="full-image-semantic-v1",
+                                job_id=jid,
+                            )
+                            print(
+                                f"[CACHE_VERSION_INCOMPATIBLE] jobId={jid}"
+                                f" analysisVersion={_analysis_version!r}"
+                                f" action=reject"
+                                f" requiredVersion=full-image-semantic-v1",
+                                flush=True,
+                            )
+                        elif _analysis_version and _analysis_version != "full-image-semantic-v1":
                             print(
                                 f"[OBJECT_ANALYSIS_CACHE] STALE_VERSION"
                                 f" jobId={jid}"
                                 f" storedVersion={_analysis_version}"
-                                f" currentVersion={_CURRENT_ANALYSIS_VERSION}"
+                                f" currentVersion=full-image-semantic-v1"
                                 f" cacheHit=false (stale)"
                                 f" action=skip",
                                 flush=True,
@@ -1252,39 +1311,39 @@ def _generate_ai_only(
                                 flush=True,
                             )
 
-                        # strict=True: production path uses exact layerId match only
-                        psd_layers_classified, _apply_logs = apply_object_map(
-                            psd_layers_classified, _obj_results, strict=True
-                        )
-                        _object_map_apply_logs = _apply_logs  # Bundle B: layout role resolver
+                            # strict=True: production path uses exact layerId match only
+                            psd_layers_classified, _apply_logs = apply_object_map(
+                                psd_layers_classified, _obj_results, strict=True
+                            )
+                            _object_map_apply_logs = _apply_logs  # Bundle B: layout role resolver
 
-                        # Re-run contradiction validator after role overrides
-                        psd_layers_classified = _validate_roles(psd_layers_classified)
+                            # Re-run contradiction validator after role overrides
+                            psd_layers_classified = _validate_roles(psd_layers_classified)
 
-                        _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
-                        _strict_count = sum(
-                            1 for lg in _apply_logs
-                            if lg.get("applied") and lg.get("matchMethod") == "layerId_exact"
-                        )
-                        _fallback_count = sum(
-                            1 for lg in _apply_logs
-                            if lg.get("applied") and lg.get("matchMethod") != "layerId_exact"
-                        )
-                        _rejected_count = sum(1 for lg in _apply_logs if not lg.get("applied"))
-                        _unmatched_layers = len(psd_layers_classified) - len(_apply_logs)
+                            _applied = sum(1 for lg in _apply_logs if lg.get("applied"))
+                            _strict_count = sum(
+                                1 for lg in _apply_logs
+                                if lg.get("applied") and lg.get("matchMethod") == "layerId_exact"
+                            )
+                            _fallback_count = sum(
+                                1 for lg in _apply_logs
+                                if lg.get("applied") and lg.get("matchMethod") != "layerId_exact"
+                            )
+                            _rejected_count = sum(1 for lg in _apply_logs if not lg.get("applied"))
+                            _unmatched_layers = len(psd_layers_classified) - len(_apply_logs)
 
-                        print(
-                            f"[OBJECT_MAP_APPLY]"
-                            f" analysisId={_analysis_id}"
-                            f" roleSource=stored-object-map"
-                            f" matchedLayerCount={len(_apply_logs)}"
-                            f" strictMatchCount={_strict_count}"
-                            f" fallbackMatchCount={_fallback_count}"
-                            f" rejectedMatchCount={_rejected_count}"
-                            f" unmatchedLayerCount={_unmatched_layers}"
-                            f" newRoles={sorted({l.get('role') for l in psd_layers_classified})}",
-                            flush=True,
-                        )
+                            print(
+                                f"[OBJECT_MAP_APPLY]"
+                                f" analysisId={_analysis_id}"
+                                f" roleSource=stored-object-map"
+                                f" matchedLayerCount={len(_apply_logs)}"
+                                f" strictMatchCount={_strict_count}"
+                                f" fallbackMatchCount={_fallback_count}"
+                                f" rejectedMatchCount={_rejected_count}"
+                                f" unmatchedLayerCount={_unmatched_layers}"
+                                f" newRoles={sorted({l.get('role') for l in psd_layers_classified})}",
+                                flush=True,
+                            )
                     except RuntimeError:
                         raise  # OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH is fatal
                     except Exception as _omap_err:
@@ -1295,6 +1354,24 @@ def _generate_ai_only(
         except Exception as _psd_err:
             print(f"[STAGE21] PSD layer parse failed, foreground compositor disabled: {_psd_err}", flush=True)
             psd_layers_classified = []
+
+    # Stage 2: Production pipeline policy — PSD layer authority is disabled.
+    # The sole semantic authority is the full-image canonical composite (E-1).
+    # psd_layers_classified is cleared so no production decision relies on layer data.
+    # apply_object_map (OBJECT_MAP_APPLY) is blocked via Stage 1 cache rejection.
+    _n_psd_layers_discarded = 0
+    if not _psd_layer_hints_enabled:
+        _n_psd_layers_discarded = len(psd_layers_classified)
+        psd_layers_classified = []
+    print(
+        f"[PRODUCTION_PIPELINE] jobId={jid}"
+        f" policy=full-image-semantic-v1"
+        f" psdLayerAuthorityUsed=false"
+        f" objectMapApplyUsed=false"
+        f" nativeLayerForegroundUsed=false"
+        f" psdLayersDiscarded={_n_psd_layers_discarded}",
+        flush=True,
+    )
 
     # P1: default 1 (single attempt).  Override via BACKGROUND_AI_MAX_ATTEMPTS env var.
     max_attempts = int(os.environ.get("BACKGROUND_AI_MAX_ATTEMPTS", "1"))
@@ -1498,6 +1575,40 @@ def _generate_ai_only(
             result_img = _scene_result.scene_plate_image
             if result_img.size != (w, h):
                 result_img = result_img.resize((w, h), Image.LANCZOS)
+
+            # Stage 4: Apply immutable pixel restoration to SSC output.
+            # allowed_generation_mask from Stage 5 outpaint transform (or full-white for cover-crop).
+            try:
+                from scene_cleanup.pixel_restorer import (
+                    apply_default_immutable_policy as _apply_immutable,
+                    compute_immutable_metrics as _compute_immutable_metrics,
+                    log_default_immutable_policy as _log_immutable,
+                )
+                import numpy as _np_s4
+                _ssc_allowed_mask = (
+                    _scene_result.allowed_generation_mask
+                    if _scene_result.allowed_generation_mask is not None
+                    else _np_s4.full((h, w), 255, dtype=_np_s4.uint8)
+                )
+                _restored = _apply_immutable(img, result_img, _ssc_allowed_mask)
+                _immutable_metrics = _compute_immutable_metrics(img, _restored, _ssc_allowed_mask)
+                _log_immutable(_immutable_metrics, job_id=jid, spec_id=spec_id)
+                _is_outpaint = (
+                    _scene_result.canvas_transform is not None
+                    and getattr(_scene_result.canvas_transform, "strategy", "") == "subject_preserving_outpaint"
+                )
+                print(
+                    f"[PIXEL_RESTORE] jobId={jid} specId={spec_id}"
+                    f" subjectPreservingTransform={_is_outpaint}"
+                    f" allowedGenerationCoverage={_immutable_metrics.get('allowedGenerationCoverage', 1.0):.4f}"
+                    f" outsideAllowedChangedPixelRatio={_immutable_metrics.get('outsideAllowedChangedPixelRatio', 0.0):.4f}"
+                    f" restoredPixelCount={_immutable_metrics.get('restoredOriginalPixelCount', 0)}",
+                    flush=True,
+                )
+                result_img = _restored
+            except Exception as _pr_err:
+                print(f"[PIXEL_RESTORE] failed jobId={jid} specId={spec_id}: {_pr_err}", flush=True)
+
         else:
             # Legacy: Bundle A background plate + Source Faithful Repair
             _bg_plate_img: object = None
@@ -1750,7 +1861,9 @@ def _generate_ai_only(
         # Bundle C-1: Stage21 verdict pipeline
         _verdict_summary = None
         _verdict_manifest = None
-        _visual_verdict_enabled = os.environ.get("VISUAL_VERDICT_ENABLED", "false").lower() == "true"
+        # Stage 6: Visual verdict is always required in production (ai-auto path).
+        # VISUAL_VERDICT_ENABLED env var is ignored — production always measures visually.
+        _visual_verdict_enabled = True
         try:
             from verdict.manifest_builder import build_manifest_from_fg_layers
             from verdict.technical_evaluator import evaluate_technical
@@ -1761,15 +1874,14 @@ def _generate_ai_only(
             from verdict.serializer import serialize_verdict_summary, extract_provenance_fields
             from verdict.models import VerdictResult
 
-            # D-2: determine manifest source type and fg_layers input
+            # Stage 3: Force full_image_semantic — the sole manifest source type in production.
+            # psd_layer and legacy types are never used (psd_layers_classified cleared by Stage 2).
+            from verdict.models import SOURCE_TYPE_FULL_IMAGE_SEMANTIC as _SRC_FULL_SEMANTIC
             _d2_active = bool(
                 _d2_result and _d2_result.success and _d2_result.d2_applicable
                 and _active_fg_layers
             )
-            _manifest_source_type = (
-                "psd_layer" if psd_layers_classified
-                else ("ai_segmentation" if _d2_active else "unknown")
-            )
+            _manifest_source_type = _SRC_FULL_SEMANTIC
             _verdict_manifest = build_manifest_from_fg_layers(
                 _active_fg_layers,
                 source_type=_manifest_source_type,
@@ -1813,21 +1925,15 @@ def _generate_ai_only(
                 safe_zone_status=spec.get("safeZoneParseStatus", ""),
                 job_id=jid, spec_id=spec_id,
             )
-            # E-4: Run visual evaluator when VISUAL_VERDICT_ENABLED=true
-            if _visual_verdict_enabled:
-                from verdict.visual_evaluator import evaluate_visual as _eval_visual
-                _visual_verdict = _eval_visual(
-                    source_img=img,
-                    result_img=result_img,
-                    target_w=w, target_h=h,
-                    job_id=jid, spec_id=spec_id,
-                )
-            else:
-                _visual_verdict = VerdictResult(
-                    name="visualVerdict", status="NOT_TESTED", required=False,
-                    reasonCodes=["VISUAL_NOT_TESTED"],
-                    messages=["VISUAL_VERDICT_ENABLED=false: visual assessment skipped"],
-                )
+            # Stage 6: Use evaluate_extended_visual (15 P1-D metrics) — always required.
+            # NOT_TESTED is treated as FAIL by aggregate_stage21_verdict when visual_required=True.
+            from verdict.visual_evaluator import evaluate_extended_visual as _eval_extended_visual
+            _visual_verdict = _eval_extended_visual(
+                source_img=img,
+                result_img=result_img,
+                target_w=w, target_h=h,
+                job_id=jid, spec_id=spec_id,
+            )
         except Exception as _vp_err:
             print(f"[STAGE21] verdict pipeline error spec={name}: {_vp_err}", flush=True)
             _verdict_summary = None

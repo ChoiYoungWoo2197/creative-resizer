@@ -13,6 +13,8 @@ MASK_STRATEGY_NONE = "none"
 
 # Transform strategy
 TRANSFORM_STRATEGY_COVER_CROP = "cover_crop"
+TRANSFORM_STRATEGY_SUBJECT_PRESERVING_OUTPAINT = "subject_preserving_outpaint"
+MASK_STRATEGY_OUTPAINT_REGIONS = "outpaint_regions"
 
 # Provider input source
 PROVIDER_INPUT_FULL_COMPOSITE = "full_composite"
@@ -81,3 +83,6 @@ class SemanticSceneCleanupResult:
     source_h: int = 0
     target_w: int = 0
     target_h: int = 0
+    # Stage 4: allowed generation mask — numpy uint8 (H,W), 255=AI allowed, 0=immutable.
+    # None means full-canvas (all pixels allowed, no restoration applied).
+    allowed_generation_mask: object = None
