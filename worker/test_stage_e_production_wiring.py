@@ -512,6 +512,122 @@ class TestStage6VisualVerdictRequired:
         assert "from verdict.visual_evaluator import evaluate_extended_visual" in src
 
 
+# ── Mother fixture: 1200×1200 → 1250×560 geometry wiring ─────────────────────
+# source=1200×1200, target=1250×560
+# scale=min(1250/1200, 560/1200)=0.466667  scaledSize=560×560
+# offsetX=(1250-560)//2=345  offsetY=0
+# sourceMappedCoverage=313600/700000≈0.448  allowedGenerationCoverage≈0.552
+
+@pytest.fixture()
+def mother_1200_src(tmp_path):
+    """1200×1200 square source — triggers wide landscape outpaint (offsetX=345)."""
+    img = Image.new("RGB", (1200, 1200), color=(80, 100, 160))
+    p = str(tmp_path / "mother_1200.png")
+    img.save(p, "PNG")
+    return p
+
+
+def _mother_specs():
+    return [{"media": "banner", "width": 1250, "height": 560,
+             "name": "banner-1250x560", "slug": ""}]
+
+
+class TestMotherFixtureTransformWiring:
+    """Verify 1200×1200 → 1250×560 transform geometry is wired correctly.
+
+    TRANSFORM_GEOMETRY must show actualOffset=345,0 (not 0,0).
+    allowedGenerationCoverage must be ≈0.552 (not 1.0).
+    PIXEL_RESTORE_SKIPPED and OFFSET_X_MISMATCH must be absent.
+    """
+
+    def test_transform_geometry_log_emitted(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        assert "[TRANSFORM_GEOMETRY]" in out, "TRANSFORM_GEOMETRY log missing"
+
+    def test_actual_offset_x_is_345_not_zero(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        tg_lines = [l for l in out.splitlines() if "[TRANSFORM_GEOMETRY]" in l]
+        assert tg_lines, "No [TRANSFORM_GEOMETRY] line"
+        line = tg_lines[0]
+        assert "actualOffset=345,0" in line, (
+            f"Expected actualOffset=345,0 in: {line}"
+        )
+
+    def test_expected_offset_matches_actual(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        tg_lines = [l for l in out.splitlines() if "[TRANSFORM_GEOMETRY]" in l]
+        assert tg_lines
+        line = tg_lines[0]
+        assert "expectedOffset=345,0" in line, (
+            f"Expected expectedOffset=345,0 in: {line}"
+        )
+
+    def test_geometry_valid_true(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        tg_lines = [l for l in out.splitlines() if "[TRANSFORM_GEOMETRY]" in l]
+        assert tg_lines
+        assert "geometryValid=True" in tg_lines[0], tg_lines[0]
+
+    def test_offset_x_mismatch_absent(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        assert "OFFSET_X_MISMATCH" not in out, (
+            f"OFFSET_X_MISMATCH still in logs:\n{out}"
+        )
+
+    def test_allowed_generation_coverage_not_one(self, mother_1200_src, tmp_path):
+        """allowedGenerationCoverage must not be 1.0 (outpaint region ≈ 0.552)."""
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        pr_lines = [l for l in out.splitlines() if "[PIXEL_RESTORE]" in l]
+        assert pr_lines, "No [PIXEL_RESTORE] line"
+        line = pr_lines[0]
+        assert "allowedGenerationCoverage=1.0000" not in line, (
+            f"Full-canvas fallback triggered:\n{line}"
+        )
+        # Coverage must be between 0.4 and 0.7 (outpaint side regions)
+        import re
+        m = re.search(r"allowedGenerationCoverage=(\d+\.\d+)", line)
+        assert m, f"allowedGenerationCoverage not found in: {line}"
+        cov = float(m.group(1))
+        assert 0.40 < cov < 0.75, (
+            f"Unexpected allowedGenerationCoverage={cov} (expected ≈0.552)"
+        )
+
+    def test_canonical_size_mismatch_absent(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        assert "CANONICAL_SIZE_MISMATCH" not in out, (
+            f"Canonical size mismatch still present:\n{out}"
+        )
+
+    def test_immutable_metrics_full_canvas_absent(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        assert "IMMUTABLE_METRICS_FULL_CANVAS" not in out, (
+            f"Full-canvas metrics fallback still present:\n{out}"
+        )
+
+    def test_pixel_restore_skipped_absent(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        # PIXEL_RESTORE_SKIPPED means restore was not applied — wrong for outpaint
+        assert "PIXEL_RESTORE_SKIPPED" not in out or "size_mismatch" not in out, (
+            f"Pixel restore skipped due to size mismatch:\n{out}"
+        )
+
+    def test_subject_preserving_transform_true(self, mother_1200_src, tmp_path):
+        results, out = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        pr_lines = [l for l in out.splitlines() if "[PIXEL_RESTORE]" in l]
+        assert pr_lines
+        assert "subjectPreservingTransform=True" in pr_lines[0], pr_lines[0]
+
+    def test_result_file_at_target_dimensions(self, mother_1200_src, tmp_path):
+        results, _ = _generate(mother_1200_src, _mother_specs(), str(tmp_path))
+        assert len(results) == 1
+        r = results[0]
+        assert r["width"] == 1250
+        assert r["height"] == 560
+        assert os.path.exists(r["filePath"])
+        img = Image.open(r["filePath"])
+        assert img.size == (1250, 560)
+
+
 # ── Cross-cutting: All stages together ───────────────────────────────────────
 
 class TestAllStagesTogether:
