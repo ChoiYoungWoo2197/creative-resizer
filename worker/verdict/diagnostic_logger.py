@@ -760,8 +760,10 @@ def log_result_semantics(
             overall_status = "PASS" if provider_succeeded else "FAIL"
 
         final_result_valid = (overall_status == "PASS")
-        success_count_incremented = provider_succeeded
-        valid_count_incremented = final_result_valid
+        # Stage 6: validResultCountIncremented reflects verdict-derived validity;
+        # providerSuccessCountIncremented reflects raw provider call success.
+        valid_result_count_incremented = final_result_valid
+        provider_success_count_incremented = provider_succeeded
 
         visual_status = "NOT_TESTED"
         if visual_verdict is not None:
@@ -774,8 +776,8 @@ def log_result_semantics(
             f" overallStatus={overall_status}"
             f" finalResultValid={final_result_valid}"
             f" visualVerdictStatus={visual_status}"
-            f" successCountIncremented={success_count_incremented}"
-            f" validCountIncremented={valid_count_incremented}",
+            f" validResultCountIncremented={valid_result_count_incremented}"
+            f" providerSuccessCountIncremented={provider_success_count_incremented}",
             flush=True,
         )
 

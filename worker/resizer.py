@@ -2146,10 +2146,13 @@ def _generate_ai_only(
                 _verdict_summary.overallStatus if _verdict_summary is not None
                 else ("PASS" if (_scene_result and _scene_result.success) else "FAIL")
             )
+            # Stage 6: finalResultValid is verdict-derived (not raw provider success)
+            _final_result_valid = (_spec_verdict == "PASS")
             print(
                 f"[AI_SPEC_END] jobId={jid} spec={name} size={w}x{h}"
                 f" verdict={_spec_verdict}"
-                f" success={_scene_result.success if _scene_result else False}"
+                f" finalResultValid={_final_result_valid}"
+                f" providerSuccess={_scene_result.success if _scene_result else False}"
                 f" provider={_scene_result.provider_name if _scene_result else ''}"
                 f" attempts={_scene_result.attempt_count if _scene_result else 0}"
                 f" elapsedMs={spec_elapsed_ms}",
@@ -2400,11 +2403,16 @@ def _generate_ai_only(
         })
 
     total_elapsed_ms = int((_time.time() - t_all) * 1000)
+    # Stage 6: successCount renamed to validResultCount (verdict-derived), provider count separate
     _valid_count = sum(1 for r in results if r.get("finalResultValid") is True)
+    _provider_success_count = len(results)
+    _failed_result_count = _provider_success_count - _valid_count
     print(
         f"[AI_ONLY_END] jobId={jid} elapsedMs={total_elapsed_ms}"
-        f" successCount={len(results)} specCount={len(specs)}"
-        f" validCount={_valid_count}"
+        f" validResultCount={_valid_count}"
+        f" providerSuccessCount={_provider_success_count}"
+        f" failedResultCount={_failed_result_count}"
+        f" specCount={len(specs)}"
         f" actualProviderRequestCount={actual_provider_request_count}",
         flush=True,
     )

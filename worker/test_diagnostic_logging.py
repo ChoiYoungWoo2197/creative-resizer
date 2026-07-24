@@ -529,29 +529,29 @@ class TestResultSemanticsLog:
             "providerSucceeded=", "artifactGenerated=",
             "overallStatus=", "finalResultValid=",
             "visualVerdictStatus=",
-            "successCountIncremented=", "validCountIncremented=",
+            "validResultCountIncremented=", "providerSuccessCountIncremented=",
         )
 
     def test_overall_fail_provider_succeeds_no_valid_count(self):
-        """Overall FAIL despite provider success → validCountIncremented=False."""
+        """Overall FAIL despite provider success → validResultCountIncremented=False."""
         from verdict.diagnostic_logger import log_result_semantics
         sr = self._make_scene_result(success=True)
         vs = self._make_verdict_summary("FAIL")
         out = _capture(log_result_semantics, sr, vs, None, job_id="j", spec_id="s")
         lines = _lines_tagged(out, "RESULT_SEMANTICS")
         assert lines
-        assert "validCountIncremented=False" in lines[0], lines[0]
-        assert "successCountIncremented=True" in lines[0], lines[0]
+        assert "validResultCountIncremented=False" in lines[0], lines[0]
+        assert "providerSuccessCountIncremented=True" in lines[0], lines[0]
 
     def test_overall_fail_success_count_not_incremented_when_provider_fails(self):
-        """Provider failed → successCountIncremented=False."""
+        """Provider failed → providerSuccessCountIncremented=False."""
         from verdict.diagnostic_logger import log_result_semantics
         sr = self._make_scene_result(success=False)
         vs = self._make_verdict_summary("FAIL")
         out = _capture(log_result_semantics, sr, vs, None, job_id="j", spec_id="s")
         lines = _lines_tagged(out, "RESULT_SEMANTICS")
         assert lines
-        assert "successCountIncremented=False" in lines[0], lines[0]
+        assert "providerSuccessCountIncremented=False" in lines[0], lines[0]
 
     def test_never_raises(self):
         from verdict.diagnostic_logger import log_result_semantics
@@ -752,7 +752,7 @@ class TestIntegrationDiagnosticLogs:
                        "providerSucceeded=", "artifactGenerated=",
                        "overallStatus=", "finalResultValid=",
                        "visualVerdictStatus=",
-                       "successCountIncremented=", "validCountIncremented=")
+                       "validResultCountIncremented=", "providerSuccessCountIncremented=")
 
     def test_root_cause_summary_fields(self, png_src, tmp_path):
         _, out = self._run(png_src, tmp_path)
@@ -834,12 +834,12 @@ class TestIntegrationAnomalyConditions:
             assert "reason=" in skipped[0], skipped[0]
 
     def test_result_semantics_valid_count_false_on_verdict_fail(self, png_src, tmp_path):
-        """Visual verdict fails (size mismatch → full regen) → validCountIncremented=False."""
+        """Visual verdict fails (size mismatch → full regen) → validResultCountIncremented=False."""
         _, out = _generate(png_src, _specs(300, 250), str(tmp_path))
         rs_lines = _lines_tagged(out, "RESULT_SEMANTICS")
         assert rs_lines, "No [RESULT_SEMANTICS] line"
         line = rs_lines[0]
         if "overallStatus=FAIL" in line:
-            assert "validCountIncremented=False" in line, (
-                f"overallStatus=FAIL but validCountIncremented is not False.\nLine: {line}"
+            assert "validResultCountIncremented=False" in line, (
+                f"overallStatus=FAIL but validResultCountIncremented is not False.\nLine: {line}"
             )
