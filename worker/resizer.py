@@ -1541,10 +1541,28 @@ def _generate_ai_only(
                     build_semantic_manifest, log_semantic_group,
                 )
                 _d2_fg = (_d2_result.fg_layers if _d2_result is not None else []) or []
+                # Stage 3: Build semantic inventory before extraction to determine
+                # expected required roles from high-quality objects only.
+                # Contaminated layers (confidence=0, no evidence, no maskRef) are
+                # excluded from build_semantic_manifest to break the circular dependency
+                # where required roles were derived from extracted objects.
+                _semantic_inventory = None
+                _d2_fg_qualified = _d2_fg
+                try:
+                    from scene_cleanup.semantic_inventory import build_semantic_inventory as _build_si
+                    _semantic_inventory = _build_si(
+                        _d2_fg,
+                        job_id=jid,
+                        spec_id=spec_id,
+                    )
+                    _d2_fg_qualified = _semantic_inventory.highQualityLayers
+                except Exception as _si_err:
+                    print(f"[SEMANTIC_INVENTORY_ERROR] jobId={jid}: {_si_err}", flush=True)
+                    _d2_fg_qualified = _d2_fg
                 _semantic_manifest = build_semantic_manifest(
                     job_id=jid,
                     spec_id=spec_id,
-                    d2_fg_layers=_d2_fg,
+                    d2_fg_layers=_d2_fg_qualified,
                 )
                 if _semantic_manifest.cta_group_ids:
                     log_semantic_group(_semantic_manifest, job_id=jid, spec_id=spec_id)
