@@ -1781,7 +1781,30 @@ def _generate_ai_only(
                 )
                 _virtual_fg_for_spec = []
 
-        # Diagnostic A: [SEMANTIC_OBJECT] per virtual fg layer (after D-2 scaling)
+        # Stage 4: Reject contaminated fg_layers after D-2 scaling.
+        # Layers with confidence=0, no evidence, no maskRef, or recompose=False
+        # are not composited — they have no meaningful pixel presence.
+        if _virtual_fg_for_spec:
+            try:
+                from foreground.mask_quality import filter_clean_fg_layers as _filt_fg
+                from verdict.diagnostic_logger import log_semantic_object_reject as _dl_reject4
+                _fg_clean4, _fg_rejected4 = _filt_fg(
+                    _virtual_fg_for_spec, job_id=jid, spec_id=spec_id
+                )
+                for _rej_layer4, _rej_qr4 in _fg_rejected4:
+                    _dl_reject4(
+                        _rej_layer4,
+                        reason_codes=_rej_qr4.reasonCodes,
+                        mask_metrics={},
+                        fail_closed=True,
+                        job_id=jid,
+                        spec_id=spec_id,
+                    )
+                _virtual_fg_for_spec = _fg_clean4
+            except Exception as _mq4_err:
+                print(f"[MASK_QUALITY] filter error spec={name}: {_mq4_err}", flush=True)
+
+        # Diagnostic A: [SEMANTIC_OBJECT] per virtual fg layer (after D-2 scaling + contamination filter)
         try:
             from verdict.diagnostic_logger import log_semantic_objects as _dl_sem_obj
             _dl_sem_obj(_virtual_fg_for_spec, job_id=jid, spec_id=spec_id)
