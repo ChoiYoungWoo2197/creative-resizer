@@ -23,11 +23,13 @@ from virtual_foreground.models import (
     ROLE_HUMAN_SUBJECT,
 )
 
-_OBJECT_ANALYSIS_VERSION = "d2-object-analysis-v1"
+_OBJECT_ANALYSIS_VERSION = "unified-ad-object-v1"
 
 _VALID_ROLES = frozenset({
-    "product", "title", "headline", "body_text",
-    "logo", "cta", "badge", "decorative", "human_subject",
+    "product", "logo", "icon",
+    "title", "subtitle", "headline", "body_text", "cta",
+    "badge", "label", "decorative_shape", "decorative",
+    "human_subject",
 })
 
 
@@ -39,8 +41,120 @@ class ObjectAnalysisProvider(Protocol):
         ...
 
 
+class GPTUnifiedObjectProvider:
+    """Real GPT provider for unified-ad-object-v1 analysis.
+
+    Calls OpenAI chat completions with vision to detect all ad elements.
+    Reads BACKGROUND_AI_API_KEY from environment.
+    """
+
+    PROVIDER_NAME = "openai"
+    ANALYSIS_VERSION = "unified-ad-object-v1"
+
+    def __init__(self, api_key: str | None = None, model: str = "gpt-4o") -> None:
+        import os
+        self._api_key = api_key or os.environ.get("BACKGROUND_AI_API_KEY", "")
+        self._model = model
+        self._configured = bool(self._api_key)
+
+    def analyze(self, image: Image.Image, source_sha256: str) -> dict:
+        """Analyze canonical image for ad objects. Returns unified-ad-object-v1 dict."""
+        if not self._configured:
+            raise RuntimeError(
+                "GPTUnifiedObjectProvider: BACKGROUND_AI_API_KEY not set"
+            )
+
+        import base64
+        import io
+        import json
+        import urllib.request
+
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+        prompt = (
+            "You are an expert ad creative analyst.\n"
+            "Analyze this advertisement image and identify all visible ad elements.\n\n"
+            "Classify each element into one of these roles:\n"
+            "product, logo, icon, title, subtitle, body_text, cta, badge, label, decorative_shape\n\n"
+            "Exclude: human subjects, hands, skin, clothing, jewelry, photo backgrounds, lighting, shadows.\n\n"
+            "For each element return JSON with these fields:\n"
+            "- objectId: unique string\n"
+            "- role: one of the roles above\n"
+            "- required: true if this role is essential for the ad\n"
+            "- accepted: true\n"
+            "- confidence: 0.0-1.0\n"
+            "- bbox: {x, y, width, height} in pixels\n"
+            "- polygon: [[x,y],...] outline of the object (at least 4 points)\n"
+            "- holes: [] (empty unless object has transparent cutouts)\n"
+            "- zIndex: render order (0=back)\n"
+            "- groupId: shared group string if grouped with another element, else empty\n"
+            "- removalTarget: true (should be removed for background cleanup)\n"
+            "- maskConfidence: 0.0-1.0 (for product/logo only)\n"
+            "- edgeFeatherPx: 2 (for product/logo)\n"
+            "- cropPadding: 4 (for product/logo)\n"
+            "- text: visible text string (for title/subtitle/body_text/cta)\n"
+            "- fontFamilyGuess: best guess font family name\n"
+            "- fontWeight: normal|bold|800 etc.\n"
+            "- fontSize: estimated px\n"
+            "- textAlign: left|center|right\n"
+            "- segments: [{text, color}] if multi-color text\n"
+            "- fillColor: #RRGGBB hex (for badge/label/decorative_shape)\n"
+            "- opacity: 0.0-1.0 (for shapes)\n"
+            "- borderRadius: px corner radius (for shapes)\n\n"
+            "Return ONLY a JSON object: {\"objects\": [...], \"analysisVersion\": \"unified-ad-object-v1\"}"
+        )
+
+        payload = json.dumps({
+            "model": self._model,
+            "max_tokens": 4096,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{b64}",
+                        "detail": "high",
+                    }},
+                ],
+            }],
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+
+        content = raw["choices"][0]["message"]["content"]
+        # Strip markdown fences if present
+        if content.strip().startswith("```"):
+            content = content.strip().lstrip("`").lstrip("json").rstrip("`").strip()
+
+        parsed = json.loads(content)
+        objects = parsed.get("objects") or []
+        return {
+            "provider": self.PROVIDER_NAME,
+            "model": self._model,
+            "analysisVersion": self.ANALYSIS_VERSION,
+            "objects": objects,
+            "cacheHit": False,
+            "cacheVersionCompatible": False,
+        }
+
+
 class FakeObjectAnalysisProvider:
-    """Deterministic fake provider for tests — zero API calls."""
+    """Deterministic fake provider — zero API calls.
+
+    Returns unified-ad-object-v1 format objects with fake polygon/text/shape data.
+    """
 
     def __init__(self, detections: list[dict] | None = None):
         self._detections = detections
@@ -52,40 +166,57 @@ class FakeObjectAnalysisProvider:
             return {
                 "provider": self.provider,
                 "model": self.model,
+                "analysisVersion": "unified-ad-object-v1",
                 "objects": self._detections,
+                "cacheHit": False,
+                "cacheVersionCompatible": False,
             }
 
-        # Default: two fake detections proportional to image size
         w, h = image.size
         return {
             "provider": self.provider,
             "model": self.model,
+            "analysisVersion": "unified-ad-object-v1",
+            "cacheHit": False,
+            "cacheVersionCompatible": False,
             "objects": [
                 {
-                    "detection_id": "det_0001",
-                    "semantic_role": "product",
-                    "layout_role": "product",
-                    "bbox": {"x": w // 4, "y": h // 4,
-                             "width": w // 2, "height": h // 2},
-                    "confidence": 0.9,
+                    "objectId": "fake_product_0001",
+                    "role": "product",
                     "required": True,
-                    "priority": 1,
-                    "text_content": "",
-                    "z_order": 0,
-                    "contains_product": True,
+                    "accepted": True,
+                    "confidence": 0.9,
+                    "bbox": {"x": w // 4, "y": h // 4, "width": w // 2, "height": h // 2},
+                    "polygon": [
+                        [w // 4, h // 4], [w * 3 // 4, h // 4],
+                        [w * 3 // 4, h * 3 // 4], [w // 4, h * 3 // 4],
+                    ],
+                    "holes": [],
+                    "zIndex": 2,
+                    "groupId": "",
+                    "removalTarget": True,
+                    "maskConfidence": 0.9,
+                    "edgeFeatherPx": 2,
+                    "cropPadding": 4,
                 },
                 {
-                    "detection_id": "det_0002",
-                    "semantic_role": "title",
-                    "layout_role": "title",
-                    "bbox": {"x": w // 8, "y": h // 8,
-                             "width": 3 * w // 4, "height": h // 8},
-                    "confidence": 0.85,
+                    "objectId": "fake_title_0002",
+                    "role": "title",
                     "required": True,
-                    "priority": 2,
-                    "text_content": "Sample Title",
-                    "z_order": 1,
-                    "contains_text": True,
+                    "accepted": True,
+                    "confidence": 0.85,
+                    "bbox": {"x": w // 8, "y": h // 8, "width": 3 * w // 4, "height": h // 8},
+                    "polygon": [],
+                    "holes": [],
+                    "zIndex": 8,
+                    "groupId": "",
+                    "removalTarget": True,
+                    "text": "Sample Ad Title",
+                    "fontFamilyGuess": "Pretendard",
+                    "fontWeight": "bold",
+                    "fontSize": 28,
+                    "textAlign": "center",
+                    "segments": [{"text": "Sample Ad Title", "color": "#FFFFFF"}],
                 },
             ],
         }

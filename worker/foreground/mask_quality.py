@@ -63,12 +63,20 @@ def check_mask_contamination(layer: dict) -> MaskQualityResult:
     )
     recompose = bool(layer.get("recompose", False))
 
+    render_mode = (
+        layer.get("renderMode")
+        or layer.get("render_mode")
+        or ""
+    )
+    # text_render and shape_render objects are rendered directly — maskRef not required.
+    _is_rendered_mode = render_mode in ("text_render", "shape_render")
+
     reasons = []
     if confidence <= 0:
         reasons.append("CONFIDENCE_ZERO")
     if not evidence:
         reasons.append("NO_SEMANTIC_EVIDENCE")
-    if not mask_ref:
+    if not mask_ref and not _is_rendered_mode:
         reasons.append("NO_MASK_REF")
     if not recompose:
         reasons.append("RECOMPOSE_FALSE")

@@ -17,17 +17,23 @@ from dataclasses import dataclass, field
 from PIL import Image
 
 # Role → z-order index (lower = composited first / behind)
+# Unified pipeline order: scene plate → shape_render → transparent_image → text_render
 _ROLE_ZORDER: dict[str, int] = {
-    "background":    0,
-    "human_subject": 1,   # person behind product (typical ad layout)
-    "product":       2,
-    "main_image":    3,   # generic visual element
-    "decorative":    4,
-    "badge":         5,
-    "logo":          6,
-    "body_text":     7,
-    "title":         8,
-    "cta":           9,   # CTA always on top
+    "background":       0,
+    "human_subject":    1,
+    "product":          2,
+    "main_image":       3,
+    "icon":             3,
+    "decorative":       4,
+    "decorative_shape": 4,
+    "label":            5,
+    "badge":            5,
+    "logo":             6,
+    "subtitle":         7,
+    "body_text":        7,
+    "title":            8,
+    "headline":         8,
+    "cta":              9,
 }
 
 

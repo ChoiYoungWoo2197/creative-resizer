@@ -1170,6 +1170,18 @@ def _generate_ai_only(
     _psd_layer_hints_enabled = os.environ.get("PSD_LAYER_HINTS_ENABLED", "false").lower() == "true"
     log_psd_layer_authority(job_id=jid, enabled=_psd_layer_hints_enabled, runtime_decision_count=0)
 
+    # Unified pipeline: all inputs share the same canonical-image-first flow.
+    print(
+        f"[UNIFIED_PIPELINE] jobId={jid}"
+        f" sourceType={source_type}"
+        f" canonicalWidth={img.width}"
+        f" canonicalHeight={img.height}"
+        f" unifiedPipeline=true"
+        f" semanticAuthority=full_image"
+        f" psdLayerAuthorityUsed=false",
+        flush=True,
+    )
+
     # P0-A: Pipeline sequence tracker — records canonical size immediately after load.
     # Analysis and extraction sizes are recorded after D-2 (below).
     # Target size is recorded per-spec (in the spec loop).
@@ -1430,60 +1442,84 @@ def _generate_ai_only(
 
     _work_base = os.environ.get("AI_WORK_DIR", "/app/storage/work")
 
-    # D-2: Virtual Foreground Extraction (job-level, once per job).
-    # E-1: ALL inputs (PSD/PNG/JPG) are treated as semantically flattened.
-    # PSD native layers are NOT passed to D-2 (not semantic authority).
-    # native_layers is passed only when PSD_LAYER_HINTS_ENABLED=true (debug).
-    _d2_result = None
-    _d2_enabled = os.environ.get("VIRTUAL_FOREGROUND_D2_ENABLED", "true").lower() == "true"
+    # Unified GPT Object Pipeline (job-level, once per job).
+    # Replaces D-2 diff-based extraction.
+    # GPT analysis runs on canonical full image BEFORE AI cleanup.
+    # D-2 result is permanently disabled (diff-based detection blocked).
+    _d2_result = None  # D-2 disabled; unified pipeline used instead
+    _unified_fg_layers: list = []
+    _gpt_object_count: int = 0
+    _gpt_accepted_count: int = 0
 
-    if _d2_enabled:
-        try:
-            from virtual_foreground.manifest_assembler import run_virtual_foreground_extraction
-            from virtual_foreground.object_analyzer import FakeObjectAnalysisProvider
+    try:
+        from virtual_foreground.object_analyzer import (
+            GPTUnifiedObjectProvider, FakeObjectAnalysisProvider,
+        )
+        from foreground.unified_manifest_adapter import adapt_gpt_objects_to_fg_layers
 
-            # In production: replace FakeObjectAnalysisProvider with real analysis provider.
-            # Tests always use the fake provider (ACTUAL_OPENAI_REQUESTS=0).
-            _analysis_provider_cls = os.environ.get("D2_ANALYSIS_PROVIDER", "fake")
-            if _analysis_provider_cls == "fake":
-                _analysis_provider = FakeObjectAnalysisProvider()
-            else:
-                _analysis_provider = FakeObjectAnalysisProvider()  # safe default
+        _analysis_provider_cls = os.environ.get("D2_ANALYSIS_PROVIDER", "fake")
+        if _analysis_provider_cls == "openai":
+            _analysis_provider = GPTUnifiedObjectProvider()
+        else:
+            _analysis_provider = FakeObjectAnalysisProvider()
 
-            # E-1: never pass PSD layers as native authority (always empty for semantic mode)
-            _d2_native_layers = psd_layers_classified if _psd_layer_hints_enabled else []
-            _d2_result = run_virtual_foreground_extraction(
-                source_image=img,
-                source_path=psd_path,
-                source_sha256=_source_file_sha256,
-                source_type=source_type,
-                native_layers=_d2_native_layers,
-                background_provider=provider,
-                analysis_provider=_analysis_provider,
-                output_dir=os.path.join(output_dir, "stage21_d2", jid),
-                job_id=jid,
-            )
-            if _d2_result.success and _d2_result.d2_applicable:
-                print(
-                    f"[D2_EXTRACTION] SUCCESS jobId={jid}"
-                    f" extractedCount={_d2_result.virtual_extracted_count}"
-                    f" fgLayers={len(_d2_result.fg_layers)}",
-                    flush=True,
-                )
-            elif not _d2_result.d2_applicable:
-                print(
-                    f"[D2_EXTRACTION] NOT_APPLICABLE jobId={jid}"
-                    f" reason={_d2_result.d2_reason}",
-                    flush=True,
-                )
-        except Exception as _d2_pre_err:
-            print(
-                f"[D2_EXTRACTION] PRE_LOOP_FAILED jobId={jid}: {_d2_pre_err}",
-                flush=True,
-            )
-            _d2_result = None
-    else:
-        print(f"[D2_EXTRACTION] DISABLED jobId={jid}", flush=True)
+        print(
+            f"[GPT_OBJECT_ANALYSIS_START] jobId={jid}"
+            f" input=canonical_full_image"
+            f" cleanupExecuted=false"
+            f" analysisVersion=unified-ad-object-v1",
+            flush=True,
+        )
+        _gpt_raw = _analysis_provider.analyze(img, _composite_sha256)
+        _gpt_objects = _gpt_raw.get("objects") or []
+        _gpt_object_count = len(_gpt_objects)
+        _gpt_accepted_count = sum(1 for o in _gpt_objects if o.get("accepted", True))
+        _gpt_detected_roles = [o.get("role") for o in _gpt_objects]
+        _gpt_required_roles = [o.get("role") for o in _gpt_objects if o.get("required", False)]
+        _gpt_cache_hit = bool(_gpt_raw.get("cacheHit", False))
+        _gpt_cache_compat = bool(_gpt_raw.get("cacheVersionCompatible", False))
+        print(
+            f"[GPT_OBJECT_ANALYSIS_END] jobId={jid}"
+            f" gptRequestCount=1"
+            f" detectedCount={_gpt_object_count}"
+            f" acceptedCount={_gpt_accepted_count}"
+            f" roles={_gpt_detected_roles}"
+            f" requiredRoles={_gpt_required_roles}"
+            f" cacheHit={_gpt_cache_hit}"
+            f" cacheVersionCompatible={_gpt_cache_compat}",
+            flush=True,
+        )
+
+        # Build fg_layers: polygon extraction for product/logo, metadata for text/shape
+        _unified_fg_layers = adapt_gpt_objects_to_fg_layers(
+            gpt_objects=_gpt_objects,
+            source_image=img,
+            job_id=jid,
+        )
+
+        # removalMask (for verification only — NOT used as generation input)
+        _removal_targets = [o for o in _gpt_objects if o.get("removalTarget", True)]
+        _removal_roles = [o.get("role") for o in _removal_targets]
+        _removal_px = sum(
+            int(o.get("bbox", {}).get("width", 0)) * int(o.get("bbox", {}).get("height", 0))
+            for o in _removal_targets
+        )
+        _total_px = img.width * img.height
+        print(
+            f"[REMOVAL_MASK] jobId={jid}"
+            f" objectCount={len(_removal_targets)}"
+            f" roles={_removal_roles}"
+            f" maskPixelCount={_removal_px}"
+            f" maskCoverage={(_removal_px / _total_px if _total_px > 0 else 0):.4f}"
+            f" valid={len(_removal_targets) > 0}",
+            flush=True,
+        )
+    except Exception as _unified_err:
+        print(
+            f"[UNIFIED_PIPELINE_ERROR] jobId={jid} error={_unified_err}",
+            flush=True,
+        )
+        _unified_fg_layers = []
 
     # P0-A: Record analysis and extraction sizes after D-2 (canonical full-image sizes).
     # D-2 always operates on img (canonical), so both sizes == canonical.
@@ -1569,6 +1605,13 @@ def _generate_ai_only(
             except Exception as _sm_err:
                 print(f"[SEMANTIC_MANIFEST_BUILD_ERROR] jobId={jid} err={_sm_err}", flush=True)
 
+            print(
+                f"[SCENE_CLEANUP_START] jobId={jid} specId={spec_id}"
+                f" input=canonical_full_image"
+                f" mode=semantic_scene_cleanup"
+                f" removalMaskUsedAsGenerationInput=false",
+                flush=True,
+            )
             _scene_result = run_semantic_scene_cleanup(
                 source_path=psd_path,
                 source_type=source_type,
@@ -1596,6 +1639,13 @@ def _generate_ai_only(
             result_img = _scene_result.scene_plate_image
             if result_img.size != (w, h):
                 result_img = result_img.resize((w, h), Image.LANCZOS)
+            print(
+                f"[SCENE_CLEANUP_END] jobId={jid} specId={spec_id}"
+                f" success=true"
+                f" outputWidth={result_img.width}"
+                f" outputHeight={result_img.height}",
+                flush=True,
+            )
 
             # Diagnostic B: [TRANSFORM_GEOMETRY] after SSC delivers scene plate
             try:
@@ -1621,7 +1671,10 @@ def _generate_ai_only(
             )
             print(
                 f"[SCENE_PLATE] jobId={jid}"
+                f" finalized=true"
+                f" source=ai_full_image_cleanup"
                 f" fullSourceRestoreUsed=false"
+                f" sourceOriginalCompositeUsed=false"
                 f" restoredPixelCount=0",
                 flush=True,
             )
@@ -1711,26 +1764,41 @@ def _generate_ai_only(
         _active_fg_layers: list = []     # populated by PSD or D-2 path
         _decorative_policy_report: dict = {}  # D-3: populated by decorative_policy
 
-        # D-2: scale virtual fg_layers to this spec's target dimensions
+        # Unified pipeline: scale fg_layers to this spec's target dimensions.
+        # Image layers (product/logo): scale existing RGBA with scale_virtual_fg_layers().
+        # Text/shape layers: scale bbox only; image will be rendered per-spec after SSC.
         _virtual_fg_for_spec: list = []
-        if (
-            _d2_result is not None
-            and _d2_result.success
-            and _d2_result.d2_applicable
-            and _d2_result.fg_layers
-        ):
+        if _unified_fg_layers:
             try:
                 from virtual_foreground.manifest_assembler import scale_virtual_fg_layers
-                _virtual_fg_for_spec = scale_virtual_fg_layers(
-                    _d2_result.fg_layers,
+                _img_layers_u = [l for l in _unified_fg_layers if l.get("image") is not None]
+                _ts_layers_u = [l for l in _unified_fg_layers if l.get("image") is None]
+
+                _scaled_imgs = scale_virtual_fg_layers(
+                    _img_layers_u,
                     source_w=img.width,
                     source_h=img.height,
                     target_w=w,
                     target_h=h,
                 )
+                _sx = w / img.width if img.width > 0 else 1.0
+                _sy = h / img.height if img.height > 0 else 1.0
+                _scaled_ts = []
+                for _tsl in _ts_layers_u:
+                    _cp = dict(_tsl)
+                    _sb = _tsl.get("sourceBBox") or _tsl.get("bbox", {})
+                    _cp["bbox"] = {
+                        "x": int(_sb.get("x", 0) * _sx),
+                        "y": int(_sb.get("y", 0) * _sy),
+                        "width": max(1, int(_sb.get("width", 0) * _sx)),
+                        "height": max(1, int(_sb.get("height", 0) * _sy)),
+                    }
+                    _scaled_ts.append(_cp)
+
+                _virtual_fg_for_spec = _scaled_imgs + _scaled_ts
             except Exception as _scale_err:
                 print(
-                    f"[D2_SCALE] failed spec={name}: {_scale_err}",
+                    f"[UNIFIED_SCALE] failed spec={name}: {_scale_err}",
                     flush=True,
                 )
                 _virtual_fg_for_spec = []
@@ -1918,6 +1986,80 @@ def _generate_ai_only(
                     )
                     layout_plan = None
 
+                # Unified pipeline: render text/shape objects at target bbox dims before compositor.
+                for _ufl in _virtual_fg_for_spec:
+                    if _ufl.get("image") is not None:
+                        continue  # already rendered (product/logo PNG)
+                    _rm = _ufl.get("renderMode", "")
+                    _bbox_t = _ufl.get("bbox", {})
+                    _obj_id_t = _ufl.get("objectId", "")
+                    if _rm == "shape_render":
+                        try:
+                            from foreground.shape_renderer import render_shape_object as _rso
+                            _simg, _sm = _rso(
+                                bbox=_bbox_t,
+                                fill_color=_ufl.get("fillColor"),
+                                opacity=float(_ufl.get("opacity", 1.0)),
+                                border_radius=int(_ufl.get("borderRadius", 0)),
+                                job_id=jid,
+                                object_id=_obj_id_t,
+                            )
+                            print(
+                                f"[SHAPE_RENDER_OBJECT] jobId={jid} objectId={_obj_id_t!r}"
+                                f" role={_ufl.get('role')!r}"
+                                f" bbox=({_bbox_t.get('x')},{_bbox_t.get('y')}"
+                                f",{_bbox_t.get('width')},{_bbox_t.get('height')})"
+                                f" fillColor={_ufl.get('fillColor')!r}"
+                                f" opacity={_ufl.get('opacity', 1.0)}"
+                                f" zIndex={_ufl.get('zIndex', 0)}"
+                                f" rendered={_simg is not None}",
+                                flush=True,
+                            )
+                            if _simg is not None:
+                                _ufl["image"] = _simg
+                        except Exception as _sr_err:
+                            print(f"[SHAPE_RENDER_ERROR] jobId={jid} objectId={_obj_id_t}: {_sr_err}", flush=True)
+                    elif _rm == "text_render":
+                        try:
+                            from foreground.text_renderer import render_text_object as _rto, choose_font as _cf
+                            _fp_t, _fb_t = _cf(_ufl.get("fontFamilyGuess"))
+                            _cfname = os.path.basename(_fp_t) if _fp_t else "builtin-default"
+                            print(
+                                f"[FONT_MATCH] jobId={jid} objectId={_obj_id_t!r}"
+                                f" requestedFont={_ufl.get('fontFamilyGuess')!r}"
+                                f" chosenFont={_cfname!r}"
+                                f" fallbackUsed={_fb_t}",
+                                flush=True,
+                            )
+                            _timg, _tm = _rto(
+                                text=_ufl.get("text", ""),
+                                font_family_guess=_ufl.get("fontFamilyGuess"),
+                                font_size=_ufl.get("fontSize", 24),
+                                font_weight=_ufl.get("fontWeight"),
+                                bbox=_bbox_t,
+                                text_color=_ufl.get("textColor"),
+                                text_align=_ufl.get("textAlign"),
+                                segments=_ufl.get("segments"),
+                                job_id=jid,
+                                object_id=_obj_id_t,
+                            )
+                            print(
+                                f"[TEXT_RENDER_OBJECT] jobId={jid} objectId={_obj_id_t!r}"
+                                f" role={_ufl.get('role')!r}"
+                                f" text={str(_ufl.get('text', ''))[:40]!r}"
+                                f" font={_cfname!r}"
+                                f" fontSize={_tm.get('fontSize', _ufl.get('fontSize', 24))}"
+                                f" bbox=({_bbox_t.get('x')},{_bbox_t.get('y')}"
+                                f",{_bbox_t.get('width')},{_bbox_t.get('height')})"
+                                f" segmentCount={len(_ufl.get('segments') or [])}"
+                                f" rendered={_timg is not None}",
+                                flush=True,
+                            )
+                            if _timg is not None:
+                                _ufl["image"] = _timg
+                        except Exception as _tr_err:
+                            print(f"[TEXT_RENDER_ERROR] jobId={jid} objectId={_obj_id_t}: {_tr_err}", flush=True)
+
                 fg_result = composite_foreground(
                     result_img, _virtual_fg_for_spec, job_id=jid, spec_id=spec_id
                 )
@@ -1936,6 +2078,29 @@ def _generate_ai_only(
                 )
                 fg_result = None
                 layout_plan = None
+
+        # Unified pipeline: [DETERMINISTIC_RECOMPOSE] log
+        _recompose_img = sum(
+            1 for l in _active_fg_layers if l.get("renderMode") == "transparent_image"
+        )
+        _recompose_txt = sum(
+            1 for l in _active_fg_layers if l.get("renderMode") == "text_render"
+        )
+        _recompose_shp = sum(
+            1 for l in _active_fg_layers if l.get("renderMode") == "shape_render"
+        )
+        print(
+            f"[DETERMINISTIC_RECOMPOSE] jobId={jid} specId={spec_id}"
+            f" inputManifestCount={len(_unified_fg_layers)}"
+            f" placedImageCount={_recompose_img}"
+            f" placedTextCount={_recompose_txt}"
+            f" placedShapeCount={_recompose_shp}"
+            f" placedRoles={[l.get('role') for l in _active_fg_layers]}"
+            f" droppedObjectCount={max(0, len(_unified_fg_layers) - len(_active_fg_layers))}"
+            f" layoutPermitted={_layout_permitted}"
+            f" sourceOriginalCompositeUsed=false",
+            flush=True,
+        )
 
         # P0: record final artifact SHA-256 and save debug artifact before format conversion
         render_ctx.record_final_artifact(result_img)
@@ -2239,6 +2404,50 @@ def _generate_ai_only(
             _d2_prov_fields = _ext_d2_prov(_d2_result)
         except Exception:
             _d2_prov_fields = {}
+
+        # Unified pipeline: [FINAL_PIPELINE_SUMMARY]
+        _fs_img_total = sum(1 for l in _unified_fg_layers if l.get("renderMode") == "transparent_image")
+        _fs_txt_total = sum(1 for l in _unified_fg_layers if l.get("renderMode") == "text_render")
+        _fs_shp_total = sum(1 for l in _unified_fg_layers if l.get("renderMode") == "shape_render")
+        _fs_placed_img = sum(1 for l in _active_fg_layers if l.get("renderMode") == "transparent_image")
+        _fs_placed_txt = sum(1 for l in _active_fg_layers if l.get("renderMode") == "text_render")
+        _fs_placed_shp = sum(1 for l in _active_fg_layers if l.get("renderMode") == "shape_render")
+        _placed_obj_ids = {l.get("objectId") for l in _active_fg_layers}
+        _missing_required = [
+            l.get("role") for l in _unified_fg_layers
+            if l.get("required") and l.get("objectId") not in _placed_obj_ids
+        ]
+        _scene_plate_ok = bool(_scene_result and _scene_result.success)
+        _overall_status = (
+            _verdict_summary.overallStatus if _verdict_summary is not None
+            else ("PASS" if (_scene_plate_ok and not _missing_required) else "FAIL")
+        )
+        _fail_reason = ""
+        if _gpt_object_count == 0:
+            _fail_reason = "GPT_ZERO_OBJECTS"
+        elif not _scene_plate_ok:
+            _fail_reason = "SCENE_PLATE_FAILED"
+        elif _missing_required:
+            _fail_reason = f"MISSING_REQUIRED_ROLES:{_missing_required}"
+        print(
+            f"[FINAL_PIPELINE_SUMMARY] jobId={jid} specId={spec_id}"
+            f" sourceType={source_type}"
+            f" gptObjectCount={_gpt_object_count}"
+            f" manifestObjectCount={len(_unified_fg_layers)}"
+            f" imageObjectCount={_fs_img_total}"
+            f" textObjectCount={_fs_txt_total}"
+            f" shapeObjectCount={_fs_shp_total}"
+            f" scenePlateFinalized={_scene_plate_ok}"
+            f" fullSourceRestoreUsed=false"
+            f" placedImageCount={_fs_placed_img}"
+            f" placedTextCount={_fs_placed_txt}"
+            f" placedShapeCount={_fs_placed_shp}"
+            f" missingRequiredRoles={_missing_required}"
+            f" finalResultValid={_overall_status == 'PASS'}"
+            f" overallStatus={_overall_status}"
+            f" failClosedReason={_fail_reason!r}",
+            flush=True,
+        )
 
         results.append({
             "media": media,
