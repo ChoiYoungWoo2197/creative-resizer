@@ -1609,68 +1609,22 @@ def _generate_ai_only(
             except Exception as _dl_b_err:
                 print(f"[DIAG_LOG_ERROR] log_transform_geometry: {_dl_b_err}", flush=True)
 
-            # Stage 4: Apply immutable pixel restoration to SSC output.
-            # allowed_generation_mask from Stage 5 outpaint transform (or full-white for cover-crop).
-            try:
-                from scene_cleanup.pixel_restorer import (
-                    apply_default_immutable_policy as _apply_immutable,
-                    compute_immutable_metrics as _compute_immutable_metrics,
-                    log_default_immutable_policy as _log_immutable,
-                )
-                import numpy as _np_s4
-                _ssc_allowed_mask = (
-                    _scene_result.allowed_generation_mask
-                    if _scene_result.allowed_generation_mask is not None
-                    else _np_s4.full((h, w), 255, dtype=_np_s4.uint8)
-                )
-                # Stage 2: build target-sized canonical to match ai result dimensions.
-                # Raw img is at source size; result_img is at target size.
-                # build_canonical_at_target letterboxes img into target canvas using
-                # canvas_transform paste geometry — size mismatch eliminated.
-                try:
-                    from scene_cleanup.canvas_builder import build_canonical_at_target as _build_cat
-                    if _scene_result is not None and _scene_result.canvas_transform is not None:
-                        _canonical_at_target = _build_cat(img, _scene_result.canvas_transform)
-                    else:
-                        _canonical_at_target = img.resize((w, h), Image.LANCZOS) if img.size != (w, h) else img
-                except Exception as _cat_err:
-                    print(
-                        f"[CANONICAL_AT_TARGET_ERROR] jobId={jid} specId={spec_id} err={_cat_err}",
-                        flush=True,
-                    )
-                    _canonical_at_target = img.resize((w, h), Image.LANCZOS) if img.size != (w, h) else img
-                _restored = _apply_immutable(_canonical_at_target, result_img, _ssc_allowed_mask)
-                _immutable_metrics = _compute_immutable_metrics(_canonical_at_target, _restored, _ssc_allowed_mask)
-                _log_immutable(_immutable_metrics, job_id=jid, spec_id=spec_id)
-                _is_outpaint = (
-                    _scene_result.canvas_transform is not None
-                    and getattr(_scene_result.canvas_transform, "strategy", "") == "subject_preserving_outpaint"
-                )
-                print(
-                    f"[PIXEL_RESTORE] jobId={jid} specId={spec_id}"
-                    f" subjectPreservingTransform={_is_outpaint}"
-                    f" allowedGenerationCoverage={_immutable_metrics.get('allowedGenerationCoverage', 1.0):.4f}"
-                    f" outsideAllowedChangedPixelRatio={_immutable_metrics.get('outsideAllowedChangedPixelRatio', 0.0):.4f}"
-                    f" restoredPixelCount={_immutable_metrics.get('restoredOriginalPixelCount', 0)}",
-                    flush=True,
-                )
-                # Diagnostic C: [MASK_LINEAGE], [MASK_ANOMALY], [PIXEL_RESTORE_AUDIT]
-                # result_img captured here (pre-restoration) for audit; _restored is post
-                try:
-                    from verdict.diagnostic_logger import (
-                        log_mask_lineage as _dl_ml,
-                        log_mask_anomalies as _dl_ma,
-                        log_pixel_restore_audit as _dl_pra,
-                    )
-                    _dl_ml(_ssc_allowed_mask, w, h, job_id=jid, spec_id=spec_id)
-                    _dl_ma(_ssc_allowed_mask, _immutable_metrics, w, h, job_id=jid, spec_id=spec_id)
-                    _dl_pra(result_img, _restored, _ssc_allowed_mask, _immutable_metrics,
-                            job_id=jid, spec_id=spec_id)
-                except Exception as _dl_c_err:
-                    print(f"[DIAG_LOG_ERROR] mask+restore audit: {_dl_c_err}", flush=True)
-                result_img = _restored
-            except Exception as _pr_err:
-                print(f"[PIXEL_RESTORE] failed jobId={jid} specId={spec_id}: {_pr_err}", flush=True)
+            # Stage 4: semantic_scene_cleanup — pixel restore disabled.
+            # AI scene plate is the final output; sourceMappedRegionMask must not be
+            # used as immutableMask and the canonical source must not be composited back.
+            print(
+                f"[PIXEL_RESTORE_SKIP] jobId={jid}"
+                f" mode=semantic_scene_cleanup"
+                f" reason=FULL_IMAGE_AI_SCENE_PLATE"
+                f" sourceOriginalCompositeUsed=false",
+                flush=True,
+            )
+            print(
+                f"[SCENE_PLATE] jobId={jid}"
+                f" fullSourceRestoreUsed=false"
+                f" restoredPixelCount=0",
+                flush=True,
+            )
 
         else:
             # Legacy: Bundle A background plate + Source Faithful Repair
