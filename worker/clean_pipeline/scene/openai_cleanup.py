@@ -1,8 +1,10 @@
-"""OpenAI image-edit cleanup: remove ad objects from projected scene.
+"""OpenAI image-edit cleanup: remove ad objects / fill outpaint regions.
 
 Rules:
 - API is called exactly once
-- Input is scaled to DALL-E-supported size (1024×1024) internally
+- Input image is sent at native resolution (no squishing) — gpt-image-1 accepts non-square input
+- Mask is sent at native resolution, same dimensions as input
+- size="1024x1024" is always specified to guarantee a fixed output size
 - API response must be 1024×1024; FAIL immediately if not
 - Result is scaled back to (target_width, target_height) before returning
 - Returns (cleaned_image | None, fail_code, fail_reason)
@@ -18,18 +20,21 @@ from PIL import Image
 from clean_pipeline.scene.cleanup_prompt import CLEANUP_PROMPT
 
 _API_MODEL = "gpt-image-1"
-_API_W = _API_H = 1024
+_API_W = _API_H = 1024   # expected output size; input may be any size
 
 
 def cleanup(
-    projected_image: Image.Image,          # RGB, target_w × target_h
-    projected_removal_mask: Image.Image,   # L, target_w × target_h; white = edit region
+    projected_image: Image.Image,          # RGB, any size
+    projected_removal_mask: Image.Image,   # L, same size as projected_image; white = edit region
     target_width: int,
     target_height: int,
     api_key: str,
     prompt: str = CLEANUP_PROMPT,
 ) -> tuple[Image.Image | None, str, str]:
-    """Call the DALL-E image-edit API to fill the masked region.
+    """Call the gpt-image-1 image-edit API to fill the masked region.
+
+    Sends the image at native resolution (no pre-squishing) so the model has
+    undistorted context and accurate mask alignment.
 
     Returns (cleaned_image, "", "") on success.
     Returns (None, fail_code, fail_reason) on failure.
@@ -38,28 +43,26 @@ def cleanup(
     if not api_key:
         return None, "NO_API_KEY", "OPENAI_API_KEY not set"
 
-    # Scale input to DALL-E-required size
-    api_img = projected_image.convert("RGB").resize((_API_W, _API_H), Image.LANCZOS)
-    api_mask_l = projected_removal_mask.convert("L").resize((_API_W, _API_H), Image.NEAREST)
+    # Build DALL-E mask at native resolution: transparent (alpha=0) = edit, opaque = keep
+    src_rgb = projected_image.convert("RGB")
+    mask_l = projected_removal_mask.convert("L")
 
-    # Build DALL-E mask: transparent (alpha=0) = edit here, opaque = keep
-    # Our removal mask: white (255) = remove → transparent in DALL-E mask
-    r, g, b = api_img.split()
-    removal_arr = np.array(api_mask_l, dtype=np.uint8)
+    r, g, b = src_rgb.split()
+    removal_arr = np.array(mask_l, dtype=np.uint8)
     dall_e_alpha = np.where(removal_arr > 128, 0, 255).astype(np.uint8)
     dall_e_alpha_img = Image.fromarray(dall_e_alpha, "L")
     mask_rgba = Image.merge("RGBA", (r, g, b, dall_e_alpha_img))
 
-    # Encode as PNG bytes
+    # Encode as PNG bytes at native resolution — no squishing
     img_buf = io.BytesIO()
-    api_img.convert("RGBA").save(img_buf, format="PNG")
+    src_rgb.convert("RGBA").save(img_buf, format="PNG")
     img_bytes = img_buf.getvalue()
 
     mask_buf = io.BytesIO()
     mask_rgba.save(mask_buf, format="PNG")
     mask_bytes = mask_buf.getvalue()
 
-    # API call — exactly once
+    # API call — exactly once, output forced to 1024×1024
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
@@ -90,7 +93,7 @@ def cleanup(
     except Exception as exc:
         return None, "RESPONSE_DECODE_FAILED", f"Failed to decode API response: {exc}"
 
-    # Verify API returned expected size
+    # Verify API returned expected 1024×1024
     if api_output.size != (_API_W, _API_H):
         return (
             None,
