@@ -12,7 +12,7 @@ class ScenePlateResult:
     target_height: int
     source_projection_path: str          # clean_source_projection — P6 comparison baseline
     projected_removal_mask_path: str     # original removal mask projected
-    projected_restore_mask_path: str     # inverted outpaint mask — P6 deterministic check
+    projected_restore_mask_path: str     # projected restore mask (white=subject only) — P6 deterministic check
     ai_cleanup_path: str                 # raw AI output for source cleanup
     scene_plate_path: str
     scene_json_path: str

@@ -141,12 +141,12 @@ def generate(
     outpaint_mask.save(str(outpaint_mask_path))
     logger.artifact_written(STAGE.value, str(outpaint_mask_path), "outpaint mask (letterbox regions)")
 
-    # Inverted outpaint mask: white = projected source region (used for P6 deterministic check)
+    # Inverted outpaint mask: white = projected source region (debug artifact only)
     inverted_arr = (255 - outpaint_arr).astype(np.uint8)
     inverted_outpaint_mask = Image.fromarray(inverted_arr, "L")
     inverted_mask_path = stage_dir / "inverted_outpaint_mask.png"
     inverted_outpaint_mask.save(str(inverted_mask_path))
-    logger.artifact_written(STAGE.value, str(inverted_mask_path), "inverted outpaint mask (projected region)")
+    logger.artifact_written(STAGE.value, str(inverted_mask_path), "inverted outpaint mask (projected region, debug)")
 
     # ── Step 4: Outpaint letterbox regions (skipped if no letterbox) ────────
     has_letterbox = tx.offset_x > 0 or tx.offset_y > 0
@@ -175,9 +175,12 @@ def generate(
     else:
         outpaint_img = clean_source_projection
 
-    # ── Step 5: Restore clean-source-projection pixels deterministically ────
+    # ── Step 5: Restore protected-subject pixels deterministically ─────────
+    # Use proj_restore (white = protected subject only), NOT inverted_outpaint_mask (entire
+    # projected region), so that the AI-cleaned removal area from the outpaint step is
+    # preserved rather than overwritten with grey-box artifacts from clean_source_projection.
     scene_plate = immutable_pixel_restorer.restore(
-        outpaint_img, clean_source_projection, inverted_outpaint_mask
+        outpaint_img, clean_source_projection, proj_restore
     )
     scene_plate_path = stage_dir / "scene_plate.png"
     scene_plate.save(str(scene_plate_path))
@@ -193,7 +196,7 @@ def generate(
         # P6 comparison fields: clean_source_projection is the reference
         source_projection_path=str(clean_source_proj_path),
         projected_removal_mask_path=str(proj_rem_path),
-        projected_restore_mask_path=str(inverted_mask_path),
+        projected_restore_mask_path=str(proj_res_path),  # white = protected subject only
         # Backward-compat field pointing to the source cleanup AI output
         ai_cleanup_path=str(source_cleanup_ai_path),
         scene_plate_path=str(scene_plate_path),
