@@ -77,6 +77,9 @@ def generate():
     print(f"[AI_ONLY_START] jobId={job_id} specCount={len(specs)} resizeMode={resize_mode}", flush=True)
 
     try:
+        if data.get("pipelineVersion") == "clean_v1":
+            return _run_clean_v1(data, job_id, job_output_dir, t_start)
+
         _v2_enabled = os.environ.get("UNIFIED_PIPELINE_V2_ENABLED", "false").lower() == "true"
         if _v2_enabled:
             from unified_v2.pipeline import run_unified_v2
@@ -349,6 +352,44 @@ def background_process():
         "artifacts": result.artifacts,
         "elapsedMs": result.elapsed_ms,
         "resultImageBase64": result_b64,
+    })
+
+
+def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
+    """Route pipelineVersion=clean_v1 to the clean_pipeline orchestrator.
+
+    Fail-closed: FAIL status → failure response. No legacy fallback under any circumstance.
+    """
+    from worker.clean_pipeline.bridge.request_adapter import adapt_request
+    from worker.clean_pipeline.bridge.response_adapter import adapt_response
+    from worker.clean_pipeline.orchestrator import run as clean_run
+
+    api_key = (
+        os.environ.get("OPENAI_API_KEY", "")
+        or os.environ.get("BACKGROUND_AI_API_KEY", "")
+    )
+
+    cp_request = adapt_request(data, job_id, job_output_dir)
+    print(f"[CLEAN_V1_START] jobId={job_id} specCount={len(cp_request.target_specs)}", flush=True)
+
+    cp_result = clean_run(cp_request, api_key=api_key)
+
+    result_items, missing_ratio_types = adapt_response(cp_result, data.get("specs", []))
+
+    file_paths = [r["filePath"] for r in result_items if r.get("filePath")]
+    zip_path = _make_zip(job_id, file_paths) if file_paths else ""
+
+    elapsed_ms = int((time.time() - t_start) * 1000)
+    print(
+        f"[CLEAN_V1_END] jobId={job_id} status={cp_result.status.value} elapsedMs={elapsed_ms}",
+        flush=True,
+    )
+    return jsonify({
+        "jobId": job_id,
+        "zipPath": zip_path,
+        "count": len(result_items),
+        "results": result_items,
+        "missingRatioTypes": missing_ratio_types,
     })
 
 
