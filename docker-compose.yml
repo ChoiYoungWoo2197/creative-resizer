@@ -92,6 +92,8 @@ services:
       - PSD_OBJECT_ANALYSIS_REQUIRED_FOR_PSD=true
       # P0: Per-job work directory for debug artifacts + SHA-256 isolation
       - AI_WORK_DIR=/app/storage/work
+      # Unified Pipeline V2: 독립 GPT Vision 분석 → 추출 → AI cleanup → layout → composite
+      - UNIFIED_PIPELINE_V2_ENABLED=true
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped
