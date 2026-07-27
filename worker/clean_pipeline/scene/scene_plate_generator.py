@@ -1,20 +1,24 @@
-"""SCENE_GENERATION stage (P5 v2): source cleanup → project → outpaint → scene plate.
+"""SCENE_GENERATION stage (P5 v3): project → remove ads → restore → outpaint → scene plate.
 
-Two-step AI flow (max 2 API calls):
-  1. Source cleanup  — remove ad objects at original (canonical) resolution.
-  2. Source restore  — paste protected-subject pixels back from canonical.
-  3. Project         — contain-fit clean source onto target canvas.
-  4. Outpaint        — fill letterbox regions with AI (skipped if no letterbox).
-  5. Projection restore — paste clean-source-projection pixels back deterministically.
+Two-step AI flow at TARGET canvas (max 2 API calls):
+  1. Project canonical onto target canvas (no AI).
+  2. Call 1 — remove ad objects from projected image using proj_removal mask.
+  3. Restore protected-subject pixels from original_projection → clean_projection.
+  4. Call 2 — fill letterbox regions (skipped if no letterbox).
+  5. Restore projected-area pixels from clean_projection → scene_plate.
+
+Why project-first (v3 vs v2):
+  v2 cleaned at canonical size → AI saw the bright left side and extended it into the dark
+  right-side removal area (wrong background). v3 projects first so the AI sees the full
+  target layout: dark background surrounding the removal area → AI fills dark correctly.
 
 Fail codes:
   CANONICAL_LOAD_FAILED, MASK_LOAD_FAILED, MASK_SIZE_MISMATCH,
-  CLEANUP_SIZE_MISMATCH (source cleanup wrong size),
-  OUTPAINT_SIZE_MISMATCH (outpaint wrong size)
+  CLEANUP_SIZE_MISMATCH (removal cleanup wrong size),
+  OUTPAINT_SIZE_MISMATCH (letterbox outpaint wrong size)
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -74,36 +78,11 @@ def generate(
             f"declared {removal_result.image_width}×{removal_result.image_height}",
         )
 
-    # ── Step 1: Source cleanup — remove ads at canonical resolution ─────────
-    source_cleanup_ai, fail_code, fail_reason = openai_cleanup.cleanup(
-        projected_image=canonical,
-        projected_removal_mask=removal_mask,
-        target_width=canonical.width,
-        target_height=canonical.height,
-        api_key=api_key,
-        prompt=CLEANUP_PROMPT,
-    )
-    if source_cleanup_ai is None:
-        return _fail(logger, fail_code, fail_reason)
-
-    source_cleanup_ai_path = stage_dir / "source_cleanup_ai.png"
-    source_cleanup_ai.save(str(source_cleanup_ai_path))
-    logger.artifact_written(STAGE.value, str(source_cleanup_ai_path), "AI source cleanup result")
-
-    # ── Step 2: Restore protected-subject pixels from canonical ─────────────
-    clean_source_plate = immutable_pixel_restorer.restore(
-        source_cleanup_ai, canonical, restore_mask
-    )
-    clean_source_plate_path = stage_dir / "clean_source_plate.png"
-    clean_source_plate.save(str(clean_source_plate_path))
-    logger.artifact_written(STAGE.value, str(clean_source_plate_path), "clean source plate")
-
-    # ── Step 3: Project clean source onto target canvas ─────────────────────
+    # ── Step 1: Project canonical onto target canvas ─────────────────────────
     tx = target_transform.compute(
         canonical.width, canonical.height, target_width, target_height
     )
 
-    # Save original projection (with ads) as debug artifact
     original_projection = target_transform.apply_rgb(canonical, tx)
     original_proj_path = stage_dir / "original_projection.png"
     original_projection.save(str(original_proj_path))
@@ -111,7 +90,7 @@ def generate(
                             f"original projection (with ads) {tx.proj_width}×{tx.proj_height} "
                             f"offset ({tx.offset_x},{tx.offset_y})")
 
-    # Project removal/restore masks (for debug artifacts only)
+    # Project removal/restore masks to target canvas
     proj_removal = target_transform.apply_mask(removal_mask, tx)
     proj_restore = target_transform.apply_mask(restore_mask, tx)
     proj_rem_path = stage_dir / "projected_removal_mask.png"
@@ -121,13 +100,34 @@ def generate(
     logger.artifact_written(STAGE.value, str(proj_rem_path), "projected removal mask")
     logger.artifact_written(STAGE.value, str(proj_res_path), "projected restore mask")
 
-    # Project clean source
-    clean_source_projection = target_transform.apply_rgb(clean_source_plate, tx)
-    clean_source_proj_path = stage_dir / "clean_source_projection.png"
-    clean_source_projection.save(str(clean_source_proj_path))
-    logger.artifact_written(STAGE.value, str(clean_source_proj_path), "clean source projection")
+    # ── Step 2: Call 1 — remove ad objects at target canvas resolution ───────
+    # Project-first ensures the AI sees the dark background surrounding the removal
+    # area and fills with matching dark/black, not with a bright-scene extension.
+    removal_ai, fail_code, fail_reason = openai_cleanup.cleanup(
+        projected_image=original_projection,
+        projected_removal_mask=proj_removal,
+        target_width=target_width,
+        target_height=target_height,
+        api_key=api_key,
+        prompt=CLEANUP_PROMPT,
+    )
+    if removal_ai is None:
+        return _fail(logger, fail_code, fail_reason)
 
-    # Build outpaint mask: white = letterbox regions, black = projected source
+    removal_ai_path = stage_dir / "source_cleanup_ai.png"
+    removal_ai.save(str(removal_ai_path))
+    logger.artifact_written(STAGE.value, str(removal_ai_path), "AI removal result (target canvas)")
+
+    # ── Step 3: Restore protected-subject pixels from original_projection ────
+    clean_projection = immutable_pixel_restorer.restore(
+        removal_ai, original_projection, proj_restore
+    )
+    clean_proj_path = stage_dir / "clean_source_projection.png"
+    clean_projection.save(str(clean_proj_path))
+    logger.artifact_written(STAGE.value, str(clean_proj_path),
+                            "clean projection (ads removed, subject restored)")
+
+    # ── Step 4: Build letterbox mask ─────────────────────────────────────────
     outpaint_arr = np.zeros((target_height, target_width), dtype=np.uint8)
     if tx.offset_x > 0:
         outpaint_arr[:, :tx.offset_x] = 255
@@ -135,28 +135,30 @@ def generate(
     if tx.offset_y > 0:
         outpaint_arr[:tx.offset_y, :] = 255
         outpaint_arr[tx.offset_y + tx.proj_height:, :] = 255
-    outpaint_mask = Image.fromarray(outpaint_arr, "L")
+    letterbox_mask = Image.fromarray(outpaint_arr, "L")
 
     outpaint_mask_path = stage_dir / "outpaint_mask.png"
-    outpaint_mask.save(str(outpaint_mask_path))
-    logger.artifact_written(STAGE.value, str(outpaint_mask_path), "outpaint mask (letterbox regions)")
+    letterbox_mask.save(str(outpaint_mask_path))
+    logger.artifact_written(STAGE.value, str(outpaint_mask_path),
+                            "outpaint mask (letterbox regions)")
 
-    # Inverted outpaint mask: white = projected source region (debug artifact only)
+    # Inverted letterbox: white = projected area (for step 5 restore)
     inverted_arr = (255 - outpaint_arr).astype(np.uint8)
-    inverted_outpaint_mask = Image.fromarray(inverted_arr, "L")
+    inverted_letterbox = Image.fromarray(inverted_arr, "L")
     inverted_mask_path = stage_dir / "inverted_outpaint_mask.png"
-    inverted_outpaint_mask.save(str(inverted_mask_path))
-    logger.artifact_written(STAGE.value, str(inverted_mask_path), "inverted outpaint mask (projected region, debug)")
+    inverted_letterbox.save(str(inverted_mask_path))
+    logger.artifact_written(STAGE.value, str(inverted_mask_path),
+                            "inverted outpaint mask (projected region, debug)")
 
-    # ── Step 4: Outpaint letterbox regions (skipped if no letterbox) ────────
+    # ── Step 5: Call 2 — fill letterbox regions (skipped if no letterbox) ───
     has_letterbox = tx.offset_x > 0 or tx.offset_y > 0
     outpaint_api_call_count = 0
     target_outpaint_ai_path_str = ""
 
     if has_letterbox:
         outpaint_img, fail_code, fail_reason = openai_cleanup.cleanup(
-            projected_image=clean_source_projection,
-            projected_removal_mask=outpaint_mask,
+            projected_image=clean_projection,
+            projected_removal_mask=letterbox_mask,
             target_width=target_width,
             target_height=target_height,
             api_key=api_key,
@@ -170,17 +172,16 @@ def generate(
         target_outpaint_ai_path = stage_dir / "target_outpaint_ai.png"
         outpaint_img.save(str(target_outpaint_ai_path))
         target_outpaint_ai_path_str = str(target_outpaint_ai_path)
-        logger.artifact_written(STAGE.value, target_outpaint_ai_path_str, "AI outpaint result")
+        logger.artifact_written(STAGE.value, target_outpaint_ai_path_str, "AI letterbox outpaint result")
         outpaint_api_call_count = 1
     else:
-        outpaint_img = clean_source_projection
+        outpaint_img = clean_projection
 
-    # ── Step 5: Restore protected-subject pixels deterministically ─────────
-    # Use proj_restore (white = protected subject only), NOT inverted_outpaint_mask (entire
-    # projected region), so that the AI-cleaned removal area from the outpaint step is
-    # preserved rather than overwritten with grey-box artifacts from clean_source_projection.
+    # ── Step 6: Restore projected-area pixels from clean_projection ──────────
+    # inverted_letterbox (white = projected area) guarantees clean_projection pixels
+    # in the non-letterbox region; letterbox pixels come from outpaint_img.
     scene_plate = immutable_pixel_restorer.restore(
-        outpaint_img, clean_source_projection, proj_restore
+        outpaint_img, clean_projection, inverted_letterbox
     )
     scene_plate_path = stage_dir / "scene_plate.png"
     scene_plate.save(str(scene_plate_path))
@@ -193,20 +194,23 @@ def generate(
         job_id=job_id,
         target_width=target_width,
         target_height=target_height,
-        # P6 comparison fields: clean_source_projection is the reference
-        source_projection_path=str(clean_source_proj_path),
+        # P6 comparison: original_projection (with ads) for AI validator;
+        # proj_restore (white=protected subject only) for deterministic check.
+        # scene[proj_restore > 128] == original_projection[proj_restore > 128]
+        # is guaranteed: step 3 restores original_projection into clean_projection
+        # for proj_restore pixels; step 6 preserves clean_projection in projected area.
+        source_projection_path=str(original_proj_path),
         projected_removal_mask_path=str(proj_rem_path),
-        projected_restore_mask_path=str(proj_res_path),  # white = protected subject only
-        # Backward-compat field pointing to the source cleanup AI output
-        ai_cleanup_path=str(source_cleanup_ai_path),
+        projected_restore_mask_path=str(proj_res_path),
+        ai_cleanup_path=str(removal_ai_path),
         scene_plate_path=str(scene_plate_path),
         scene_json_path="",
-        api_call_count=1,  # always 1 (source cleanup); kept for backward compat
-        # New P5 v2 artifacts
+        api_call_count=1,  # always 1 (removal call); kept for backward compat
+        # P5 v3 artifact paths
         original_projection_path=str(original_proj_path),
-        source_cleanup_ai_path=str(source_cleanup_ai_path),
-        clean_source_plate_path=str(clean_source_plate_path),
-        clean_source_projection_path=str(clean_source_proj_path),
+        source_cleanup_ai_path=str(removal_ai_path),
+        clean_source_plate_path=str(clean_proj_path),
+        clean_source_projection_path=str(clean_proj_path),
         outpaint_mask_path=str(outpaint_mask_path),
         target_outpaint_ai_path=target_outpaint_ai_path_str,
         # Metrics
@@ -242,7 +246,7 @@ def generate(
         },
         artifacts={
             "original_projection": str(original_proj_path),
-            "clean_source_projection": str(clean_source_proj_path),
+            "clean_source_projection": str(clean_proj_path),
             "scene_plate": str(scene_plate_path),
         },
     ), result_obj

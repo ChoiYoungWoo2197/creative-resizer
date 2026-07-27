@@ -3,10 +3,11 @@
 CLEANUP_PROMPT = (
     "This image contains advertising elements in the marked transparent area "
     "(products, logos, promotional text, CTA buttons, badges). "
-    "Remove all advertising elements from the marked area and replace them with "
-    "natural, realistic background content that seamlessly continues the surrounding scene. "
-    "Match the lighting, perspective, color, and texture of the existing background precisely. "
-    "The result must look like those advertising objects were never present."
+    "Remove all advertising elements from the marked area and fill with background content "
+    "that exactly matches the immediately adjacent background — same color, tone, and texture. "
+    "CRITICAL: If the surrounding background is dark or black, fill with that same dark/black tone. "
+    "Do NOT introduce new photographic subjects (people, bodies, objects) into the removed area. "
+    "Only replicate the existing background. The result must look like those objects were never present."
 )
 
 OUTPAINT_PROMPT = (
