@@ -55,10 +55,7 @@ def composite_on_scene_plate(
 
         # Use text rendering for text-role layers that have text content
         role = getattr(layer, "role", "")
-        text = ""
-        detected_obj = getattr(layer, "_detected_obj", None)
-        if detected_obj is not None:
-            text = getattr(detected_obj, "text_content", "")
+        text = getattr(layer, "text_content", "")
 
         if role in ("title", "headline", "body_text", "cta") and text:
             rendered = _render_text_layer(text, role, w, h, job_id=job_id, object_id=layer.object_id)

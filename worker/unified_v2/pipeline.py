@@ -129,7 +129,7 @@ def run_unified_v2(
     # ── Steps 4–6: Per-spec processing ───────────────────────────────────────
     from background.external_provider import ProviderFactory
 
-    provider = ProviderFactory.create()
+    provider = ProviderFactory.create(enable_external=True)
     os.makedirs(job_output_dir, exist_ok=True)
 
     result_items: list[dict] = []
@@ -173,6 +173,11 @@ def run_unified_v2(
         f" missingCount={len(missing_ratio_types)}",
         flush=True,
     )
+
+    if not result_items:
+        raise RuntimeError(
+            f"V2_ALL_SPECS_FAILED: 0/{len(specs)} specs produced output — FAIL"
+        )
 
     return result_items, missing_ratio_types
 
@@ -335,6 +340,7 @@ def _process_spec(
                 },
                 mask_sha256=match.mask_sha256,
                 pixel_sha256=match.pixel_sha256,
+                text_content=match.text_content,
             )
         )
 
@@ -361,6 +367,7 @@ def _process_spec(
                     },
                     mask_sha256=layer.mask_sha256,
                     pixel_sha256=layer.pixel_sha256,
+                    text_content=layer.text_content,
                 )
             )
 

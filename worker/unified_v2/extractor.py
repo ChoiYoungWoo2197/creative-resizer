@@ -112,4 +112,5 @@ def extract_fg_layer(
         bbox=dict(source_bbox),  # will be overwritten by layout engine
         mask_sha256=mask_sha,
         pixel_sha256=pixel_sha,
+        text_content=obj.text_content,
     )

@@ -25,6 +25,7 @@ class V2FgLayer:
     bbox: dict              # target canvas coords; updated by layout engine
     mask_sha256: str
     pixel_sha256: str
+    text_content: str = ""  # visible text from GPT analysis; used by renderer for re-render
 
 
 @dataclass
