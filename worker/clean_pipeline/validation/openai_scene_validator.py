@@ -16,7 +16,7 @@ from clean_pipeline.pipeline_logger import PipelineLogger
 from clean_pipeline.validation.scene_models import AIValidationResult
 
 _MODEL = "o3"
-_MAX_TOKENS = 2048
+_MAX_TOKENS = 8192  # o3 uses reasoning tokens from this budget; 2048 left too little for JSON output
 _MAX_SIDE = 1024
 
 SYSTEM_PROMPT = (
