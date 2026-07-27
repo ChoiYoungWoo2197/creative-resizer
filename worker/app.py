@@ -77,12 +77,24 @@ def generate():
     print(f"[AI_ONLY_START] jobId={job_id} specCount={len(specs)} resizeMode={resize_mode}", flush=True)
 
     try:
-        result_items, missing_ratio_types = resizer.generate(
-            psd_path, specs, resize_mode, output_format, job_output_dir,
-            smart_fit_strength, focal_position, source_type, psd_mode,
-            selected_artboard_ids, object_reflow_enabled, object_analysis,
-            job_id=job_id
-        )
+        _v2_enabled = os.environ.get("UNIFIED_PIPELINE_V2_ENABLED", "false").lower() == "true"
+        if _v2_enabled:
+            from unified_v2.pipeline import run_unified_v2
+            result_items, missing_ratio_types = run_unified_v2(
+                psd_path=psd_path,
+                specs=specs,
+                output_format=output_format,
+                job_output_dir=job_output_dir,
+                source_type=source_type,
+                job_id=job_id,
+            )
+        else:
+            result_items, missing_ratio_types = resizer.generate(
+                psd_path, specs, resize_mode, output_format, job_output_dir,
+                smart_fit_strength, focal_position, source_type, psd_mode,
+                selected_artboard_ids, object_reflow_enabled, object_analysis,
+                job_id=job_id
+            )
         file_paths = [r["filePath"] for r in result_items]
         zip_path = _make_zip(job_id, file_paths)
         elapsed_ms = int((time.time() - t_start) * 1000)
