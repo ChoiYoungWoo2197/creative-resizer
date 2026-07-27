@@ -18,19 +18,19 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.extraction.models import ExtractionResult
-from worker.clean_pipeline.layout import candidate_generator, constraint_solver
-from worker.clean_pipeline.layout.models import LayoutResult, PlacedObject, SafeZone
-from worker.clean_pipeline.layout.safe_zone import (
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.extraction.models import ExtractionResult
+from clean_pipeline.layout import candidate_generator, constraint_solver
+from clean_pipeline.layout.models import LayoutResult, PlacedObject, SafeZone
+from clean_pipeline.layout.safe_zone import (
     compute as compute_safe_zone,
     contains as sz_contains,
     intersection_area,
     within_canvas,
 )
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
-from worker.clean_pipeline.scene.models import ScenePlateResult
+from clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.scene.models import ScenePlateResult
 
 STAGE = StageName.LAYOUT
 _OVERLAP_THRESHOLD = 0.30
@@ -219,7 +219,7 @@ def _project_protected_bboxes(
     target_height: int,
 ) -> list[tuple[int, int, int, int]]:
     """Return protected subject bounding boxes projected into target canvas coordinates."""
-    from worker.clean_pipeline.scene.target_transform import compute as compute_tx
+    from clean_pipeline.scene.target_transform import compute as compute_tx
     tx = compute_tx(manifest.image_width, manifest.image_height, target_width, target_height)
     scale_x = tx.proj_width / manifest.image_width
     scale_y = tx.proj_height / manifest.image_height

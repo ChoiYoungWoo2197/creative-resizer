@@ -17,8 +17,8 @@ Anchors:
 """
 from __future__ import annotations
 
-from worker.clean_pipeline.extraction.models import ExtractedObject
-from worker.clean_pipeline.layout.models import ObjectCandidate, SafeZone
+from clean_pipeline.extraction.models import ExtractedObject
+from clean_pipeline.layout.models import ObjectCandidate, SafeZone
 
 _ROLE_ANCHORS: dict[str, list[str]] = {
     "title_group":     ["top-left", "top-center", "top-right"],

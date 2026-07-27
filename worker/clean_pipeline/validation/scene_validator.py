@@ -15,15 +15,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
-from worker.clean_pipeline.scene.models import ScenePlateResult
-from worker.clean_pipeline.validation import (
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.scene.models import ScenePlateResult
+from clean_pipeline.validation import (
     deterministic_scene_validator,
     openai_scene_validator,
 )
-from worker.clean_pipeline.validation.scene_models import SceneValidationResult
+from clean_pipeline.validation.scene_models import SceneValidationResult
 
 STAGE = StageName.SCENE_VALIDATION
 _NATURALNESS_THRESHOLD = 0.70

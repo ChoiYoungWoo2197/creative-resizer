@@ -5,7 +5,7 @@ resizeMode, smartFitStrength, focalPosition, psdMode are deliberately ignored.
 """
 from __future__ import annotations
 
-from worker.clean_pipeline.contracts import CleanPipelineRequest, TargetSpec
+from clean_pipeline.contracts import CleanPipelineRequest, TargetSpec
 
 
 def adapt_request(data: dict, job_id: str, output_directory: str) -> CleanPipelineRequest:

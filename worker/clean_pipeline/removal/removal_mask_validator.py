@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from worker.clean_pipeline.removal.models import RemovalMaskResult
+from clean_pipeline.removal.models import RemovalMaskResult
 
 
 def validate(

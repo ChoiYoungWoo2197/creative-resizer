@@ -11,9 +11,9 @@ import json
 
 from PIL import Image
 
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
-from worker.clean_pipeline.validation.scene_models import AIValidationResult
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.validation.scene_models import AIValidationResult
 
 _MODEL = "o3"
 _MAX_TOKENS = 2048

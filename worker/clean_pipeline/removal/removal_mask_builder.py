@@ -23,10 +23,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.extraction.models import ExtractionResult
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
-from worker.clean_pipeline.removal.models import RemovalMaskResult
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.extraction.models import ExtractionResult
+from clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.removal.models import RemovalMaskResult
 
 STAGE = StageName.REMOVAL_MASK
 _DILATION_PX = 3

@@ -1,7 +1,7 @@
 """Parse raw AI response dict → SceneManifest. No polygon auto-generation."""
 from __future__ import annotations
 
-from worker.clean_pipeline.analysis.models import BBox, SceneManifest, SceneObject
+from clean_pipeline.analysis.models import BBox, SceneManifest, SceneObject
 
 _MODEL = "o3"
 

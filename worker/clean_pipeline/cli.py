@@ -19,8 +19,8 @@ def cmd_health() -> None:
 
 
 def cmd_prepare_source(args: argparse.Namespace) -> None:
-    from worker.clean_pipeline.pipeline_logger import PipelineLogger
-    from worker.clean_pipeline.source.canonical_source import prepare
+    from clean_pipeline.pipeline_logger import PipelineLogger
+    from clean_pipeline.source.canonical_source import prepare
 
     job_id = str(uuid.uuid4())[:8]
     logger = PipelineLogger(job_id)
@@ -39,8 +39,8 @@ def cmd_prepare_source(args: argparse.Namespace) -> None:
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
-    from worker.clean_pipeline.analysis.openai_analyzer import analyze
-    from worker.clean_pipeline.pipeline_logger import PipelineLogger
+    from clean_pipeline.analysis.openai_analyzer import analyze
+    from clean_pipeline.pipeline_logger import PipelineLogger
 
     job_dir = args.job_dir
     source_json_path = f"{job_dir}/clean_v1/01_source/source.json"
@@ -87,8 +87,8 @@ def cmd_run(args: argparse.Namespace) -> None:
     import json as _json
     import uuid
 
-    from worker.clean_pipeline.contracts import CleanPipelineRequest, TargetSpec
-    from worker.clean_pipeline.orchestrator import run
+    from clean_pipeline.contracts import CleanPipelineRequest, TargetSpec
+    from clean_pipeline.orchestrator import run
 
     # Parse spec: accept inline JSON string or path to .json file
     spec_str = args.spec
@@ -150,9 +150,9 @@ def cmd_extract(args: argparse.Namespace) -> None:
     import json as _json
     import pathlib
 
-    from worker.clean_pipeline.analysis.models import SceneManifest
-    from worker.clean_pipeline.extraction.object_extractor import extract
-    from worker.clean_pipeline.pipeline_logger import PipelineLogger
+    from clean_pipeline.analysis.models import SceneManifest
+    from clean_pipeline.extraction.object_extractor import extract
+    from clean_pipeline.pipeline_logger import PipelineLogger
 
     job_path = pathlib.Path(args.job_dir)
     job_id = job_path.name

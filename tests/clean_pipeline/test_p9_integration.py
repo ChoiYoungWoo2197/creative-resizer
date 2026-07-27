@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from worker.clean_pipeline.bridge.request_adapter import adapt_request
-from worker.clean_pipeline.bridge.response_adapter import adapt_response
-from worker.clean_pipeline.contracts import (
+from clean_pipeline.bridge.request_adapter import adapt_request
+from clean_pipeline.bridge.response_adapter import adapt_response
+from clean_pipeline.contracts import (
     CleanPipelineRequest,
     CleanPipelineResult,
     PipelineStatus,

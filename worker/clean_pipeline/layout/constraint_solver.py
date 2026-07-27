@@ -17,9 +17,9 @@ Hard Fail: a required object has no valid candidate → return (None, "NO_VALID_
 """
 from __future__ import annotations
 
-from worker.clean_pipeline.extraction.models import ExtractedObject
-from worker.clean_pipeline.layout.models import ObjectCandidate, PlacedObject, SafeZone
-from worker.clean_pipeline.layout.safe_zone import (
+from clean_pipeline.extraction.models import ExtractedObject
+from clean_pipeline.layout.models import ObjectCandidate, PlacedObject, SafeZone
+from clean_pipeline.layout.safe_zone import (
     contains as sz_contains,
     intersection_area,
     within_canvas,

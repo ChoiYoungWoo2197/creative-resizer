@@ -10,7 +10,7 @@ Required objects must be fully inside [left, right) × [top, bottom).
 """
 from __future__ import annotations
 
-from worker.clean_pipeline.layout.models import SafeZone
+from clean_pipeline.layout.models import SafeZone
 
 
 def compute(

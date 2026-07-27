@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.extraction.models import ExtractionResult
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.extraction.models import ExtractionResult
 
 
 def validate(

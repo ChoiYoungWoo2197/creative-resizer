@@ -21,16 +21,16 @@ from pathlib import Path
 
 from PIL import Image
 
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.extraction.models import (
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.extraction.models import (
     ExtractedObject,
     ExtractionResult,
     ProtectedMask,
     SourceBBox,
 )
-from worker.clean_pipeline.extraction.polygon_mask import bounding_rect, rasterize_polygon
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.extraction.polygon_mask import bounding_rect, rasterize_polygon
+from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.OBJECT_EXTRACTION
 _OUTPUT_SUBDIR = Path("clean_v1") / "03_extraction"

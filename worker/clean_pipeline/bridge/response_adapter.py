@@ -1,7 +1,7 @@
 """Adapts CleanPipelineResult → Worker result_items format."""
 from __future__ import annotations
 
-from worker.clean_pipeline.contracts import CleanPipelineResult, PipelineStatus
+from clean_pipeline.contracts import CleanPipelineResult, PipelineStatus
 
 
 def adapt_response(

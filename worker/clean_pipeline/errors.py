@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from worker.clean_pipeline.contracts import StageName
+from clean_pipeline.contracts import StageName
 
 
 @dataclass

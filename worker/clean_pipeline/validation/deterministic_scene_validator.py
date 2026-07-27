@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from worker.clean_pipeline.validation.scene_models import DeterministicValidationResult
+from clean_pipeline.validation.scene_models import DeterministicValidationResult
 
 _SOLID_STD_THRESHOLD = 2.0
 

@@ -1,7 +1,7 @@
 """Validate SceneManifest against structural and business rules."""
 from __future__ import annotations
 
-from worker.clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.analysis.models import SceneManifest
 
 
 def validate(

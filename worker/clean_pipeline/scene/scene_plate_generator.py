@@ -23,15 +23,15 @@ from pathlib import Path
 
 from PIL import Image
 
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
-from worker.clean_pipeline.removal.models import RemovalMaskResult
-from worker.clean_pipeline.scene import (
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.removal.models import RemovalMaskResult
+from clean_pipeline.scene import (
     immutable_pixel_restorer,
     openai_cleanup,
     target_transform,
 )
-from worker.clean_pipeline.scene.models import ScenePlateResult
+from clean_pipeline.scene.models import ScenePlateResult
 
 STAGE = StageName.SCENE_GENERATION
 _OUTPUT_SUBDIR = Path("clean_v1") / "05_scene"

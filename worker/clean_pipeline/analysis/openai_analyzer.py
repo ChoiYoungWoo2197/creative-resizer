@@ -11,12 +11,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from worker.clean_pipeline.analysis.manifest_builder import build as build_manifest
-from worker.clean_pipeline.analysis.manifest_validator import validate as validate_manifest
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.analysis.prompt import SYSTEM_PROMPT, USER_PROMPT
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.analysis.manifest_builder import build as build_manifest
+from clean_pipeline.analysis.manifest_validator import validate as validate_manifest
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.analysis.prompt import SYSTEM_PROMPT, USER_PROMPT
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.SCENE_ANALYSIS
 _MODEL = "o3"

@@ -360,9 +360,9 @@ def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
 
     Fail-closed: FAIL status → failure response. No legacy fallback under any circumstance.
     """
-    from worker.clean_pipeline.bridge.request_adapter import adapt_request
-    from worker.clean_pipeline.bridge.response_adapter import adapt_response
-    from worker.clean_pipeline.orchestrator import run as clean_run
+    from clean_pipeline.bridge.request_adapter import adapt_request
+    from clean_pipeline.bridge.response_adapter import adapt_response
+    from clean_pipeline.orchestrator import run as clean_run
 
     api_key = (
         os.environ.get("OPENAI_API_KEY", "")

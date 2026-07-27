@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from worker.clean_pipeline.contracts import (
+from clean_pipeline.contracts import (
     CleanPipelineRequest,
     CleanPipelineResult,
     PipelineStatus,
@@ -28,7 +28,7 @@ from worker.clean_pipeline.contracts import (
     StageResult,
     TargetSpec,
 )
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.pipeline_logger import PipelineLogger
 
 
 def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult:
@@ -53,7 +53,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         )
 
         # ── P1: SOURCE_PREPARATION ────────────────────────────────────────────
-        from worker.clean_pipeline.source.canonical_source import prepare
+        from clean_pipeline.source.canonical_source import prepare
 
         sr, canonical = prepare(request.source_path, request.output_directory, job_id, logger)
         stage_results.append(sr)
@@ -61,7 +61,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P2: SCENE_ANALYSIS ────────────────────────────────────────────────
-        from worker.clean_pipeline.analysis.openai_analyzer import analyze
+        from clean_pipeline.analysis.openai_analyzer import analyze
 
         sr, manifest = analyze(
             canonical_path=canonical.canonical_path,
@@ -78,7 +78,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P3: OBJECT_EXTRACTION ─────────────────────────────────────────────
-        from worker.clean_pipeline.extraction.object_extractor import extract
+        from clean_pipeline.extraction.object_extractor import extract
 
         sr, extraction = extract(
             canonical_path=canonical.canonical_path,
@@ -92,7 +92,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P4: REMOVAL_MASK ──────────────────────────────────────────────────
-        from worker.clean_pipeline.removal.removal_mask_builder import build as build_removal
+        from clean_pipeline.removal.removal_mask_builder import build as build_removal
 
         sr, removal = build_removal(
             extraction=extraction,
@@ -111,7 +111,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         output_paths: list[str] = []
 
         # ── P5: SCENE_GENERATION ──────────────────────────────────────────────
-        from worker.clean_pipeline.scene.scene_plate_generator import generate as generate_scene
+        from clean_pipeline.scene.scene_plate_generator import generate as generate_scene
 
         sr, scene_plate = generate_scene(
             canonical_path=canonical.canonical_path,
@@ -128,7 +128,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P6: SCENE_VALIDATION ─────────────────────────────────────────────
-        from worker.clean_pipeline.validation.scene_validator import validate as validate_scene
+        from clean_pipeline.validation.scene_validator import validate as validate_scene
 
         sr, _ = validate_scene(
             scene_plate_result=scene_plate,
@@ -144,7 +144,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P7: LAYOUT ────────────────────────────────────────────────────────
-        from worker.clean_pipeline.layout.layout_validator import run as run_layout
+        from clean_pipeline.layout.layout_validator import run as run_layout
 
         sr, layout_result = run_layout(
             extraction=extraction,
@@ -163,7 +163,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P8: FINAL_VALIDATION (composite + validate) ───────────────────────
-        from worker.clean_pipeline.render import compositor, render_validator
+        from clean_pipeline.render import compositor, render_validator
 
         logger.stage_start(
             StageName.FINAL_VALIDATION.value,

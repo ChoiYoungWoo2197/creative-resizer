@@ -12,9 +12,9 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from worker.clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
-from worker.clean_pipeline.source.models import CanonicalSource
+from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.source.models import CanonicalSource
 
 STAGE = StageName.SOURCE_PREPARATION
 

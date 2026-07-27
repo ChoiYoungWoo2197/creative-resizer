@@ -17,10 +17,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from worker.clean_pipeline.analysis.models import SceneManifest
-from worker.clean_pipeline.contracts import StageName
-from worker.clean_pipeline.layout.models import PlacedObject
-from worker.clean_pipeline.pipeline_logger import PipelineLogger
+from clean_pipeline.analysis.models import SceneManifest
+from clean_pipeline.contracts import StageName
+from clean_pipeline.layout.models import PlacedObject
+from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.FINAL_VALIDATION
 _OUTPUT_SUBDIR = Path("clean_v1") / "08_final"

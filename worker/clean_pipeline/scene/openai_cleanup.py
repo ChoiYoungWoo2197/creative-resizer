@@ -15,7 +15,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from worker.clean_pipeline.scene.cleanup_prompt import CLEANUP_PROMPT
+from clean_pipeline.scene.cleanup_prompt import CLEANUP_PROMPT
 
 _API_MODEL = "gpt-image-1"
 _API_W = _API_H = 1024
