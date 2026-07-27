@@ -205,3 +205,81 @@ def test_restorer_replaces_only_restore_region(tmp_path):
     # Bottom half → cleanup blue
     bot = scene_arr[h // 2:, :]
     assert np.all(bot == [50, 150, 200]), f"Expected blue, got {bot[0,0]}"
+
+
+# ── P5 v2: projected clean source region is pixel-identical in scene plate ────
+
+def test_projected_clean_source_pixels_match_scene_plate(tmp_path):
+    """scene_plate projected region must be pixel-identical to clean_source_projection (P5 v2)."""
+    canonical = _make_canonical(tmp_path)
+    removal = _make_removal_result(tmp_path, _W, _H)
+    lg = _make_logger(tmp_path, "clean_proj_job")
+
+    with patch("openai.OpenAI", return_value=_make_mock_openai(_API_W, _API_H)):
+        result, plate = generate(
+            canonical_path=canonical,
+            removal_result=removal,
+            target_width=_TW,
+            target_height=_TH,
+            api_key="sk-test",
+            output_dir=str(tmp_path / "output"),
+            job_id="clean_proj_job",
+            logger=lg,
+        )
+    lg.close()
+
+    assert result.status == PipelineStatus.PASS, result.reasons
+    assert plate is not None
+    # New artifact path must exist
+    assert plate.clean_source_projection_path
+    assert Path(plate.clean_source_projection_path).exists()
+
+    scene = np.array(Image.open(plate.scene_plate_path).convert("RGB"), dtype=np.uint8)
+    clean_proj = np.array(Image.open(plate.clean_source_projection_path).convert("RGB"), dtype=np.uint8)
+    # projected_restore_mask_path is now the inverted outpaint mask (white = projected region)
+    proj_mask = np.array(Image.open(plate.projected_restore_mask_path).convert("L"), dtype=np.uint8)
+    projected = proj_mask > 128
+
+    assert projected.any(), "Expected non-empty projected region"
+    assert np.array_equal(scene[projected], clean_proj[projected]), (
+        f"Projected region mismatch: "
+        f"{np.count_nonzero(np.any(scene[projected] != clean_proj[projected], axis=-1))} pixels"
+    )
+    # Two API calls when letterboxing exists (200×150 → 300×200 has left/right letterbox)
+    assert plate.total_api_call_count >= 1
+
+
+# ── P5 v2: outpaint API returns wrong size → OUTPAINT_SIZE_MISMATCH ──────────
+
+def test_outpaint_wrong_size_fails(tmp_path):
+    """If outpaint AI returns wrong-size image, P5 FAIL with OUTPAINT_SIZE_MISMATCH."""
+    canonical = _make_canonical(tmp_path)
+    removal = _make_removal_result(tmp_path, _W, _H)
+    lg = _make_logger(tmp_path, "outpaint_fail_job")
+
+    # First API call (source cleanup) returns correct 1024×1024.
+    # Second API call (outpaint) returns wrong 512×512.
+    r_ok = MagicMock()
+    r_ok.data = [MagicMock(b64_json=_img_b64(_API_W, _API_H))]
+    r_bad = MagicMock()
+    r_bad.data = [MagicMock(b64_json=_img_b64(512, 512))]
+
+    mock_client = MagicMock()
+    mock_client.images.edit.side_effect = [r_ok, r_bad]
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        result, plate = generate(
+            canonical_path=canonical,
+            removal_result=removal,
+            target_width=_TW,
+            target_height=_TH,
+            api_key="sk-test",
+            output_dir=str(tmp_path / "output"),
+            job_id="outpaint_fail_job",
+            logger=lg,
+        )
+    lg.close()
+
+    assert result.status == PipelineStatus.FAIL
+    assert plate is None
+    assert any("SIZE_MISMATCH" in r for r in result.reasons)

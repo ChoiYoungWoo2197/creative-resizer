@@ -23,12 +23,13 @@ _API_W = _API_H = 1024
 
 def cleanup(
     projected_image: Image.Image,          # RGB, target_w × target_h
-    projected_removal_mask: Image.Image,   # L, target_w × target_h; white = remove
+    projected_removal_mask: Image.Image,   # L, target_w × target_h; white = edit region
     target_width: int,
     target_height: int,
     api_key: str,
+    prompt: str = CLEANUP_PROMPT,
 ) -> tuple[Image.Image | None, str, str]:
-    """Call the DALL-E image-edit API to remove ad objects.
+    """Call the DALL-E image-edit API to fill the masked region.
 
     Returns (cleaned_image, "", "") on success.
     Returns (None, fail_code, fail_reason) on failure.
@@ -66,7 +67,7 @@ def cleanup(
             model=_API_MODEL,
             image=("image.png", img_bytes),
             mask=("mask.png", mask_bytes),
-            prompt=CLEANUP_PROMPT,
+            prompt=prompt,
         )
     except Exception as exc:
         return None, "API_ERROR", f"images.edit failed: {exc}"
