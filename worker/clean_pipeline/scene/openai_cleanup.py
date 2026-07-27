@@ -68,6 +68,7 @@ def cleanup(
             image=("image.png", img_bytes),
             mask=("mask.png", mask_bytes),
             prompt=prompt,
+            size="1024x1024",
         )
     except Exception as exc:
         return None, "API_ERROR", f"images.edit failed: {exc}"
