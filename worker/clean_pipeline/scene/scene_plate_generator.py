@@ -22,7 +22,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
+
+# Extra dilation applied to the projected removal mask before sending to AI.
+# Closes narrow gaps between removal regions (e.g. product jar ↔ text strip)
+# and covers boundary remnants (e.g. jar rim just outside the mask boundary).
+_REMOVAL_DILATION_PX = 30
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
@@ -91,14 +96,41 @@ def generate(
                             f"offset ({tx.offset_x},{tx.offset_y})")
 
     # Project removal/restore masks to target canvas
-    proj_removal = target_transform.apply_mask(removal_mask, tx)
-    proj_restore = target_transform.apply_mask(restore_mask, tx)
+    proj_removal_base = target_transform.apply_mask(removal_mask, tx)
     proj_rem_path = stage_dir / "projected_removal_mask.png"
+    proj_removal_base.save(str(proj_rem_path))
+    logger.artifact_written(STAGE.value, str(proj_rem_path), "projected removal mask (original)")
+
+    # Dilate projected removal mask to close inter-region gaps and cover boundary
+    # remnants (e.g. jar rim just outside the mask, text char in a narrow gap).
+    proj_removal = proj_removal_base.filter(
+        ImageFilter.MaxFilter(size=2 * _REMOVAL_DILATION_PX + 1)
+    )
+    proj_rem_dilated_path = stage_dir / "projected_removal_mask_dilated.png"
+    proj_removal.save(str(proj_rem_dilated_path))
+    logger.artifact_written(STAGE.value, str(proj_rem_dilated_path),
+                            f"projected removal mask dilated (+{_REMOVAL_DILATION_PX}px)")
+
+    # Build letterbox mask early (needed to intersect with proj_restore)
+    outpaint_arr = np.zeros((target_height, target_width), dtype=np.uint8)
+    if tx.offset_x > 0:
+        outpaint_arr[:, :tx.offset_x] = 255
+        outpaint_arr[:, tx.offset_x + tx.proj_width:] = 255
+    if tx.offset_y > 0:
+        outpaint_arr[:tx.offset_y, :] = 255
+        outpaint_arr[tx.offset_y + tx.proj_height:, :] = 255
+    inverted_arr = (255 - outpaint_arr).astype(np.uint8)  # white = projected area
+
+    # proj_restore = (inverse of dilated removal) ∩ (projected area)
+    # Intersecting with inverted_letterbox excludes letterbox pixels so that the
+    # deterministic check holds only in the projected non-removal area.
+    proj_rem_arr = np.array(proj_removal, dtype=np.uint8)
+    proj_restore_arr = np.minimum(255 - proj_rem_arr, inverted_arr).astype(np.uint8)
+    proj_restore = Image.fromarray(proj_restore_arr, "L")
     proj_res_path = stage_dir / "projected_restore_mask.png"
-    proj_removal.save(str(proj_rem_path))
     proj_restore.save(str(proj_res_path))
-    logger.artifact_written(STAGE.value, str(proj_rem_path), "projected removal mask")
-    logger.artifact_written(STAGE.value, str(proj_res_path), "projected restore mask")
+    logger.artifact_written(STAGE.value, str(proj_res_path),
+                            "projected restore mask (non-removal ∩ projected area)")
 
     # ── Step 2: Call 1 — remove ad objects at target canvas resolution ───────
     # Project-first ensures the AI sees the dark background surrounding the removal
@@ -127,28 +159,18 @@ def generate(
     logger.artifact_written(STAGE.value, str(clean_proj_path),
                             "clean projection (ads removed, subject restored)")
 
-    # ── Step 4: Build letterbox mask ─────────────────────────────────────────
-    outpaint_arr = np.zeros((target_height, target_width), dtype=np.uint8)
-    if tx.offset_x > 0:
-        outpaint_arr[:, :tx.offset_x] = 255
-        outpaint_arr[:, tx.offset_x + tx.proj_width:] = 255
-    if tx.offset_y > 0:
-        outpaint_arr[:tx.offset_y, :] = 255
-        outpaint_arr[tx.offset_y + tx.proj_height:, :] = 255
+    # ── Step 4: Finalize letterbox / inverted masks ───────────────────────────
     letterbox_mask = Image.fromarray(outpaint_arr, "L")
-
     outpaint_mask_path = stage_dir / "outpaint_mask.png"
     letterbox_mask.save(str(outpaint_mask_path))
     logger.artifact_written(STAGE.value, str(outpaint_mask_path),
                             "outpaint mask (letterbox regions)")
 
-    # Inverted letterbox: white = projected area (for step 5 restore)
-    inverted_arr = (255 - outpaint_arr).astype(np.uint8)
     inverted_letterbox = Image.fromarray(inverted_arr, "L")
     inverted_mask_path = stage_dir / "inverted_outpaint_mask.png"
     inverted_letterbox.save(str(inverted_mask_path))
     logger.artifact_written(STAGE.value, str(inverted_mask_path),
-                            "inverted outpaint mask (projected region, debug)")
+                            "inverted outpaint mask (projected region)")
 
     # ── Step 5: Call 2 — fill letterbox regions (skipped if no letterbox) ───
     has_letterbox = tx.offset_x > 0 or tx.offset_y > 0
