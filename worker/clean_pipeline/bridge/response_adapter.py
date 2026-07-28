@@ -1,6 +1,8 @@
 """Adapts CleanPipelineResult → Worker result_items format."""
 from __future__ import annotations
 
+import os
+
 from clean_pipeline.contracts import CleanPipelineResult, PipelineStatus
 
 
@@ -22,24 +24,47 @@ def adapt_response(
                 failed_stage = sr.stage.value
                 break
 
+    spec = specs_raw[0] if specs_raw else {}
+    slug = spec.get("slug") or ""
+    media = spec.get("media") or ""
+    name = spec.get("name") or ""
+    width = spec.get("width") or 0
+    height = spec.get("height") or 0
+
     base = {
         "renderSource": "clean_pipeline",
         "fallbackUsed": False,
         "pipelineVersion": "clean_v1",
+        "media": media,
+        "name": name,
+        "slug": slug,
+        "width": width,
+        "height": height,
     }
 
     if succeeded and result.output_paths:
-        item = {**base, "filePath": result.output_paths[0], "valid": True}
+        file_path = result.output_paths[0]
+        try:
+            file_size = os.path.getsize(file_path)
+        except OSError:
+            file_size = None
+        item = {
+            **base,
+            "filePath": file_path,
+            "fileName": os.path.basename(file_path),
+            "fileSize": file_size,
+            "valid": True,
+        }
         return [item], []
 
-    spec = specs_raw[0] if specs_raw else {}
-    slug = spec.get("slug") or spec.get("media") or "unknown"
+    slug_key = slug or media or "unknown"
     item = {
         **base,
         "filePath": "",
+        "fileName": "",
         "valid": False,
         "failedStage": failed_stage,
         "failureCode": result.failure_code,
         "error": result.failure_message,
     }
-    return [item], [slug]
+    return [item], [slug_key]
