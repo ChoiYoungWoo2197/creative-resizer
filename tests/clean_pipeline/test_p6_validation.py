@@ -129,23 +129,24 @@ _AD_REMAINING_RESPONSE = {
 }
 
 
-# ── Normal: valid AI response → PASS ─────────────────────────────────────────
+# ── Normal: _AI_VALIDATION_ENABLED=False → deterministic-only PASS ───────────
 
-def test_valid_ai_response_passes(tmp_path):
+def test_deterministic_pass_with_ai_bypass(tmp_path):
+    """Current behavior: AI validation bypassed; clean scene plate passes via deterministic only."""
     plate, canonical = _build_scene_plate_result(tmp_path)
     manifest = _make_manifest()
     lg = _make_logger(tmp_path)
 
-    with patch("openai.OpenAI", return_value=_mock_openai(_PASS_RESPONSE)):
-        result, validation = validate(
-            scene_plate_result=plate,
-            canonical_path=canonical,
-            manifest=manifest,
-            api_key="sk-test",
-            output_dir=str(tmp_path / "output"),
-            job_id="test_job",
-            logger=lg,
-        )
+    # No mock needed: AI validation is bypassed (_AI_VALIDATION_ENABLED = False)
+    result, validation = validate(
+        scene_plate_result=plate,
+        canonical_path=canonical,
+        manifest=manifest,
+        api_key="sk-test",
+        output_dir=str(tmp_path / "output"),
+        job_id="test_job",
+        logger=lg,
+    )
     lg.close()
 
     assert result.status == PipelineStatus.PASS, result.reasons
@@ -153,15 +154,21 @@ def test_valid_ai_response_passes(tmp_path):
     assert validation is not None
     assert validation.passed is True
     assert validation.fail_codes == []
-    assert validation.ai is not None
-    assert validation.ai.api_call_count == 1
-    assert validation.ai.scene_naturalness_score == pytest.approx(0.87)
+    # AI is bypassed: no API call, ai field is None
+    assert validation.ai is None
+    assert result.metrics.get("apiCallCount") == 0
     assert Path(validation.validation_json_path).exists()
 
 
-# ── Failure: adObjectsRemaining=true → AD_OBJECTS_REMAINING ──────────────────
+# ── AI-enabled path: adObjectsRemaining=true → AD_OBJECTS_REMAINING ─────────
+# monkeypatch re-enables AI validation so the full AI-evaluation path is tested.
 
-def test_ad_objects_remaining_fails(tmp_path):
+def test_ad_objects_remaining_fails_when_ai_enabled(tmp_path, monkeypatch):
+    """When AI validation is active, AD_OBJECTS_REMAINING triggers FAIL."""
+    # Must patch the same module object that `validate` was imported from
+    import worker.clean_pipeline.validation.scene_validator as sv
+    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", True)
+
     plate, canonical = _build_scene_plate_result(tmp_path)
     manifest = _make_manifest()
     lg = _make_logger(tmp_path, "fail_job")
