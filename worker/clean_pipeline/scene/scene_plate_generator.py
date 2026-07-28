@@ -161,8 +161,28 @@ def generate(
     logger.artifact_written(STAGE.value, str(crop_img_path),
                             f"removal crop input ({cx0},{cy0})-({cx1},{cy1}) = {crop_w}×{crop_h}")
 
+    # Blank non-removal pixels in the crop with estimated background color.
+    # Prevents the AI from seeing a subject sliver at the crop edge and duplicating
+    # it into the removal area (DUPLICATED_FRAGMENTS_DETECTED).  The subject is
+    # correctly restored from original_projection in Step 3 (proj_restore), so
+    # blanking here does not affect the final pixel-accurate result.
+    crop_arr = np.array(crop_img).copy()
+    crop_rem_bool = np.array(crop_mask) > 128  # True = removal area (AI edits here)
+    non_rem_pixels = crop_arr[~crop_rem_bool]
+    bg_estimate = (
+        np.median(non_rem_pixels, axis=0).astype(np.uint8)
+        if len(non_rem_pixels) >= 50
+        else np.zeros(3, dtype=np.uint8)
+    )
+    crop_arr[~crop_rem_bool] = bg_estimate
+    crop_img_for_ai = Image.fromarray(crop_arr, "RGB")
+    crop_blanked_path = stage_dir / "removal_crop_blanked.png"
+    crop_img_for_ai.save(str(crop_blanked_path))
+    logger.artifact_written(STAGE.value, str(crop_blanked_path),
+                            f"removal crop with non-removal blanked bg={bg_estimate.tolist()}")
+
     removal_ai_crop, fail_code, fail_reason = openai_cleanup.cleanup(
-        projected_image=crop_img,
+        projected_image=crop_img_for_ai,
         projected_removal_mask=crop_mask,
         target_width=crop_w,
         target_height=crop_h,
