@@ -25,9 +25,13 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 # Extra dilation applied to the projected removal mask before sending to AI.
-# Closes narrow gaps between removal regions (e.g. product jar ↔ text strip)
-# and covers boundary remnants (e.g. jar rim just outside the mask boundary).
+# Closes narrow gaps between removal regions and covers boundary remnants.
 _REMOVAL_DILATION_PX = 30
+
+# Padding (px) around the removal bounding box when cropping for context-isolated cleanup.
+# Sending only the local crop prevents gpt-image-1 from hallucinating the bright subject
+# background into a dark-background removal area.
+_CLEANUP_CROP_PADDING = 40
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
@@ -132,23 +136,55 @@ def generate(
     logger.artifact_written(STAGE.value, str(proj_res_path),
                             "projected restore mask (non-removal ∩ projected area)")
 
-    # ── Step 2: Call 1 — remove ad objects at target canvas resolution ───────
-    # Project-first ensures the AI sees the dark background surrounding the removal
-    # area and fills with matching dark/black, not with a bright-scene extension.
-    removal_ai, fail_code, fail_reason = openai_cleanup.cleanup(
-        projected_image=original_projection,
-        projected_removal_mask=proj_removal,
-        target_width=target_width,
-        target_height=target_height,
+    # ── Step 2: Call 1 — remove ad objects (context-isolated crop) ───────────
+    # Crop the projected image to the removal bounding box + padding so gpt-image-1
+    # only sees the local dark-background context, not the bright subject on the far
+    # left.  Without cropping, the AI extends the bright-subject background into the
+    # dark-background removal area, producing a visible seam after pixel restore.
+    rows, cols = np.where(proj_rem_arr > 128)
+    if len(rows) > 0:
+        pad = _CLEANUP_CROP_PADDING
+        cx0 = max(0, int(cols.min()) - pad)
+        cy0 = max(0, int(rows.min()) - pad)
+        cx1 = min(target_width,  int(cols.max()) + pad)
+        cy1 = min(target_height, int(rows.max()) + pad)
+    else:
+        cx0 = cy0 = 0
+        cx1, cy1 = target_width, target_height
+    crop_w = cx1 - cx0
+    crop_h = cy1 - cy0
+
+    crop_img  = original_projection.crop((cx0, cy0, cx1, cy1))
+    crop_mask = proj_removal.crop((cx0, cy0, cx1, cy1))
+    crop_img_path = stage_dir / "removal_crop_input.png"
+    crop_img.save(str(crop_img_path))
+    logger.artifact_written(STAGE.value, str(crop_img_path),
+                            f"removal crop input ({cx0},{cy0})-({cx1},{cy1}) = {crop_w}×{crop_h}")
+
+    removal_ai_crop, fail_code, fail_reason = openai_cleanup.cleanup(
+        projected_image=crop_img,
+        projected_removal_mask=crop_mask,
+        target_width=crop_w,
+        target_height=crop_h,
         api_key=api_key,
         prompt=CLEANUP_PROMPT,
     )
-    if removal_ai is None:
+    if removal_ai_crop is None:
         return _fail(logger, fail_code, fail_reason)
+
+    # Save raw crop output for debugging (shows what AI generated before paste-back)
+    removal_ai_crop_path = stage_dir / "removal_ai_crop.png"
+    removal_ai_crop.save(str(removal_ai_crop_path))
+    logger.artifact_written(STAGE.value, str(removal_ai_crop_path),
+                            f"raw AI removal crop result ({crop_w}×{crop_h})")
+
+    # Paste AI crop result back into a copy of the full projection
+    removal_ai = original_projection.copy()
+    removal_ai.paste(removal_ai_crop, (cx0, cy0))
 
     removal_ai_path = stage_dir / "source_cleanup_ai.png"
     removal_ai.save(str(removal_ai_path))
-    logger.artifact_written(STAGE.value, str(removal_ai_path), "AI removal result (target canvas)")
+    logger.artifact_written(STAGE.value, str(removal_ai_path), "AI removal result (target canvas, pasted)")
 
     # ── Step 3: Restore protected-subject pixels from original_projection ────
     clean_projection = immutable_pixel_restorer.restore(
