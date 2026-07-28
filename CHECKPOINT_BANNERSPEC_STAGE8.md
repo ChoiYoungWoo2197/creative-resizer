@@ -1,4 +1,7 @@
-# BannerSpec Stage 8 Final Checkpoint
+# [ARCHIVED] BannerSpec Stage 8 Final Checkpoint
+
+> 이 문서는 2026-07-12 Stage 8 완료 시점의 기록이다.
+> 현재 파이프라인은 clean_v1(P1~P8)으로 전환되었다. 이 문서의 내용은 과거 구조에 해당한다.
 
 - 작성 시각: 2026-07-12
 - 현재 브랜치: master

@@ -1,11 +1,11 @@
-name: creative-resizer-stage8-smoke
+name: creative-resizer-smoke
 
 networks:
   smoke-net:
     driver: bridge
 
 volumes:
-  stage8-mongo-data:
+  smoke-mongo-data:
 
 services:
 
@@ -14,7 +14,7 @@ services:
     image: mongo:7
     networks: [smoke-net]
     volumes:
-      - stage8-mongo-data:/data/db
+      - smoke-mongo-data:/data/db
     environment:
       - TZ=Asia/Seoul
     healthcheck:
@@ -73,7 +73,7 @@ services:
     networks: [smoke-net]
     environment:
       - SPRING_PROFILES_ACTIVE=smoke
-      - SMOKE_MONGODB_URI=mongodb://mongo:27017/creative_resizer_stage8_smoke
+      - SMOKE_MONGODB_URI=mongodb://mongo:27017/creative_resizer_smoke
       - SMOKE_RABBITMQ_HOST=rabbitmq
       - SMOKE_WORKER_URL=http://worker:5000
       - TZ=Asia/Seoul

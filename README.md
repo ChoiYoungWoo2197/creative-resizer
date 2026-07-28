@@ -1,6 +1,6 @@
 # Creative Resizer
 
-이미지(PSD, PNG, JPG, WebP 등)를 업로드하면 Google, Meta, Naver, Kakao 등 주요 광고 매체의 규격에 맞는 배너를 자동 생성하는 내부 툴.
+이미지(PSD, PNG, JPG, JPEG)를 업로드하면 Google, Meta, Naver, Kakao 등 주요 광고 매체의 규격에 맞는 배너를 자동 생성하는 내부 툴.
 
 서비스 URL: **https://creative.heeil.com**
 
@@ -12,7 +12,7 @@
 |---|---|
 | 프론트엔드 | Vue 3 + Element Plus + Vite |
 | API 서버 | Spring Boot 3.3.5 (Java 17) |
-| 이미지 처리 | Python 3.11 + psd-tools + Pillow |
+| 이미지 처리 | Python 3.11 + psd-tools + Pillow + OpenAI |
 | 메시지 큐 | RabbitMQ (`heeil.h3` vhost, 192.168.100.12) |
 | DB | MongoDB Atlas (`creative_resizer`) |
 | 웹서버 | Nginx (프론트 서빙 + API 프록시) |
@@ -31,44 +31,37 @@ creative-resizer/
 │
 ├── frontend/                           # Vue 3 프론트엔드
 │   ├── Dockerfile                      # Nginx + 빌드 결과물
-│   ├── nginx.conf                      # client_max_body_size 200m
-│   ├── vite.config.js                  # canvas stub alias (ag-psd 호환)
 │   └── src/
-│       ├── App.vue                     # 다크 헤더 레이아웃
 │       ├── views/
 │       │   ├── UploadView.vue          # 배너 생성 (2패널 레이아웃)
-│       │   ├── JobListView.vue         # 작업 목록 (통계 카드 + 필터 + 테이블)
+│       │   ├── JobListView.vue         # 작업 목록
 │       │   └── SpecView.vue            # 규격 관리
 │       └── api/banner.js               # Axios API 클라이언트
 │
 ├── src/main/java/com/h3/creative/
-│   ├── api/BannerController.java       # REST 엔드포인트 (/upload, /analyze, /job/*, /jobs)
-│   ├── config/
-│   │   ├── RabbitConfig.java           # Exchange/Queue 설정
-│   │   └── AppConfig.java             # RestTemplate + ObjectMapper(JavaTimeModule)
-│   ├── domain/
-│   │   ├── BannerJob.java              # 작업 이력 도큐먼트 (focalPosition 포함)
-│   │   ├── BannerSpec.java             # 매체별 규격 도큐먼트
-│   │   └── BannerAiAnalysis.java       # AI 분석 결과 도큐먼트
-│   ├── mongo/
-│   │   ├── BannerMongoService.java
-│   │   ├── SpecMongoService.java       # findByIds() 지원
-│   │   └── BannerAnalysisMongoService.java
-│   ├── queue/
-│   │   ├── message/BannerMessage.java  # specIds + focalPosition 포함
-│   │   ├── producer/BannerProducer.java
-│   │   └── consumer/BannerConsumer.java
-│   └── service/
-│       ├── BannerService.java
-│       └── BannerAnalysisService.java  # OpenAI Vision API 호출 + normalize
+│   ├── api/BannerController.java       # REST 엔드포인트 (/upload, /analyze, /job/*)
+│   ├── domain/BannerJob.java           # 작업 이력 도큐먼트
+│   ├── domain/BannerSpec.java          # 매체별 규격 도큐먼트
+│   ├── queue/                          # RabbitMQ producer / consumer
+│   ├── service/BannerService.java      # 작업 제출 · 처리 로직
+│   └── worker/WorkerClient.java        # Python Worker HTTP 클라이언트
 │
-├── src/main/resources/application.yml  # 프로파일: default / local / prod
-│
-└── worker/
+└── worker/                             # Python 이미지 처리 워커
     ├── Dockerfile
     ├── requirements.txt
     ├── app.py                          # Flask (POST /generate, GET /health)
-    └── resizer.py                      # PSD·이미지 로딩 + 리사이즈 로직
+    └── clean_pipeline/                 # clean_v1 파이프라인 (P1~P8)
+        ├── orchestrator.py             # P1~P8 단계 조율
+        ├── contracts.py               # 공통 타입 (CleanPipelineRequest, StageResult …)
+        ├── bridge/                    # request_adapter / response_adapter
+        ├── source/                    # P1: 원본 소스 정규화
+        ├── analysis/                  # P2: GPT-4o 객체 분석
+        ├── extraction/                # P3: 객체 좌표 추출
+        ├── removal/                   # P4: 제거 마스크 생성
+        ├── scene/                     # P5: OpenAI 배경 생성
+        ├── validation/                # P6: 장면 검증 (임시 PASS 상태)
+        ├── layout/                    # P7: Safe-zone 배치 검증
+        └── render/                    # P8: 최종 합성
 ```
 
 ---
@@ -96,9 +89,9 @@ creative.banner.queue (RabbitMQ)
   │
   ▼
 BannerConsumer → creative-worker (Python Flask :5000)
-  │              POST /generate
-  │              PSD → psd-tools, 이미지 → Pillow
-  │              규격별 리사이즈 → ZIP 생성
+  │              POST /generate  (pipelineVersion=clean_v1 고정)
+  │              P1~P8 clean_pipeline 실행
+  │              ZIP 생성
   │
   ▼
 공유 볼륨 (/opt/creative-resizer/storage ↔ /app/storage)
@@ -109,38 +102,44 @@ BannerConsumer → creative-worker (Python Flask :5000)
 
 ---
 
-## 지원 입력 형식
+## clean_v1 파이프라인 (P1~P8)
 
-| 형식 | 처리 방식 |
-|---|---|
-| `.psd` | psd-tools로 레이어 합성 후 Pillow 처리 |
-| `.png` `.jpg` `.jpeg` `.webp` `.gif` `.tiff` `.bmp` | Pillow `Image.open()` 직접 처리 |
+모든 생성 요청은 `pipelineVersion=clean_v1` 파이프라인으로 처리된다.
+실패 시 legacy fallback은 없다. 어느 단계에서든 FAIL이면 그 결과를 그대로 반환한다.
 
-> CMYK·P·LAB 색상 모드는 자동으로 RGBA 변환 후 처리
+```
+P1  SOURCE_PREPARATION   — PSD/PNG/JPG/JPEG 정규화 → RGBA canonical.png
+P2  OBJECT_ANALYSIS      — GPT-4o Vision으로 객체 분석 (product, text, cta …)
+P3  OBJECT_EXTRACTION    — bbox / polygon 추출 · 검증
+P4  REMOVAL_MASK         — 제거 대상 마스크 생성
+P5  SCENE_GENERATION     — OpenAI images.edit (1024×1024) → 배경 생성
+P6  SCENE_VALIDATION     — ⚠ 임시 PASS 상태 (아래 주의 참고)
+P7  LAYOUT_VALIDATION    — 타겟 규격별 safe-zone 배치 검증
+P8  COMPOSITION          — 원본 보존 픽셀 복원 + 최종 합성
+```
+
+### P6 임시 PASS 상태 주의
+
+**현재 P6 AI 검증은 비활성화(`_AI_VALIDATION_ENABLED = False`)** 되어 있다.
+결정론적 체크(단색 감지, 픽셀 복원 일치)만 실행된다.
+
+- `valid=true`는 "AI가 장면 품질을 보증했다"는 의미가 아니다.
+- GPT-4o 재검증 기능을 활성화하기 전까지 이 상태가 유지된다.
+- P6를 재활성화하려면 `worker/clean_pipeline/validation/scene_validator.py`의
+  `_AI_VALIDATION_ENABLED = True`로 변경 후 `test_p6_validation.py` 전체를 통과시켜야 한다.
 
 ---
 
-## 리사이즈 모드
+## 지원 입력 형식
 
-| 모드 | 설명 |
+| 형식 | 처리 방식 (P1) |
 |---|---|
-| `smart-fit` | 스마트 맞춤 — 원본 전체를 최대한 유지하고 남는 영역은 블러 배경으로 자연스럽게 확장 **(기본값)** |
-| ↳ `safe` (강도) | 최대한 안 자름 — 블러 영역이 넓을 수 있음 |
-| ↳ `balanced` (강도) | 원본을 조금 더 키움 — 약간의 잘림 허용 **(기본값)** |
-| ↳ `fill` (강도) | 꽉 차게 — 일부 잘림 가능, 광고 임팩트 우선 |
-| `cover` | 꽉 채우기 — 비율 유지, 넘치는 부분 잘림 |
-| `contain` | 전체 보이기 — 비율 유지, 남는 영역 흰색 |
-| `blur-bg` | 원본 비율 유지 + 남은 영역 블러 배경 |
+| `.psd` | psd-tools로 레이어 합성 → RGBA canonical 생성 |
+| `.png` `.jpg` `.jpeg` | Pillow `Image.open()` → RGBA canonical 생성 |
 
-### focalPosition (smart-fit 전용)
-
-전경 이미지를 배치할 앵커 위치. `smart-fit` 모드에서만 유효.
-
-| 값 | 위치 |
-|---|---|
-| `center` | 중앙 **(기본값)** |
-| `top` / `bottom` / `left` / `right` | 상/하/좌/우 |
-| `left-top` / `right-top` / `left-bottom` / `right-bottom` | 4개 모서리 |
+> 형식은 P1 입력 처리 방식만 결정한다. P2~P8 처리 흐름은 형식에 무관하게 동일하다.
+>
+> WebP, GIF, TIFF, BMP는 지원하지 않는다 (P1에서 UNSUPPORTED_SOURCE_TYPE 반환).
 
 ---
 
@@ -155,30 +154,24 @@ BannerConsumer → creative-worker (Python Flask :5000)
 | `campaignName` | String | 캠페인명 |
 | `specIds` | List\<String\> | 선택된 규격 ID 목록 |
 | `targetMedia` | List\<String\> | specIds로부터 도출된 매체 목록 |
-| `resizeMode` | String | cover / contain / blur-bg / smart-fit |
-| `outputFormat` | String | png / jpg / webp |
+| `outputFormat` | String | png / jpg |
+| `pipelineVersion` | String | `clean_v1` (현재 유일한 파이프라인) |
 | `status` | String | pending → processing → done / fail |
 | `psdPath` | String | 업로드 파일 경로 |
 | `zipPath` | String | 완성 ZIP 경로 |
-| `results` | List | 생성 이미지 목록 (media, name, slug, width, height, fileName, filePath) |
+| `results` | List | 생성 이미지 목록 |
 | `errorMessage` | String | 실패 시 오류 메시지 |
 | `createdAt` | DateTime | |
 | `updatedAt` | DateTime | |
 
 ### `banner_ai_analysis` — AI 분석 이력
 
+소재 업로드 시 선택적으로 실행되는 OpenAI Vision 분석 결과.
+
 | 필드 | 타입 | 설명 |
 |---|---|---|
-| `id` | String | ObjectId |
-| `sourceFileName` | String | 분석한 파일명 |
 | `creativeType` | String | `text_heavy` / `product_focused` / `balanced_mix` |
-| `textDensity` | String | `high` / `medium` / `low` |
-| `edgeRisk` | String | `high` / `medium` / `low` |
-| `mainSubjectPosition` | String | 주요 피사체 위치 (focalPosition 허용값과 동일) |
 | `mainSubjectDescription` | String | 주요 피사체 한국어 설명 |
-| `resizeMode` | String | 추천 리사이즈 모드 |
-| `smartFitStrength` | String | 추천 강도 |
-| `focalPosition` | String | 추천 위치 |
 | `reason` | String | 분석 이유 (한국어) |
 | `warnings` | List\<String\> | 주의사항 목록 |
 | `confidence` | Double | 신뢰도 (0.0 ~ 1.0) |
@@ -188,12 +181,10 @@ BannerConsumer → creative-worker (Python Flask :5000)
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
-| `id` | String | ObjectId |
 | `media` | String | google / meta / naver / kakao / linkedin / tiktok |
 | `placementName` | String | 한글 지면명 |
-| `slug` | String | 영문 식별자 (파일명용, e.g. smartchannel_horizontal) |
-| `width` | int | px |
-| `height` | int | px |
+| `slug` | String | 영문 식별자 (파일명용) |
+| `width` / `height` | int | px |
 | `active` | boolean | 활성 여부 |
 
 ---
@@ -211,72 +202,158 @@ BannerConsumer → creative-worker (Python Flask :5000)
 
 ## REST API
 
-### 배너 생성
+### 배너 생성 (사이트 → Spring Boot)
 
 ```
 POST /api/banner/upload
 Content-Type: multipart/form-data
 
-psdFile       이미지 파일 (PSD·PNG·JPG·WebP·GIF 등)
-advertiser    광고주명
-campaignName  캠페인명
-specIds       규격 ID 목록 (복수 전송)
-resizeMode         cover | contain | blur-bg | smart-fit  (기본: smart-fit)
-smartFitStrength   safe | balanced | fill               (기본: balanced, smart-fit 전용)
-outputFormat  png | jpg | webp          (기본: png)
+psdFile         이미지 파일 (PSD · PNG · JPG · JPEG)
+advertiser      광고주명
+campaignName    캠페인명
+specIds         규격 ID 목록 (복수 전송)
+outputFormat    png | jpg  (기본: png)
+pipelineVersion clean_v1  (기본값 — 생략 가능)
 ```
+
+> `resizeMode`, `smartFitStrength`, `focalPosition`, `objectReflowEnabled` 등은 더 이상 사용하지 않는다.
+> Worker가 clean_v1 파이프라인을 실행하므로 무시된다.
 
 ### 작업 조회
 
 ```
 GET /api/banner/job/{id}                       단건 조회
 GET /api/banner/jobs                           전체 목록
-GET /api/banner/job/{id}/preview/{filename}    이미지 미리보기 (image/png·jpeg·webp)
-GET /api/banner/job/{id}/image/{filename}      개별 이미지 다운로드 (attachment)
+GET /api/banner/job/{id}/preview/{filename}    이미지 미리보기
+GET /api/banner/job/{id}/image/{filename}      개별 이미지 다운로드
 GET /api/banner/job/{id}/download              ZIP 전체 다운로드
 ```
 
-### AI 추천 분석
+### AI 소재 분석 (선택)
 
 ```
 POST /api/banner/analyze
 Content-Type: multipart/form-data
 
-file    이미지 파일 (PNG·JPG·WebP 등 — 미리보기 이미지 권장)
+file    이미지 파일 (PNG · JPG)
 ```
 
-응답 (`BannerAiAnalysis`):
-
-```json
-{
-  "creativeType": "text_heavy | product_focused | balanced_mix",
-  "textDensity": "high | medium | low",
-  "edgeRisk": "high | medium | low",
-  "mainSubjectPosition": "center | top | bottom | left | right | ...",
-  "mainSubjectDescription": "주요 피사체 설명",
-  "resizeMode": "smart-fit | cover | contain | blur-bg",
-  "smartFitStrength": "safe | balanced | fill",
-  "focalPosition": "center | top | bottom | ...",
-  "reason": "분석 이유 (한국어)",
-  "warnings": ["주의사항"],
-  "confidence": 0.82
-}
-```
-
-- OpenAI `gpt-4.1-mini` Vision 모델 사용
-- API Key는 서버 `.env`의 `OPENAI_API_KEY` 환경변수로 관리 (프론트 노출 없음)
-- 허용 범위 외 값은 서버에서 자동 보정 (normalize)
-- 분석 결과는 `banner_ai_analysis` 컬렉션에 저장
+- OpenAI `gpt-4.1-mini` Vision 사용
+- 분석 결과는 생성에 자동 적용되지 않는다 (참고용 표시)
 
 ### 규격 관리
 
 ```
-GET    /api/spec                  전체 규격 목록
-GET    /api/spec?media=naver      매체별 필터
-POST   /api/spec                  규격 등록
-POST   /api/spec/init             기본 규격 일괄 삽입 (?reset=true 시 전체 초기화)
-DELETE /api/spec/{id}             규격 삭제
+GET    /api/spec               전체 규격 목록
+GET    /api/spec?media=naver   매체별 필터
+POST   /api/spec               규격 등록
+POST   /api/spec/init          기본 규격 일괄 삽입
+DELETE /api/spec/{id}          규격 삭제
 ```
+
+---
+
+## Worker API (내부 전용)
+
+Worker(`/generate`)는 Java Consumer가 MQ 처리 중 직접 호출한다.
+사이트 UI가 직접 호출하지 않는다.
+
+### POST /generate 요청 (Java → Worker)
+
+```json
+{
+  "jobId":           "uuid",
+  "psdPath":         "/app/storage/uploads/uuid_file.psd",
+  "pipelineVersion": "clean_v1",
+  "specs": [
+    {
+      "media":    "naver",
+      "name":     "GFA 정사각형",
+      "slug":     "gfa_square",
+      "width":    1080,
+      "height":   1080,
+      "safeZone": { "left": 40, "top": 40, "right": 40, "bottom": 40 }
+    }
+  ]
+}
+```
+
+### POST /generate 응답 — PASS
+
+```json
+{
+  "jobId":   "uuid",
+  "zipPath": "/app/storage/zips/uuid.zip",
+  "count":   1,
+  "results": [
+    {
+      "media":           "naver",
+      "name":            "GFA 정사각형",
+      "slug":            "gfa_square",
+      "width":           1080,
+      "height":          1080,
+      "fileName":        "gfa_square.png",
+      "filePath":        "/app/storage/outputs/uuid/gfa_square.png",
+      "fileSize":        204800,
+      "valid":           true,
+      "renderSource":    "clean_pipeline",
+      "fallbackUsed":    false,
+      "pipelineVersion": "clean_v1"
+    }
+  ]
+}
+```
+
+### POST /generate 응답 — FAIL
+
+```json
+{
+  "jobId":  "uuid",
+  "count":  1,
+  "results": [
+    {
+      "filePath":        "",
+      "fileName":        "",
+      "valid":           false,
+      "failedStage":     "SOURCE_PREPARATION",
+      "failureCode":     "SOURCE_NOT_FOUND",
+      "error":           "Source file not found: /app/storage/uploads/uuid_file.psd",
+      "renderSource":    "clean_pipeline",
+      "fallbackUsed":    false,
+      "pipelineVersion": "clean_v1"
+    }
+  ]
+}
+```
+
+FAIL 시 `valid=false`, `failedStage`, `failureCode`, `error` 필드로 원인을 파악한다.
+`fallbackUsed`는 항상 `false` — legacy 경로로 재시도하지 않는다.
+
+---
+
+## 테스트
+
+### clean_pipeline 핵심 테스트 (개발 품질 보증 기준)
+
+```bash
+# 프로젝트 루트에서 실행
+python -m pytest tests/clean_pipeline/ -v
+
+# 빠른 실행
+python -m pytest tests/clean_pipeline/ -q
+```
+
+현재 범위: **182 tests** — P1~P8 각 단계, routing, 격리, fail-closed, E2E 계약 포함.
+
+### Worker 직접 호출 (배포 후 보조 검증)
+
+```bash
+# Worker가 실행 중일 때 (컨테이너 또는 로컬 Flask)
+WORKER_URL=http://localhost:5000 python scripts/worker_contract_smoke_test.py
+```
+
+> Worker 직접 호출은 배포 확인용 보조 수단이다.
+> 개발 단계 품질 보증은 `tests/clean_pipeline/` 기준으로 한다.
 
 ---
 
@@ -296,12 +373,6 @@ docker compose up -d
 ```bash
 cd /opt/creative-resizer
 git pull
-
-# 프론트만 변경 시
-docker compose build --no-cache creative-nginx && docker compose up -d creative-nginx
-
-# 백엔드(Java) 변경 시
-docker compose build --no-cache creative-api && docker compose up -d creative-api
 
 # 워커(Python) 변경 시
 docker compose build --no-cache creative-worker && docker compose up -d creative-worker
@@ -357,21 +428,15 @@ RABBITMQ_PASSWORD=your_password
 RABBITMQ_VHOST=your.vhost
 ```
 
-주요 설정값:
-
 | 항목 | 설명 |
 |---|---|
-| `OPENAI_API_KEY` | OpenAI API 키 (AI 분석 기능) |
+| `OPENAI_API_KEY` | OpenAI API 키 (Worker P2/P5/P6 파이프라인 + AI 분석 기능) |
 | `MONGODB_URI` | MongoDB Atlas 연결 URI |
-| `RABBITMQ_HOST` / `USERNAME` / `PASSWORD` / `VHOST` | RabbitMQ 연결 정보 |
-| `spring.servlet.multipart.max-file-size` | 200MB (application.yml 고정) |
-| `creative.worker.url` | `http://creative-worker:5000` (application.yml 고정) |
+| `RABBITMQ_*` | RabbitMQ 연결 정보 |
 
 ---
 
 ## Apache 리버스 프록시 설정
-
-`/etc/httpd/conf.d/vhost.conf`에 추가:
 
 ```apache
 <VirtualHost *:80>

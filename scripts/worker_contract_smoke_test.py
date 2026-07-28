@@ -1,13 +1,19 @@
 """
-Worker Contract Smoke Test
+Worker Contract Smoke Test (clean_v1)
 Python Worker HTTP API를 직접 테스트 (Spring Boot 경유 없음).
 Java WorkerResponse 계약과 JSON 필드 타입이 일치하는지 검증.
 
-핵심 검증 항목:
-  - safeZoneViolations: List<String>  (Python: hardFailReasons 필터링 결과)
-  - fallbackErrors:     List<Map>     (Python: {"step":..., "message":...} dict 리스트)
+핵심 검증 항목 (clean_v1 파이프라인):
+  - pipelineVersion: "clean_v1" (모든 ResultItem)
+  - fallbackUsed: false (항상)
+  - renderSource: "clean_pipeline" (항상)
+  - valid: bool
   - count, width, height: int
-  - layoutScore, candidateCount: float/int or null
+  - FAIL 응답: failedStage, failureCode, error 필드 존재
+  - PASS 응답: filePath, fileName 비어있지 않음
+
+이 스크립트는 배포 후 보조 검증 도구다.
+개발 단계 품질 보증은 tests/clean_pipeline/ 기준으로 한다.
 
 Environment:
   WORKER_URL   : Worker base URL  (default: http://worker:5000)
@@ -82,23 +88,28 @@ def step_worker_health():
 # ── Step 2: /generate — WorkerResponse JSON 계약 ─────────────────────────────
 
 def step_worker_generate_contract():
-    print("\n── Step 2: Worker /generate — WorkerResponse contract ──────")
+    """clean_v1 파이프라인 응답 계약 검증.
+
+    존재하지 않는 파일을 전송해 P1 SOURCE_NOT_FOUND FAIL을 유도한다.
+    FAIL 응답도 clean_v1 계약(pipelineVersion, fallbackUsed, failedStage 등)을 준수해야 한다.
+    """
+    print("\n── Step 2: Worker /generate — clean_v1 contract ──────────")
 
     payload = {
-        "jobId": "smoke-worker-contract-direct",
-        "psdPath": "/app/fixtures/test_banner.jpg",
-        "sourceType": "image",
-        "resizeMode": "smart-fit",
-        "smartFitStrength": "balanced",
-        "focalPosition": "center",
-        "outputFormat": "jpg",
-        "objectReflowEnabled": False,
+        "jobId": "smoke-clean-v1-contract",
+        "psdPath": "/app/storage/uploads/__smoke_test_nonexistent__.png",
+        "pipelineVersion": "clean_v1",
+        "outputFormat": "png",
         "specs": [
-            {"media": "smoke", "name": "Smoke 300x250",
-             "slug": "smoke-300x250", "width": 300, "height": 250},
-            {"media": "smoke", "name": "Smoke 728x90",
-             "slug": "smoke-728x90", "width": 728, "height": 90},
-        ]
+            {
+                "media":  "smoke",
+                "name":   "Smoke 300x250",
+                "slug":   "smoke-300x250",
+                "width":  300,
+                "height": 250,
+                "safeZone": {"left": 10, "top": 10, "right": 10, "bottom": 10},
+            },
+        ],
     }
 
     try:
@@ -112,19 +123,20 @@ def step_worker_generate_contract():
         _fail("contract check skipped", f"HTTP {status}", "200 required")
         return
 
-    # ── top-level ─────────────────────────────────────────────────
-    _record("jobId=smoke-worker-contract-direct",
-            body.get("jobId") == "smoke-worker-contract-direct",
-            str(body.get("jobId")), "smoke-worker-contract-direct")
+    # ── top-level 계약 ────────────────────────────────────────────
+    _record("jobId 반환",
+            body.get("jobId") == "smoke-clean-v1-contract",
+            str(body.get("jobId")), "smoke-clean-v1-contract")
 
     count = body.get("count")
-    _record("count is int",      isinstance(count, int), type(count).__name__, "int")
-    _record("count >= 1",        isinstance(count, int) and count >= 1, str(count), ">= 1")
+    _record("count is int",  isinstance(count, int), type(count).__name__, "int")
+    _record("count >= 1",    isinstance(count, int) and count >= 1, str(count), ">= 1")
 
     results_list = body.get("results")
-    _record("results is list",   isinstance(results_list, list),
-            type(results_list).__name__, "list")
-    _record("results non-empty", isinstance(results_list, list) and len(results_list) > 0,
+    _record("results is list",
+            isinstance(results_list, list), type(results_list).__name__, "list")
+    _record("results non-empty",
+            isinstance(results_list, list) and len(results_list) > 0,
             str(len(results_list or [])), "> 0")
 
     missing = body.get("missingRatioTypes")
@@ -135,61 +147,63 @@ def step_worker_generate_contract():
         _fail("ResultItem contract check skipped", "no results", "need >= 1")
         return
 
-    # ── ResultItem[0] ─────────────────────────────────────────────
+    # ── ResultItem[0] clean_v1 필수 필드 ─────────────────────────
     item = results_list[0]
     print(f"\n  ResultItem[0] keys: {sorted(item.keys())}", flush=True)
 
+    # pipelineVersion: 항상 "clean_v1"
+    _record("pipelineVersion == clean_v1",
+            item.get("pipelineVersion") == "clean_v1",
+            str(item.get("pipelineVersion")), "clean_v1")
+
+    # fallbackUsed: 항상 false
+    _record("fallbackUsed == false",
+            item.get("fallbackUsed") is False,
+            str(item.get("fallbackUsed")), "false")
+
+    # renderSource: 항상 "clean_pipeline"
+    _record("renderSource == clean_pipeline",
+            item.get("renderSource") == "clean_pipeline",
+            str(item.get("renderSource")), "clean_pipeline")
+
+    # valid: bool
+    valid = item.get("valid")
+    _record("valid is bool", isinstance(valid, bool), type(valid).__name__, "bool")
+
+    # width, height: int
     _record("width is int",  isinstance(item.get("width"), int),
             type(item.get("width")).__name__, "int")
     _record("height is int", isinstance(item.get("height"), int),
             type(item.get("height")).__name__, "int")
 
-    # safeZoneViolations — 핵심: List<String> (dict 아님)
-    sz = item.get("safeZoneViolations")
-    if sz is None or sz == []:
-        _pass("safeZoneViolations: null/[] — no violations (OK)")
-    elif isinstance(sz, list):
-        bad = [v for v in sz if not isinstance(v, str)]
-        _record("safeZoneViolations: all elements are str",
-                len(bad) == 0,
-                f"non-str items={[type(v).__name__ for v in bad[:3]]}" if bad else "all str",
-                "List<String>")
-        print(f"  safeZoneViolations sample: {sz[:3]}", flush=True)
+    # FAIL 경로 계약 (존재하지 않는 파일 → P1 SOURCE_NOT_FOUND)
+    if valid is False:
+        _record("FAIL: failedStage 존재",
+                bool(item.get("failedStage")),
+                str(item.get("failedStage")), "non-empty string")
+        _record("FAIL: failureCode 존재",
+                bool(item.get("failureCode")),
+                str(item.get("failureCode")), "non-empty string")
+        _record("FAIL: error 존재",
+                bool(item.get("error")),
+                str(item.get("error"))[:60], "non-empty string")
+        _record("FAIL: filePath == ''",
+                item.get("filePath") == "",
+                repr(item.get("filePath")), "''")
+        _record("FAIL: fileName == ''",
+                item.get("fileName") == "",
+                repr(item.get("fileName")), "''")
     else:
-        _fail("safeZoneViolations: must be list or null",
-              f"type={type(sz).__name__}", "list[str] or null")
-
-    # fallbackErrors — List<Map<String,Object>>
-    fe = item.get("fallbackErrors")
-    if fe is None or fe == []:
-        _pass("fallbackErrors: null/[] (OK)")
-    elif isinstance(fe, list):
-        bad = [v for v in fe if not isinstance(v, dict)]
-        _record("fallbackErrors: all elements are dict",
-                len(bad) == 0,
-                f"non-dict={[type(v).__name__ for v in bad[:3]]}" if bad else "all dict",
-                "List<Map>")
-    else:
-        _fail("fallbackErrors: must be list or null",
-              f"type={type(fe).__name__}", "list[dict] or null")
-
-    # layoutScore: float/int or null
-    ls = item.get("layoutScore")
-    _record("layoutScore is number or null",
-            ls is None or isinstance(ls, (float, int)),
-            type(ls).__name__, "float/int/null")
-
-    # candidateCount: int or null
-    cc = item.get("candidateCount")
-    _record("candidateCount is int or null",
-            cc is None or isinstance(cc, int),
-            type(cc).__name__, "int/null")
-
-    # safeZonePassed: bool or null
-    szp = item.get("safeZonePassed")
-    _record("safeZonePassed is bool or null",
-            szp is None or isinstance(szp, bool),
-            type(szp).__name__, "bool/null")
+        # PASS 경로 계약
+        _record("PASS: filePath 비어있지 않음",
+                bool(item.get("filePath")),
+                str(item.get("filePath"))[:60], "non-empty")
+        _record("PASS: fileName 비어있지 않음",
+                bool(item.get("fileName")),
+                str(item.get("fileName")), "non-empty")
+        fs = item.get("fileSize")
+        _record("PASS: fileSize is int",
+                isinstance(fs, int), type(fs).__name__, "int")
 
     print(f"\n  Full ResultItem[0]:", flush=True)
     for k, v in sorted(item.items()):

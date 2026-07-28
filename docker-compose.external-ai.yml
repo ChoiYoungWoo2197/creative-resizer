@@ -1,8 +1,12 @@
 version: '3.8'
 
-# creative-segmentation-ai 외부 AI 서비스 전용 compose
+# [ARCHIVED] Grounded-SAM2 외부 AI 분할 서비스 — clean_v1 파이프라인에서 사용하지 않음.
 #
-# 사용법:
+# 과거 구조(Stage 18): worker/external_segmentation_client.py → 이 서비스 HTTP 호출
+# 현재: external_segmentation_client.py 삭제됨. clean_v1은 OpenAI만 사용.
+# 이 파일은 기록 보존 목적으로만 유지한다.
+#
+# 사용법 (과거):
 #   docker compose -f docker-compose.yml -f docker-compose.external-ai.yml up -d creative-segmentation-ai
 #
 # 주의:

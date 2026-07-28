@@ -37,7 +37,7 @@ services:
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - RABBITMQ_VHOST=${RABBITMQ_VHOST}
       # Worker HTTP timeout 설정
-      # /generate는 최대 9회 AI 호출(3 spec × 3 attempt) → 900s 필요
+      # clean_v1은 spec당 최대 3회 AI 재시도 → 규격 수에 비례해 시간 소요
       - WORKER_CONNECT_TIMEOUT_SECONDS=20
       - WORKER_ANALYSIS_READ_TIMEOUT_SECONDS=120
       - WORKER_GENERATE_READ_TIMEOUT_SECONDS=900
@@ -58,42 +58,9 @@ services:
     environment:
       - OUTPUT_DIR=/app/storage/outputs
       - ZIP_DIR=/app/storage/zips
-      # ── Stage 20.3 AI-Only Rendering (Source-Faithful Repair) ────────────────
-      # AI_ONLY_RENDERING=true: 모든 렌더링을 Stage 20.3 AI 파이프라인으로 라우팅.
-      # resize_mode='ai-auto'로 들어온 요청도 동일하게 라우팅됨.
-      # Fail-closed: AI 실패 시 fallback 없이 에러 반환.
-      - AI_ONLY_RENDERING=true
-      # ── Stage 19 Background Pipeline ──────────────────────────────────────────
-      - BACKGROUND_PIPELINE_ENABLED=true
-      - BACKGROUND_PIPELINE_COMPARE_ONLY=false
-      - BACKGROUND_LOCAL_INPAINT_ENABLED=true
-      - BACKGROUND_EXTERNAL_INPAINT_ENABLED=true
-      # Stage 20.2 Smart Fit 정책 (항상 false — 변경 금지)
-      - BACKGROUND_SMART_FIT_ALLOWED=false
-      - BACKGROUND_BLUR_FILL_ALLOWED=false
-      - BACKGROUND_MIRROR_FILL_ALLOWED=false
-      - BACKGROUND_STRETCH_FILL_ALLOWED=false
-      # Stage 20.3 Source-Faithful Repair (OpenAI gpt-image-1)
-      # BACKGROUND_AI_API_KEY는 서버 .env 파일에 설정 필요
-      - BACKGROUND_SOURCE_FAITHFUL_REPAIR_ENABLED=true
-      - BACKGROUND_GENERATION_MODE=source_faithful_repair
-      - BACKGROUND_AI_MAX_ATTEMPTS=1
-      - BACKGROUND_AI_API_KEY=${BACKGROUND_AI_API_KEY}
-      # ALLOW_FAKE_PROVIDER=false: 운영 환경에서 FakeBackgroundProvider 허용 금지.
-      # 로컬 테스트 시에만 true로 설정. 변경 금지.
-      - ALLOW_FAKE_PROVIDER=false
-      # Typography Pipeline (Stage 20.1)
-      - TYPOGRAPHY_PIPELINE_ENABLED=false
-      # Stage 21.5: PSD Object Analysis — upload-time GPT on, generate-time GPT off, reuse enabled
-      - PSD_OBJECT_ANALYSIS_ENABLED=false
-      - PSD_OBJECT_ANALYSIS_ON_UPLOAD=true
-      - PSD_OBJECT_ANALYSIS_REUSE_ENABLED=true
-      - PSD_OBJECT_ANALYSIS_ON_GENERATE=false
-      - PSD_OBJECT_ANALYSIS_REQUIRED_FOR_PSD=true
-      # P0: Per-job work directory for debug artifacts + SHA-256 isolation
-      - AI_WORK_DIR=/app/storage/work
-      # Unified Pipeline V2: 독립 GPT Vision 분석 → 추출 → AI cleanup → layout → composite
-      - UNIFIED_PIPELINE_V2_ENABLED=true
+      # clean_v1 파이프라인 (P1~P8) — OpenAI API Key 필수
+      # P2 객체 분석(GPT-4o), P5 배경 생성(images.edit), P6 검증(GPT-4o)에 사용
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped

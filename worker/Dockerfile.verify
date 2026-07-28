@@ -1,49 +1,38 @@
-# Stage 19 verification image — NOT for production.
-# Adds pytest and test-only deps on top of the worker runtime.
+# clean_pipeline 테스트용 이미지 — 운영 환경에 사용하지 않는다.
 #
-# Build context MUST be the worker directory (not project root):
-#   docker build -t <tag> -f worker/Dockerfile.verify worker/
+# 로컬 실행 (권장):
+#   python -m pytest tests/clean_pipeline/ -v
 #
-# Root .dockerignore excludes worker/ entirely, so project root cannot be
-# used as build context. All COPY paths are relative to the worker directory.
+# 컨테이너 실행:
+#   docker build -t creative-worker-verify -f worker/Dockerfile.verify .
+#   docker run --rm creative-worker-verify
 #
-# Do NOT use this image in production or in docker-compose.yml.
+# 빌드 컨텍스트는 프로젝트 루트(.)를 사용해야 tests/와 conftest.py를 포함할 수 있다.
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Same native deps as worker/Dockerfile
+# psd-tools / Pillow 네이티브 의존성 (운영 Dockerfile과 동일)
 RUN apt-get update && apt-get install -y \
     libffi-dev \
     libjpeg-dev \
     zlib1g-dev \
     liblcms2-2 \
-    imagemagick \
-    libmagickwand-dev \
-    ghostscript \
-    libpng-dev \
-    libtiff-dev \
-    libwebp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ImageMagick: allow PSD read/write (same as worker)
-RUN sed -i 's/<policy domain="coder" rights="none" pattern="PS" \/>/<policy domain="coder" rights="read|write" pattern="PS" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true && \
-    sed -i 's/<policy domain="coder" rights="none" pattern="PSD" \/>/<policy domain="coder" rights="read|write" pattern="PSD" \/>/' /etc/ImageMagick-6/policy.xml 2>/dev/null || true
-
-# Step 1: Runtime requirements (identical to production)
-COPY requirements.txt .
+# 운영 의존성 설치
+COPY worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Step 2: Verification-only requirements (pytest etc.) — NOT in production
-COPY requirements-stage19-verify.txt .
-RUN pip install --no-cache-dir -r requirements-stage19-verify.txt
+# 테스트 의존성 추가
+RUN pip install --no-cache-dir pytest pytest-timeout
 
-# Step 3: Copy worker source
-COPY . .
+# Worker 소스 + 테스트 파일 복사
+COPY worker/ /app/
+COPY tests/ /app/tests/
+COPY conftest.py /app/conftest.py
 
-# Make background package importable from /app in all exec contexts
 ENV PYTHONPATH=/app
 
-EXPOSE 5000
-CMD ["python", "app.py"]
+CMD ["python", "-m", "pytest", "tests/clean_pipeline/", "-v"]
