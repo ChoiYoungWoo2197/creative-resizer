@@ -41,6 +41,12 @@ _REMOVAL_DILATION_PX = 30
 # threshold the background is considered uniform → direct fill (no API call).
 _UNIFORM_BG_STD_THRESHOLD = 25
 
+# If the removal area covers this fraction of the total canvas or more,
+# always use the AI path regardless of bg_std.
+# Large removals (e.g. a half-image solid-color panel) need AI to naturally
+# extend the surrounding photo — a single sampled color produces a flat seam.
+_LARGE_REMOVAL_THRESHOLD = 0.20
+
 # When the AI path is taken, pre-fill the removal area + this many extra pixels
 # around it with natural background color before calling gpt-image-1.
 # This prevents dark overlay panel pixels from appearing as OPAQUE context
@@ -169,14 +175,19 @@ def generate(
         bg_estimate = np.zeros(3, dtype=np.uint8)
         bg_std = 100.0  # no band → force AI path
 
+    total_pixels = target_width * target_height
+    removal_ratio = float((proj_rem_arr > 128).sum()) / total_pixels
+    force_ai = removal_ratio >= _LARGE_REMOVAL_THRESHOLD
+
     logger.artifact_written(
         STAGE.value, "(memory) bg_sample",
         f"expansion_band_px={int(expansion_band.sum())} "
         f"bg={bg_estimate.tolist()} std={bg_std:.1f} "
-        f"threshold={_UNIFORM_BG_STD_THRESHOLD}"
+        f"threshold={_UNIFORM_BG_STD_THRESHOLD} "
+        f"removal_ratio={removal_ratio:.2%} force_ai={force_ai}"
     )
 
-    if bg_std < _UNIFORM_BG_STD_THRESHOLD:
+    if bg_std < _UNIFORM_BG_STD_THRESHOLD and not force_ai:
         # ── Direct fill: uniform background, no API call ─────────────────────
         # Fill every removal-area pixel with the sampled background color.
         # This is pixel-perfect and produces no seam because the fill color
