@@ -8,7 +8,11 @@ Removal fill strategy (Step 2):
       Fill the removal area directly with the sampled background color.
       No API call needed.  Produces pixel-perfect, seam-free result.
   - If COMPLEX (textured / gradient):
-      Fall back to gpt-image-1 images.edit with the full target-canvas image.
+      Fall back to gpt-image-1 images.edit.
+      Before calling, pre-fill the removal area + _AI_CONTEXT_BUFFER_PX buffer
+      with natural background sampled from outside the removal region.
+      This prevents dark overlay panel pixels from appearing as OPAQUE context
+      in DALL-E's mask and causing it to generate dark/black content.
 
 Steps:
   1. Project canonical onto target canvas (no AI).
@@ -34,9 +38,14 @@ from PIL import Image, ImageFilter
 _REMOVAL_DILATION_PX = 30
 
 # If the per-channel std-dev of the dilation expansion band pixels is below this
-# threshold the background is considered uniform and the removal area is filled
-# directly (no API call).  Keeps AI out of cases it handles poorly (solid-dark ads).
+# threshold the background is considered uniform → direct fill (no API call).
 _UNIFORM_BG_STD_THRESHOLD = 25
+
+# When the AI path is taken, pre-fill the removal area + this many extra pixels
+# around it with natural background color before calling gpt-image-1.
+# This prevents dark overlay panel pixels from appearing as OPAQUE context
+# in DALL-E's mask and causing it to generate dark/black content.
+_AI_CONTEXT_BUFFER_PX = 40
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
@@ -150,8 +159,9 @@ def generate(
     expansion_band = (proj_rem_arr > 128) & ~original_removal_bool  # dilated only
 
     source_cleanup_api_calls = 0
+    original_arr = np.array(original_projection)
+
     if expansion_band.any():
-        original_arr = np.array(original_projection)
         band_pixels = original_arr[expansion_band]
         bg_estimate = np.median(band_pixels, axis=0).astype(np.uint8)
         bg_std = float(band_pixels.std(axis=0).max())
@@ -167,11 +177,11 @@ def generate(
     )
 
     if bg_std < _UNIFORM_BG_STD_THRESHOLD:
-        # ── Direct fill: uniform background, no API call ──────────────────────
+        # ── Direct fill: uniform background, no API call ─────────────────────
         # Fill every removal-area pixel with the sampled background color.
         # This is pixel-perfect and produces no seam because the fill color
         # matches the immediately adjacent non-removal pixels exactly.
-        removal_arr_rgb = np.array(original_projection).copy()
+        removal_arr_rgb = original_arr.copy()
         removal_arr_rgb[proj_rem_arr > 128] = bg_estimate
         removal_ai = Image.fromarray(removal_arr_rgb, "RGB")
 
@@ -184,11 +194,42 @@ def generate(
         logger.artifact_written(STAGE.value, str(removal_ai_path),
                                 "removal result (direct fill — no API call)")
     else:
-        # ── AI cleanup: complex / non-uniform background ───────────────────────
-        # Send the full target-canvas projection so the AI has full context to
-        # generate background-matching fill for the removal area.
+        # ── AI cleanup: complex or dark background ────────────────────────────
+        # Pre-fill the removal area AND a buffer zone around it with natural
+        # background color before sending to gpt-image-1.  This prevents dark
+        # overlay panel pixels from appearing as OPAQUE context pixels in
+        # DALL-E's mask, which would cause it to generate dark/black content.
+        #
+        # Natural bg = median of all non-removal projected pixels.
+        # Buffer = _AI_CONTEXT_BUFFER_PX beyond the dilated removal mask.
+        natural_region = (proj_rem_arr <= 128) & (inverted_arr > 128)
+        if natural_region.any():
+            natural_pixels = original_arr[natural_region]
+            natural_bg = np.median(natural_pixels, axis=0).astype(np.uint8)
+        else:
+            natural_bg = bg_estimate  # fallback: nothing else to sample from
+
+        extended_removal = proj_removal.filter(
+            ImageFilter.MaxFilter(size=2 * _AI_CONTEXT_BUFFER_PX + 1)
+        )
+        extended_arr = np.array(extended_removal, dtype=np.uint8) > 128
+
+        prefilled_arr = original_arr.copy()
+        prefilled_arr[extended_arr] = natural_bg
+        projected_image_for_ai = Image.fromarray(prefilled_arr, "RGB")
+
+        logger.artifact_written(
+            STAGE.value, "(memory) ai_context_prefill",
+            f"natural_bg={natural_bg.tolist()} buffer={_AI_CONTEXT_BUFFER_PX}px",
+        )
+
+        prefill_path = stage_dir / "source_cleanup_prefill.png"
+        projected_image_for_ai.save(str(prefill_path))
+        logger.artifact_written(STAGE.value, str(prefill_path),
+                                "pre-filled image sent to gpt-image-1")
+
         removal_ai, fail_code, fail_reason = openai_cleanup.cleanup(
-            projected_image=original_projection,
+            projected_image=projected_image_for_ai,
             projected_removal_mask=proj_removal,
             target_width=target_width,
             target_height=target_height,

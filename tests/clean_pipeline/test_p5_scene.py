@@ -4,6 +4,8 @@ Tests:
   1. Normal: restoreMask region pixels exactly match source_projection
   2. Failure: cleanup API returns wrong-size → CLEANUP_SIZE_MISMATCH
   3. ContainTransform: src always fits within target, no distortion
+  4. DarkBg: dark expansion band → AI path forced (no direct fill even if std < threshold)
+  5. Prefill: AI path sends pre-filled image (removal zone has natural bg color)
 """
 from __future__ import annotations
 
@@ -78,6 +80,60 @@ def _make_canonical(tmp_path: Path, w: int = _W, h: int = _H) -> str:
     p = tmp_path / "canonical.png"
     Image.fromarray(arr, "RGB").save(str(p))
     return str(p)
+
+
+def _make_gradient_panel_canonical(tmp_path: Path, w: int = _W, h: int = _H) -> str:
+    """Canonical mimicking the ya-da dark-panel scenario.
+
+    Left half: uniform natural background (180).
+    Right half: uniform dark overlay panel (8).
+    Transition zone (30 px wide, centred on the boundary): gradient 180→8.
+
+    When the removal mask covers the right half, the 30-px dilation expansion band
+    lands in the gradient zone.  The gradient produces bg_std >> 25, triggering the
+    AI path.  The non-removal pixels (left half = 180) give natural_bg ≈ 180.
+    """
+    mid = w // 2
+    arr = np.full((h, w, 3), 180, dtype=np.uint8)
+    arr[:, mid:] = 8  # dark panel
+
+    # gradient in ±15 px around the boundary so expansion band has high variance
+    for dx in range(-15, 16):
+        col = mid + dx
+        if 0 <= col < w:
+            ratio = (dx + 15) / 30.0          # 0 = left side (180), 1 = right side (8)
+            val = int(180 * (1 - ratio) + 8 * ratio)
+            arr[:, col] = val
+
+    p = tmp_path / "canonical_gradient_panel.png"
+    Image.fromarray(arr, "RGB").save(str(p))
+    return str(p)
+
+
+def _make_right_half_removal(tmp_path: Path, img_w: int, img_h: int) -> RemovalMaskResult:
+    """Removal mask covering the right half of the image (the dark panel)."""
+    stage_dir = tmp_path / "masks_panel"
+    stage_dir.mkdir(exist_ok=True)
+
+    rem_arr = np.zeros((img_h, img_w), dtype=np.uint8)
+    rem_arr[:, img_w // 2:] = 255
+    res_arr = (255 - rem_arr).astype(np.uint8)
+
+    rem_path = stage_dir / "removal_mask.png"
+    res_path = stage_dir / "restore_mask.png"
+    Image.fromarray(rem_arr, "L").save(str(rem_path))
+    Image.fromarray(res_arr, "L").save(str(res_path))
+
+    return RemovalMaskResult(
+        job_id="panel_job",
+        image_width=img_w,
+        image_height=img_h,
+        source_object_count=1,
+        dilation_px=3,
+        removal_mask_path=str(rem_path),
+        restore_mask_path=str(res_path),
+        removal_json_path="",
+    )
 
 
 # ── ContainTransform: geometry correctness ────────────────────────────────────
@@ -283,3 +339,100 @@ def test_outpaint_wrong_size_fails(tmp_path):
     assert result.status == PipelineStatus.FAIL
     assert plate is None
     assert any("SIZE_MISMATCH" in r for r in result.reasons)
+
+
+# ── DarkPanel: gradient-edge dark panel triggers AI path, prefill created ─────
+
+def test_dark_panel_gradient_edge_triggers_ai_path(tmp_path):
+    """Gradient boundary in dark panel causes bg_std > threshold → AI path.
+
+    Scenario mirrors the ya-da banner:
+    - Left half: uniform natural bg (180)
+    - Right half: uniform dark panel (8) with 30-px gradient at the boundary
+    - Removal mask covers the right half
+
+    The 30-px dilation expansion band lands in the gradient zone → bg_std >> 25
+    → AI path is taken (not direct fill).
+
+    Expected:
+    - source_cleanup_direct.png absent  (direct fill skipped)
+    - source_cleanup_prefill.png present (AI pre-fill created)
+    """
+    canonical = _make_gradient_panel_canonical(tmp_path)
+    removal = _make_right_half_removal(tmp_path, _W, _H)
+    lg = _make_logger(tmp_path, "panel_job")
+
+    with patch("openai.OpenAI", return_value=_make_mock_openai(_API_W, _API_H)):
+        result, plate = generate(
+            canonical_path=canonical,
+            removal_result=removal,
+            target_width=_TW,
+            target_height=_TH,
+            api_key="sk-test",
+            output_dir=str(tmp_path / "output"),
+            job_id="panel_job",
+            logger=lg,
+        )
+    lg.close()
+
+    assert result.status == PipelineStatus.PASS, result.reasons
+
+    scene_dir = Path(tmp_path / "output" / "panel_job" / "clean_v1" / "05_scene")
+    assert not (scene_dir / "source_cleanup_direct.png").exists(), (
+        "source_cleanup_direct.png must not exist — gradient edge should have forced AI path"
+    )
+    assert (scene_dir / "source_cleanup_prefill.png").exists(), (
+        "source_cleanup_prefill.png must exist — AI context pre-fill is required"
+    )
+
+
+# ── Prefill: removal zone in pre-filled image has natural background color ─────
+
+def test_ai_prefill_fills_removal_zone_with_natural_bg(tmp_path):
+    """Pre-filled image must replace the dark panel zone with natural bg color.
+
+    Canonical: left half natural bg ~180, right half dark panel ~8 (with gradient edge).
+    natural_bg = median of non-removal pixels ≈ 180 (left half).
+    After pre-fill, the center of the dark panel in the prefill image should be ~180.
+    """
+    canonical = _make_gradient_panel_canonical(tmp_path)
+    removal = _make_right_half_removal(tmp_path, _W, _H)
+    lg = _make_logger(tmp_path, "prefill_job")
+
+    with patch("openai.OpenAI", return_value=_make_mock_openai(_API_W, _API_H)):
+        generate(
+            canonical_path=canonical,
+            removal_result=removal,
+            target_width=_TW,
+            target_height=_TH,
+            api_key="sk-test",
+            output_dir=str(tmp_path / "output"),
+            job_id="prefill_job",
+            logger=lg,
+        )
+    lg.close()
+
+    prefill_path = (
+        tmp_path / "output" / "prefill_job" / "clean_v1" / "05_scene" / "source_cleanup_prefill.png"
+    )
+    assert prefill_path.exists(), "source_cleanup_prefill.png must be written"
+
+    prefill_arr = np.array(Image.open(str(prefill_path)).convert("RGB"), dtype=np.uint8)
+
+    # The CENTER of the right-half (dark panel) should now be ~180 (natural bg).
+    # Sample from target-canvas coordinates: right half center, avoiding edges.
+    tx = target_transform.compute(_W, _H, _TW, _TH)
+    panel_start_x = tx.offset_x + tx.proj_width // 2  # approx start of right half in target
+    panel_center_x = tx.offset_x + (tx.proj_width * 3) // 4  # center of right half
+    cy0, cy1 = tx.offset_y + 10, tx.offset_y + tx.proj_height - 10
+    cx0, cx1 = panel_start_x + 15, panel_center_x + 10  # avoid gradient edge
+
+    panel_pixels = prefill_arr[cy0:cy1, cx0:cx1]
+    assert panel_pixels.size > 0, "Sampled panel region is empty"
+
+    mean_val = float(panel_pixels.mean())
+    # Should be near 180 (natural bg), not near 8 (dark panel)
+    assert mean_val > 100, (
+        f"Pre-fill panel mean={mean_val:.1f} — expected ~180 (natural bg), "
+        f"dark panel color (~8) was NOT replaced. Pre-fill logic failed."
+    )
