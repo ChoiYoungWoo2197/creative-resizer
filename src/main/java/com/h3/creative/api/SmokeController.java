@@ -36,12 +36,8 @@ public class SmokeController {
         WorkerRequest request = WorkerRequest.builder()
                 .jobId("smoke-e2e-" + System.currentTimeMillis())
                 .psdPath("/app/fixtures/test_banner.jpg")
-                .sourceType("image")
-                .resizeMode("smart-fit")
-                .smartFitStrength("balanced")
-                .focalPosition("center")
                 .outputFormat("jpg")
-                .objectReflowEnabled(false)
+                .pipelineVersion("clean_v1")
                 .specs(List.of(
                         WorkerRequest.SpecItem.builder()
                                 .media("smoke")
@@ -65,12 +61,11 @@ public class SmokeController {
             WorkerResponse.ResultItem item = response.getResults().get(0);
             result.put("resultSlug", item.getSlug());
             result.put("resultValid", item.getValid());
-            result.put("safeZoneViolationsType",
-                    item.getSafeZoneViolations() != null ? "List<String>" : "null");
-            result.put("safeZoneViolations", item.getSafeZoneViolations());
             result.put("renderSource", item.getRenderSource());
-            result.put("layoutScore", item.getLayoutScore());
-            result.put("safeZonePassed", item.getSafeZonePassed());
+            result.put("fallbackUsed", item.getFallbackUsed());
+            result.put("pipelineVersion", item.getPipelineVersion());
+            result.put("failedStage", item.getFailedStage());
+            result.put("failureCode", item.getFailureCode());
         }
 
         return result;
