@@ -1,10 +1,10 @@
 """P6 tests: SCENE_VALIDATION stage.
 
 Tests:
-  1. Normal: valid AI response → PASS
+  1. Normal: deterministic pass + AI mock returns PASS → overall PASS
   2. Failure: adObjectsRemaining=true → AD_OBJECTS_REMAINING FAIL
-  3. Deterministic: solid-color scene_plate → SOLID_COLOR_IMAGE FAIL
-  4. Deterministic: restore pixels mismatch → RESTORE_PIXELS_MISMATCH FAIL
+  3. Deterministic: solid-color scene_plate → SOLID_COLOR_IMAGE FAIL (before AI call)
+  4. Deterministic: restore pixels mismatch → RESTORE_PIXELS_MISMATCH FAIL (before AI call)
 """
 from __future__ import annotations
 
@@ -129,24 +129,24 @@ _AD_REMAINING_RESPONSE = {
 }
 
 
-# ── Normal: _AI_VALIDATION_ENABLED=False → deterministic-only PASS ───────────
+# ── Normal: AI-enabled → deterministic pass + AI PASS response → PASS ────────
 
-def test_deterministic_pass_with_ai_bypass(tmp_path):
-    """Current behavior: AI validation bypassed; clean scene plate passes via deterministic only."""
+def test_ai_validation_pass_with_mocked_response(tmp_path):
+    """Full path: deterministic checks pass, AI mock returns PASS → overall PASS."""
     plate, canonical = _build_scene_plate_result(tmp_path)
     manifest = _make_manifest()
     lg = _make_logger(tmp_path)
 
-    # No mock needed: AI validation is bypassed (_AI_VALIDATION_ENABLED = False)
-    result, validation = validate(
-        scene_plate_result=plate,
-        canonical_path=canonical,
-        manifest=manifest,
-        api_key="sk-test",
-        output_dir=str(tmp_path / "output"),
-        job_id="test_job",
-        logger=lg,
-    )
+    with patch("openai.OpenAI", return_value=_mock_openai(_PASS_RESPONSE)):
+        result, validation = validate(
+            scene_plate_result=plate,
+            canonical_path=canonical,
+            manifest=manifest,
+            api_key="sk-test",
+            output_dir=str(tmp_path / "output"),
+            job_id="test_job",
+            logger=lg,
+        )
     lg.close()
 
     assert result.status == PipelineStatus.PASS, result.reasons
@@ -154,21 +154,16 @@ def test_deterministic_pass_with_ai_bypass(tmp_path):
     assert validation is not None
     assert validation.passed is True
     assert validation.fail_codes == []
-    # AI is bypassed: no API call, ai field is None
-    assert validation.ai is None
-    assert result.metrics.get("apiCallCount") == 0
+    assert validation.ai is not None
+    assert validation.ai.scene_naturalness_score == pytest.approx(0.87)
+    assert result.metrics.get("apiCallCount") == 1
     assert Path(validation.validation_json_path).exists()
 
 
 # ── AI-enabled path: adObjectsRemaining=true → AD_OBJECTS_REMAINING ─────────
-# monkeypatch re-enables AI validation so the full AI-evaluation path is tested.
 
-def test_ad_objects_remaining_fails_when_ai_enabled(tmp_path, monkeypatch):
-    """When AI validation is active, AD_OBJECTS_REMAINING triggers FAIL."""
-    # Must patch the same module object that `validate` was imported from
-    import worker.clean_pipeline.validation.scene_validator as sv
-    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", True)
-
+def test_ad_objects_remaining_fails_when_ai_enabled(tmp_path):
+    """AD_OBJECTS_REMAINING in AI response → FAIL."""
     plate, canonical = _build_scene_plate_result(tmp_path)
     manifest = _make_manifest()
     lg = _make_logger(tmp_path, "fail_job")

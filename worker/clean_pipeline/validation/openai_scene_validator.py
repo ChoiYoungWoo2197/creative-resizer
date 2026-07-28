@@ -15,8 +15,8 @@ from clean_pipeline.analysis.models import SceneManifest
 from clean_pipeline.pipeline_logger import PipelineLogger
 from clean_pipeline.validation.scene_models import AIValidationResult
 
-_MODEL = "o3"
-_MAX_TOKENS = 8192  # o3 uses reasoning tokens from this budget; 2048 left too little for JSON output
+_MODEL = "gpt-4o"
+_MAX_TOKENS = 1024  # JSON response is small; gpt-4o does not use reasoning tokens
 _MAX_SIDE = 1024
 
 SYSTEM_PROMPT = (

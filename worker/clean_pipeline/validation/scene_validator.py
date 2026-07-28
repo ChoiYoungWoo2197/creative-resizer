@@ -29,9 +29,7 @@ STAGE = StageName.SCENE_VALIDATION
 _NATURALNESS_THRESHOLD = 0.70
 _OUTPUT_SUBDIR = Path("clean_v1") / "06_validation"
 
-# Temporarily bypass AI validation — always PASS after deterministic checks.
-# Set back to True when P5 scene quality is stable enough to re-enable P6 AI.
-_AI_VALIDATION_ENABLED = False
+_AI_VALIDATION_ENABLED = True
 
 
 def validate(

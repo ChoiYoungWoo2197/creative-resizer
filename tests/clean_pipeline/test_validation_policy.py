@@ -1,16 +1,13 @@
 """P6 scene validation policy tests.
 
-Verifies the current bypass policy and the full AI-enabled path:
+Default: _AI_VALIDATION_ENABLED = True (AI validation is active).
 
-Bypass policy (_AI_VALIDATION_ENABLED = False):
-  - Validator is always called (no short-circuit before it)
-  - Deterministic checks always fire
+Bypass policy (_AI_VALIDATION_ENABLED = False) — tested via monkeypatch:
   - AI is NOT called (apiCallCount = 0)
   - validation.ai is None
-  - validation.passed = True only when deterministic checks pass
-  - The result does NOT claim AI-quality PASS (ai field is None = bypass)
+  - PASS only when deterministic checks pass
 
-AI-enabled path (tested via monkeypatch):
+AI-enabled path (default):
   - AD_OBJECTS_REMAINING → FAIL
   - VISIBLE_SEAM_DETECTED → FAIL
   - LOW_NATURALNESS_SCORE → FAIL
@@ -124,11 +121,14 @@ _PASS_AI_RESPONSE = {
 }
 
 
-# ── Bypass policy ─────────────────────────────────────────────────────────────
+# ── Bypass policy (monkeypatched _AI_VALIDATION_ENABLED = False) ─────────────
 
 
-def test_bypass_ai_is_none(tmp_path):
-    """With _AI_VALIDATION_ENABLED=False, validation.ai must be None (bypass recorded)."""
+def test_bypass_ai_is_none(tmp_path, monkeypatch):
+    """With _AI_VALIDATION_ENABLED=False, validation.ai must be None (no AI call)."""
+    import clean_pipeline.validation.scene_validator as sv
+    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", False)
+
     plate, canonical = _build_valid_plate(tmp_path)
     lg = _make_logger(tmp_path)
 
@@ -147,8 +147,11 @@ def test_bypass_ai_is_none(tmp_path):
     assert validation.ai is None, "AI field must be None when validation is bypassed"
 
 
-def test_bypass_api_call_count_is_zero(tmp_path):
+def test_bypass_api_call_count_is_zero(tmp_path, monkeypatch):
     """With bypass, no OpenAI API call is made — apiCallCount in metrics must be 0."""
+    import clean_pipeline.validation.scene_validator as sv
+    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", False)
+
     plate, canonical = _build_valid_plate(tmp_path)
     lg = _make_logger(tmp_path)
 
@@ -166,8 +169,11 @@ def test_bypass_api_call_count_is_zero(tmp_path):
     assert result.metrics.get("apiCallCount") == 0
 
 
-def test_bypass_pass_not_disguised_as_quality_pass(tmp_path):
-    """Bypass PASS must not look like an AI quality PASS: ai=None, naturalness=1.0 (default)."""
+def test_bypass_pass_not_disguised_as_quality_pass(tmp_path, monkeypatch):
+    """Bypass PASS: ai=None, naturalness=1.0 (default), not an AI quality score."""
+    import clean_pipeline.validation.scene_validator as sv
+    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", False)
+
     plate, canonical = _build_valid_plate(tmp_path)
     lg = _make_logger(tmp_path)
 
@@ -183,9 +189,7 @@ def test_bypass_pass_not_disguised_as_quality_pass(tmp_path):
     lg.close()
 
     assert validation.ai is None
-    # naturalness defaults to 1.0 — this is the "bypass" default, not an AI score
     assert result.metrics.get("naturalness") == 1.0
-    # validation.json must exist and record the bypass state
     assert Path(validation.validation_json_path).exists()
 
 
@@ -263,14 +267,11 @@ def test_restore_mismatch_fails_deterministic_even_with_bypass(tmp_path):
     assert "RESTORE_PIXELS_MISMATCH" in validation.fail_codes
 
 
-# ── AI-enabled path (monkeypatched) ──────────────────────────────────────────
+# ── AI-enabled path (default: _AI_VALIDATION_ENABLED = True) ─────────────────
 
 
-def test_ai_pass_when_enabled(tmp_path, monkeypatch):
-    """When AI is enabled and response is clean, validator PASS with naturalness recorded."""
-    import clean_pipeline.validation.scene_validator as sv
-    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", True)
-
+def test_ai_pass_when_enabled(tmp_path):
+    """AI response is clean → PASS with naturalness recorded."""
     plate, canonical = _build_valid_plate(tmp_path)
     lg = _make_logger(tmp_path, "ai_pass_job")
 
@@ -298,11 +299,8 @@ def test_ai_pass_when_enabled(tmp_path, monkeypatch):
     ({"sceneNaturalnessScore": 0.3}, "LOW_NATURALNESS_SCORE"),
     ({"protectedSubjectPreserved": False}, "PROTECTED_SUBJECT_DAMAGED"),
 ])
-def test_ai_fail_codes_when_enabled(tmp_path, monkeypatch, ai_override, expected_code):
-    """Each AI fail condition produces the correct fail code when AI is enabled."""
-    import clean_pipeline.validation.scene_validator as sv
-    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", True)
-
+def test_ai_fail_codes_when_enabled(tmp_path, ai_override, expected_code):
+    """Each AI fail condition produces the correct fail code."""
     response = {**_PASS_AI_RESPONSE, "pass": False, **ai_override}
     plate, canonical = _build_valid_plate(tmp_path)
     lg = _make_logger(tmp_path, f"ai_fail_{expected_code[:8]}")
@@ -323,11 +321,8 @@ def test_ai_fail_codes_when_enabled(tmp_path, monkeypatch, ai_override, expected
     assert expected_code in validation.fail_codes
 
 
-def test_no_api_key_fails_when_ai_enabled(tmp_path, monkeypatch):
-    """With AI enabled and no api_key, validator must fail with NO_API_KEY."""
-    import clean_pipeline.validation.scene_validator as sv
-    monkeypatch.setattr(sv, "_AI_VALIDATION_ENABLED", True)
-
+def test_no_api_key_fails_when_ai_enabled(tmp_path):
+    """No api_key → NO_API_KEY FAIL."""
     plate, canonical = _build_valid_plate(tmp_path)
     lg = _make_logger(tmp_path, "nokey_job")
 
