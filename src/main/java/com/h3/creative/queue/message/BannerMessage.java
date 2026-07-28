@@ -28,4 +28,7 @@ public class BannerMessage {
     // 4차-9: Object Reflow
     private String objectAnalysisId;
     private Boolean objectReflowEnabled;
+
+    // 신규 파이프라인 라우팅 (예: "clean_v1")
+    private String pipelineVersion;
 }

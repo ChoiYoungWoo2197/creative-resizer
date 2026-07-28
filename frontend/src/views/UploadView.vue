@@ -1375,6 +1375,8 @@ async function submit() {
   if (objAnalysisId.value) {
     fd.append('objectAnalysisId', objAnalysisId.value)
   }
+  // pipelineVersion은 백엔드에서 DEFAULT_PIPELINE_VERSION("clean_v1")으로 정규화됨
+  // 명시적 전달 불필요 — 사이트 기본 요청은 항상 clean_v1
 
   loading.value = true
   try {

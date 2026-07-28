@@ -74,10 +74,26 @@ def generate():
 
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
     t_start = time.time()
-    print(f"[AI_ONLY_START] jobId={job_id} specCount={len(specs)} resizeMode={resize_mode}", flush=True)
+
+    # ── Pipeline version resolution ───────────────────────────────────────────
+    # Default: clean_v1 for all requests regardless of file type.
+    # Explicit "legacy" is allowed for internal maintenance only.
+    # Any other value → 400 (fail-closed, no silent fallback).
+    _VALID_PIPELINE_VERSIONS = {"clean_v1", "legacy"}
+    pipeline_version = data.get("pipelineVersion") or "clean_v1"
+    if pipeline_version not in _VALID_PIPELINE_VERSIONS:
+        print(f"[PIPELINE_VERSION_INVALID] jobId={job_id} pipelineVersion={pipeline_version!r}", flush=True)
+        return jsonify({"error": f"Unsupported pipelineVersion: {pipeline_version!r}. "
+                                 f"Allowed: {sorted(_VALID_PIPELINE_VERSIONS)}"}), 400
+    pipeline_version_source = "explicit" if data.get("pipelineVersion") else "default"
+    print(
+        f"[AI_ONLY_START] jobId={job_id} specCount={len(specs)} resizeMode={resize_mode} "
+        f"pipelineVersion={pipeline_version} source={pipeline_version_source}",
+        flush=True,
+    )
 
     try:
-        if data.get("pipelineVersion") == "clean_v1":
+        if pipeline_version == "clean_v1":
             return _run_clean_v1(data, job_id, job_output_dir, t_start)
 
         _v2_enabled = os.environ.get("UNIFIED_PIPELINE_V2_ENABLED", "false").lower() == "true"

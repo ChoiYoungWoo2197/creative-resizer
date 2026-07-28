@@ -1,20 +1,25 @@
 """SCENE_GENERATION stage (P5 v3): project → remove ads → restore → outpaint → scene plate.
 
-Two-step AI flow at TARGET canvas (max 2 API calls):
-  1. Project canonical onto target canvas (no AI).
-  2. Call 1 — remove ad objects from projected image using proj_removal mask.
-  3. Restore protected-subject pixels from original_projection → clean_projection.
-  4. Call 2 — fill letterbox regions (skipped if no letterbox).
-  5. Restore projected-area pixels from clean_projection → scene_plate.
+Removal fill strategy (Step 2):
+  The 30-px dilation expansion band (pixels dilated into but not originally in the
+  removal area) represents the immediate background surrounding the ad objects.
 
-Why project-first (v3 vs v2):
-  v2 cleaned at canonical size → AI saw the bright left side and extended it into the dark
-  right-side removal area (wrong background). v3 projects first so the AI sees the full
-  target layout: dark background surrounding the removal area → AI fills dark correctly.
+  - If that band is UNIFORM (max per-channel std < _UNIFORM_BG_STD_THRESHOLD):
+      Fill the removal area directly with the sampled background color.
+      No API call needed.  Produces pixel-perfect, seam-free result.
+  - If COMPLEX (textured / gradient):
+      Fall back to gpt-image-1 images.edit with the full target-canvas image.
+
+Steps:
+  1. Project canonical onto target canvas (no AI).
+  2. Fill removal area: direct color fill OR AI cleanup (see above).
+  3. Restore protected-subject pixels from original_projection → clean_projection.
+  4. Fill letterbox regions via AI outpaint (skipped if no letterbox).
+  5. Restore projected-area pixels from clean_projection → scene_plate.
 
 Fail codes:
   CANONICAL_LOAD_FAILED, MASK_LOAD_FAILED, MASK_SIZE_MISMATCH,
-  CLEANUP_SIZE_MISMATCH (removal cleanup wrong size),
+  CLEANUP_SIZE_MISMATCH (removal AI wrong size),
   OUTPAINT_SIZE_MISMATCH (letterbox outpaint wrong size)
 """
 from __future__ import annotations
@@ -28,10 +33,10 @@ from PIL import Image, ImageFilter
 # Closes narrow gaps between removal regions and covers boundary remnants.
 _REMOVAL_DILATION_PX = 30
 
-# Padding (px) around the removal bounding box when cropping for context-isolated cleanup.
-# Sending only the local crop prevents gpt-image-1 from hallucinating the bright subject
-# background into a dark-background removal area.
-_CLEANUP_CROP_PADDING = 40
+# If the per-channel std-dev of the dilation expansion band pixels is below this
+# threshold the background is considered uniform and the removal area is filled
+# directly (no API call).  Keeps AI out of cases it handles poorly (solid-dark ads).
+_UNIFORM_BG_STD_THRESHOLD = 25
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
@@ -136,75 +141,68 @@ def generate(
     logger.artifact_written(STAGE.value, str(proj_res_path),
                             "projected restore mask (non-removal ∩ projected area)")
 
-    # ── Step 2: Call 1 — remove ad objects (context-isolated crop) ───────────
-    # Crop the projected image to the removal bounding box + padding so gpt-image-1
-    # only sees the local dark-background context, not the bright subject on the far
-    # left.  Without cropping, the AI extends the bright-subject background into the
-    # dark-background removal area, producing a visible seam after pixel restore.
-    rows, cols = np.where(proj_rem_arr > 128)
-    if len(rows) > 0:
-        pad = _CLEANUP_CROP_PADDING
-        cx0 = max(0, int(cols.min()) - pad)
-        cy0 = max(0, int(rows.min()) - pad)
-        cx1 = min(target_width,  int(cols.max()) + pad)
-        cy1 = min(target_height, int(rows.max()) + pad)
+    # ── Step 2: Fill removal area (direct color fill or AI) ──────────────────
+    # Sample the 30-px dilation expansion band: pixels that the MaxFilter added
+    # around the original removal area.  These are the immediate background
+    # neighbors of the ad objects — the color that must continue into the
+    # removal area after the ads are erased.
+    original_removal_bool = np.array(proj_removal_base) > 128
+    expansion_band = (proj_rem_arr > 128) & ~original_removal_bool  # dilated only
+
+    source_cleanup_api_calls = 0
+    if expansion_band.any():
+        original_arr = np.array(original_projection)
+        band_pixels = original_arr[expansion_band]
+        bg_estimate = np.median(band_pixels, axis=0).astype(np.uint8)
+        bg_std = float(band_pixels.std(axis=0).max())
     else:
-        cx0 = cy0 = 0
-        cx1, cy1 = target_width, target_height
-    crop_w = cx1 - cx0
-    crop_h = cy1 - cy0
+        bg_estimate = np.zeros(3, dtype=np.uint8)
+        bg_std = 100.0  # no band → force AI path
 
-    crop_img  = original_projection.crop((cx0, cy0, cx1, cy1))
-    crop_mask = proj_removal.crop((cx0, cy0, cx1, cy1))
-    crop_img_path = stage_dir / "removal_crop_input.png"
-    crop_img.save(str(crop_img_path))
-    logger.artifact_written(STAGE.value, str(crop_img_path),
-                            f"removal crop input ({cx0},{cy0})-({cx1},{cy1}) = {crop_w}×{crop_h}")
-
-    # Blank non-removal pixels in the crop with estimated background color.
-    # Prevents the AI from seeing a subject sliver at the crop edge and duplicating
-    # it into the removal area (DUPLICATED_FRAGMENTS_DETECTED).  The subject is
-    # correctly restored from original_projection in Step 3 (proj_restore), so
-    # blanking here does not affect the final pixel-accurate result.
-    crop_arr = np.array(crop_img).copy()
-    crop_rem_bool = np.array(crop_mask) > 128  # True = removal area (AI edits here)
-    non_rem_pixels = crop_arr[~crop_rem_bool]
-    bg_estimate = (
-        np.median(non_rem_pixels, axis=0).astype(np.uint8)
-        if len(non_rem_pixels) >= 50
-        else np.zeros(3, dtype=np.uint8)
+    logger.artifact_written(
+        STAGE.value, "(memory) bg_sample",
+        f"expansion_band_px={int(expansion_band.sum())} "
+        f"bg={bg_estimate.tolist()} std={bg_std:.1f} "
+        f"threshold={_UNIFORM_BG_STD_THRESHOLD}"
     )
-    crop_arr[~crop_rem_bool] = bg_estimate
-    crop_img_for_ai = Image.fromarray(crop_arr, "RGB")
-    crop_blanked_path = stage_dir / "removal_crop_blanked.png"
-    crop_img_for_ai.save(str(crop_blanked_path))
-    logger.artifact_written(STAGE.value, str(crop_blanked_path),
-                            f"removal crop with non-removal blanked bg={bg_estimate.tolist()}")
 
-    removal_ai_crop, fail_code, fail_reason = openai_cleanup.cleanup(
-        projected_image=crop_img_for_ai,
-        projected_removal_mask=crop_mask,
-        target_width=crop_w,
-        target_height=crop_h,
-        api_key=api_key,
-        prompt=CLEANUP_PROMPT,
-    )
-    if removal_ai_crop is None:
-        return _fail(logger, fail_code, fail_reason)
+    if bg_std < _UNIFORM_BG_STD_THRESHOLD:
+        # ── Direct fill: uniform background, no API call ──────────────────────
+        # Fill every removal-area pixel with the sampled background color.
+        # This is pixel-perfect and produces no seam because the fill color
+        # matches the immediately adjacent non-removal pixels exactly.
+        removal_arr_rgb = np.array(original_projection).copy()
+        removal_arr_rgb[proj_rem_arr > 128] = bg_estimate
+        removal_ai = Image.fromarray(removal_arr_rgb, "RGB")
 
-    # Save raw crop output for debugging (shows what AI generated before paste-back)
-    removal_ai_crop_path = stage_dir / "removal_ai_crop.png"
-    removal_ai_crop.save(str(removal_ai_crop_path))
-    logger.artifact_written(STAGE.value, str(removal_ai_crop_path),
-                            f"raw AI removal crop result ({crop_w}×{crop_h})")
+        direct_path = stage_dir / "source_cleanup_direct.png"
+        removal_ai.save(str(direct_path))
+        logger.artifact_written(STAGE.value, str(direct_path),
+                                f"direct fill bg={bg_estimate.tolist()} std={bg_std:.1f}")
+        removal_ai_path = stage_dir / "source_cleanup_ai.png"
+        removal_ai.save(str(removal_ai_path))
+        logger.artifact_written(STAGE.value, str(removal_ai_path),
+                                "removal result (direct fill — no API call)")
+    else:
+        # ── AI cleanup: complex / non-uniform background ───────────────────────
+        # Send the full target-canvas projection so the AI has full context to
+        # generate background-matching fill for the removal area.
+        removal_ai, fail_code, fail_reason = openai_cleanup.cleanup(
+            projected_image=original_projection,
+            projected_removal_mask=proj_removal,
+            target_width=target_width,
+            target_height=target_height,
+            api_key=api_key,
+            prompt=CLEANUP_PROMPT,
+        )
+        if removal_ai is None:
+            return _fail(logger, fail_code, fail_reason)
+        source_cleanup_api_calls = 1
 
-    # Paste AI crop result back into a copy of the full projection
-    removal_ai = original_projection.copy()
-    removal_ai.paste(removal_ai_crop, (cx0, cy0))
-
-    removal_ai_path = stage_dir / "source_cleanup_ai.png"
-    removal_ai.save(str(removal_ai_path))
-    logger.artifact_written(STAGE.value, str(removal_ai_path), "AI removal result (target canvas, pasted)")
+        removal_ai_path = stage_dir / "source_cleanup_ai.png"
+        removal_ai.save(str(removal_ai_path))
+        logger.artifact_written(STAGE.value, str(removal_ai_path),
+                                "AI removal result (target canvas)")
 
     # ── Step 3: Restore protected-subject pixels from original_projection ────
     clean_projection = immutable_pixel_restorer.restore(
@@ -266,7 +264,7 @@ def generate(
     logger.artifact_written(STAGE.value, str(scene_plate_path), "scene plate (final)")
 
     # ── Build result ────────────────────────────────────────────────────────
-    total_api_call_count = 1 + outpaint_api_call_count
+    total_api_call_count = source_cleanup_api_calls + outpaint_api_call_count
 
     result_obj = ScenePlateResult(
         job_id=job_id,
@@ -292,7 +290,7 @@ def generate(
         outpaint_mask_path=str(outpaint_mask_path),
         target_outpaint_ai_path=target_outpaint_ai_path_str,
         # Metrics
-        source_cleanup_api_call_count=1,
+        source_cleanup_api_call_count=source_cleanup_api_calls,
         outpaint_api_call_count=outpaint_api_call_count,
         total_api_call_count=total_api_call_count,
     )

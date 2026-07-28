@@ -24,6 +24,9 @@ public class WorkerRequest {
     private Boolean objectReflowEnabled;
     private java.util.Map<String, Object> objectAnalysis;  // PsdObjectAnalysis 스냅샷
 
+    // 신규 파이프라인 라우팅 (예: "clean_v1")
+    private String pipelineVersion;
+
     @Data
     @Builder
     public static class SpecItem {

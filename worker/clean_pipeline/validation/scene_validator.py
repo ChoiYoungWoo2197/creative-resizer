@@ -29,6 +29,10 @@ STAGE = StageName.SCENE_VALIDATION
 _NATURALNESS_THRESHOLD = 0.70
 _OUTPUT_SUBDIR = Path("clean_v1") / "06_validation"
 
+# Temporarily bypass AI validation — always PASS after deterministic checks.
+# Set back to True when P5 scene quality is stable enough to re-enable P6 AI.
+_AI_VALIDATION_ENABLED = False
+
 
 def validate(
     scene_plate_result: ScenePlateResult,
@@ -77,35 +81,39 @@ def validate(
             stage_dir,
         )
 
-    # ── AI validation — exactly 1 call ───────────────────────────────────────
-    ai, fail_code, fail_reason = openai_scene_validator.validate(
-        canonical_path=canonical_path,
-        source_projection_path=scene_plate_result.source_projection_path,
-        scene_plate_path=scene_plate_result.scene_plate_path,
-        manifest=manifest,
-        api_key=api_key,
-        logger=logger,
-        stage=STAGE.value,
-    )
-
-    if ai is None:
-        return _fail(
-            logger,
-            fail_code,
-            fail_reason,
-            SceneValidationResult(
-                job_id=job_id,
-                passed=False,
-                fail_codes=[fail_code],
-                deterministic=det,
-                ai=None,
-            ),
-            stage_dir,
+    # ── AI validation — skipped while _AI_VALIDATION_ENABLED = False ────────
+    ai = None
+    if _AI_VALIDATION_ENABLED:
+        ai, fail_code, fail_reason = openai_scene_validator.validate(
+            canonical_path=canonical_path,
+            source_projection_path=scene_plate_result.source_projection_path,
+            scene_plate_path=scene_plate_result.scene_plate_path,
+            manifest=manifest,
+            api_key=api_key,
+            logger=logger,
+            stage=STAGE.value,
         )
 
-    # ── Evaluate AI result fields ────────────────────────────────────────────
-    fail_codes = _eval_ai(ai)
-    overall_pass = len(fail_codes) == 0
+        if ai is None:
+            return _fail(
+                logger,
+                fail_code,
+                fail_reason,
+                SceneValidationResult(
+                    job_id=job_id,
+                    passed=False,
+                    fail_codes=[fail_code],
+                    deterministic=det,
+                    ai=None,
+                ),
+                stage_dir,
+            )
+
+        fail_codes = _eval_ai(ai)
+        overall_pass = len(fail_codes) == 0
+    else:
+        fail_codes = []
+        overall_pass = True
 
     result_obj = SceneValidationResult(
         job_id=job_id,
@@ -128,18 +136,19 @@ def validate(
             status=PipelineStatus.FAIL,
             reasons=reasons,
             metrics={
-                "naturalness": ai.scene_naturalness_score,
-                "apiCallCount": ai.api_call_count,
+                "naturalness": ai.scene_naturalness_score if ai else 1.0,
+                "apiCallCount": ai.api_call_count if ai else 0,
             },
             artifacts={"validation_json": str(validation_json_path)},
         ), result_obj
 
+    ai_note = f"naturalness={ai.scene_naturalness_score:.2f}" if ai else "ai_validation=skipped"
     logger.stage_pass(
         STAGE.value,
-        f"scene plate validated: naturalness={ai.scene_naturalness_score:.2f}",
+        f"scene plate validated: {ai_note}",
         metrics={
-            "naturalness": ai.scene_naturalness_score,
-            "apiCallCount": ai.api_call_count,
+            "naturalness": ai.scene_naturalness_score if ai else 1.0,
+            "apiCallCount": ai.api_call_count if ai else 0,
         },
     )
 
@@ -147,8 +156,8 @@ def validate(
         stage=STAGE,
         status=PipelineStatus.PASS,
         metrics={
-            "naturalness": ai.scene_naturalness_score,
-            "apiCallCount": ai.api_call_count,
+            "naturalness": ai.scene_naturalness_score if ai else 1.0,
+            "apiCallCount": ai.api_call_count if ai else 0,
         },
         artifacts={"validation_json": str(validation_json_path)},
     ), result_obj

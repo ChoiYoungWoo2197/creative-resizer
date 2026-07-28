@@ -41,6 +41,9 @@ public class BannerJob {
     private String objectAnalysisId;
     private Boolean objectReflowEnabled;
 
+    // 파이프라인 라우팅 ("clean_v1" / "legacy")
+    private String pipelineVersion;
+
     // AI 추천 적용 이력
     private String aiAnalysisId;
     private Boolean aiApplied;

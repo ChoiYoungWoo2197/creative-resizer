@@ -26,6 +26,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -40,6 +41,10 @@ public class BannerService {
     private final PsdObjectAnalysisMongoService psdObjectAnalysisMongoService;
     private final ObjectMapper objectMapper;
 
+    /** 요청에 pipelineVersion이 누락될 때 사용할 기본값. 모든 계층의 단일 기준. */
+    public static final String DEFAULT_PIPELINE_VERSION = "clean_v1";
+    private static final Set<String> VALID_PIPELINE_VERSIONS = Set.of("clean_v1", "legacy");
+
     @Value("${creative.storage.upload-dir}")
     private String uploadDir;
 
@@ -50,10 +55,24 @@ public class BannerService {
                             String aiRecommendedResizeMode, String aiRecommendedSmartFitStrength,
                             String aiRecommendedFocalPosition,
                             String psdMode, List<String> selectedArtboardIds,
-                            String objectAnalysisId, Boolean objectReflowEnabled) throws IOException {
+                            String objectAnalysisId, Boolean objectReflowEnabled,
+                            String pipelineVersion) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
         if (psdMode == null || psdMode.isBlank()) psdMode = "artboard-first";
+
+        // ── pipelineVersion 단일 기준 정규화 (요청 진입 지점) ──────────────────
+        String pipelineVersionSource;
+        if (pipelineVersion == null || pipelineVersion.isBlank()) {
+            pipelineVersion = DEFAULT_PIPELINE_VERSION;
+            pipelineVersionSource = "default";
+        } else if (!VALID_PIPELINE_VERSIONS.contains(pipelineVersion)) {
+            throw new IllegalArgumentException(
+                "Unsupported pipelineVersion: '" + pipelineVersion + "'. Allowed: " + VALID_PIPELINE_VERSIONS);
+        } else {
+            pipelineVersionSource = "explicit";
+        }
+        log.info("[PIPELINE_VERSION] resolved={} source={}", pipelineVersion, pipelineVersionSource);
 
         String filename = UUID.randomUUID() + "_" + psdFile.getOriginalFilename();
         File dest = new File(uploadDir, filename);
@@ -92,6 +111,7 @@ public class BannerService {
             job.setObjectAnalysisId(objectAnalysisId);
         }
         job.setObjectReflowEnabled(objectReflowEnabled != null && objectReflowEnabled);
+        job.setPipelineVersion(pipelineVersion);
 
         // PSD이면 Worker에 분석 요청 → 결과를 job에 저장 (프론트 즉시 표시용)
         if ("psd".equals(sourceType)) {
@@ -122,6 +142,7 @@ public class BannerService {
                 .selectedArtboardIds(job.getSelectedArtboardIds())
                 .objectAnalysisId(job.getObjectAnalysisId())
                 .objectReflowEnabled(job.getObjectReflowEnabled())
+                .pipelineVersion(pipelineVersion)
                 .build();
 
         bannerProducer.publish(message);
@@ -240,6 +261,13 @@ public class BannerService {
             }
         }
 
+        // Queue 메시지에서 pipelineVersion이 누락된 경우(레거시 메시지) 방어적 정규화
+        String resolvedPipelineVersion = message.getPipelineVersion();
+        if (resolvedPipelineVersion == null || resolvedPipelineVersion.isBlank()) {
+            resolvedPipelineVersion = DEFAULT_PIPELINE_VERSION;
+            log.info("[PIPELINE_VERSION] defaulted in process() jobId={} — legacy queue message", jobId);
+        }
+
         WorkerRequest request = WorkerRequest.builder()
                 .jobId(jobId)
                 .psdPath(message.getPsdPath())
@@ -253,6 +281,7 @@ public class BannerService {
                 .selectedArtboardIds(message.getSelectedArtboardIds())
                 .objectReflowEnabled(objectReflowEnabled)
                 .objectAnalysis(objectAnalysisSnapshot)
+                .pipelineVersion(resolvedPipelineVersion)
                 .build();
 
         WorkerResponse response = workerClient.generate(request);
