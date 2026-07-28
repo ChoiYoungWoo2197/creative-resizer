@@ -14,7 +14,7 @@ public class WorkerResponse {
     private int count;
     private String error;
     private List<ResultItem> results;
-    private List<String> missingRatioTypes;   // 감지되지 않은 비율 타입 목록
+    private List<String> missingRatioTypes;
 
     public boolean isSuccess() {
         return error == null || error.isBlank();
@@ -23,107 +23,29 @@ public class WorkerResponse {
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ResultItem {
+
+        // ── clean_v1 공통 필드 (PASS / FAIL 모두 반환) ────────────────────────
+        private String pipelineVersion;   // "clean_v1"
+        private String renderSource;      // "clean_pipeline"
+        private Boolean fallbackUsed;     // 항상 false
+        private Boolean valid;            // PASS=true / FAIL=false
         private String media;
         private String name;
         private String slug;
         private int width;
         private int height;
+
+        // ── clean_v1 PASS 전용 ────────────────────────────────────────────────
         private String fileName;
         private String filePath;
         private Long fileSize;
-        private Boolean valid;
+
+        // ── clean_v1 FAIL 전용 ───────────────────────────────────────────────
+        private String failedStage;    // P1~P8 단계명 (예: SOURCE_PREPARATION)
+        private String failureCode;    // 오류 코드 (예: SOURCE_NOT_FOUND)
+        private String error;          // 오류 메시지
+
+        // ── 선택적 메타 (미래 확장용, 현재 clean_v1이 반환하지 않을 수 있음) ──
         private String validationMessage;
-        private String selectedArtboardId;
-        private String selectedArtboardName;
-        private String selectedArtboardType;         // square / vertical / horizontal / custom / full-canvas
-        private java.util.Map<String, Object> selectedArtboardBox;  // {x, y, width, height}
-        private Double artboardMatchScore;           // 0.0 ~ 1.0 (1.0 = 비율 완전 일치)
-        private String selectedSourceArtboardSize;   // e.g. "1200x1200"
-        private String sourceMatchType;              // exact / inferred / fallback
-        private String actualPsdRenderMode;  // artboard / full-canvas / imagemagick-flatten / layer-reflow / failed
-
-        // PSD fallback pipeline 메타 (4차-3)
-        private String renderSource;   // psd_tools_composite / imagemagick_* / psd_layer_reflow / pillow_image / unknown
-        private Boolean fallbackUsed;
-        private String fallbackReason;
-        private java.util.List<java.util.Map<String, Object>> fallbackErrors;
-        private Integer sourceWidth;
-        private Integer sourceHeight;
-
-        // 4차-4: Wide-Banner Smart-Fit 메타
-        private String resizeStrategy;    // wide-banner-smart-fit / smart-fit / psd-layer-reflow 등
-        private String candidateType;     // safe / balanced / fill / focus-crop
-        private Double candidateScore;
-        private Double blurAreaRatio;
-        private Double cropRatio;
-        private Double subjectScale;
-
-        // 4차-5: Layer Reflow 품질 메타
-        private Boolean safeZonePass;
-        private Boolean requiredLayerMissing;
-
-        // wide-banner 품질 게이트 결과
-        private Boolean qualityGate;   // true = 모든 후보가 50점 미만이었음
-        private String  qualityLabel;  // 정상 / 주의 / 품질 낮음
-
-        // PSD 레이어 재배치 메타 (4차-2 보완)
-        private Boolean layerReflowAttempted;
-        private Boolean layerReflowSucceeded;
-        private String layerReflowError;
-        private Integer layerReflowExtractedLayerCount;
-        private java.util.List<String> layerReflowDetectedRoles;
-        private String layerReflowTemplate;
-        private java.util.List<String> usedLayerRoles;
-
-        // 4차-9: Object Reflow 결과
-        private Boolean objectReflowAttempted;
-        private Boolean objectReflowSucceeded;
-        private String objectReflowMode;
-        private String objectReflowFallbackReason;
-        private java.util.List<String> usedObjectRoles;
-        private java.util.List<String> missingObjectRoles;
-        private java.util.List<String> cropFallbackRoles;
-        private java.util.List<String> lowConfidenceRoles;
-        private Boolean objectSafeZonePass;
-
-        // 1단계: 고품질 경로 메타
-        private String renderMode;
-        private Boolean objectReflowUsed;
-        private Boolean objectReflowFallbackUsed;
-        private Double layoutScore;
-        private String backgroundMode;
-        private Integer candidateCount;
-        private String selectedCandidateId;
-
-        // 4단계: safe zone 체크 결과
-        private Boolean safeZonePassed;   // canonical (safeZonePass는 alias)
-        private String layoutScoreStatus; // "normal" | "fallback" (emergency_fallback 선택 시)
-        // layout_compositor.py는 hardFailReasons에서 필터링한 문자열 리스트를 반환 (dict 아님)
-        private java.util.List<String> safeZoneViolations;
-
-        // 9단계: Layout Repair & Quality Meta
-        private Boolean repairAttempted;
-        private Boolean repairApplied;
-        private java.util.List<String> repairReasons;
-        private java.util.List<String> repairedObjects;
-        private java.util.Map<String, Object> scoringBreakdown;
-        private java.util.List<String> duplicateObjectsRemoved;
-        private Boolean ctaGroupCreated;
-
-        // 9단계: Debug Overlay Optional Fields (debug_overlay.py 계산값, null 허용)
-        private Boolean ctaVisible;
-        private Boolean ctaOccluded;
-        private Boolean ctaInsideSafeZone;
-        private java.util.Map<String, Object> ctaGroupBbox;
-        private Boolean headlineVisible;
-        private Boolean headlineClamped;
-        private Boolean headlineScaled;
-        private Boolean headlineOverflowFixed;
-        private Boolean blurFallbackUsed;
-
-        // Stage 20.3: 렌더 프로브넌스 (요청 모드 vs 실제 적용 모드 추적)
-        // requestedResizeMode / effectiveResizeMode / blurFillUsed / forcedSmartFit
-        // sourceType / psdMode / backgroundPipelineUsed / sourceFaithfulRepairUsed
-        private java.util.Map<String, Object> renderProvenance;
     }
 }

@@ -1,12 +1,8 @@
 package com.h3.creative.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.h3.creative.domain.BannerJob;
 import com.h3.creative.domain.BannerSpec;
-import com.h3.creative.domain.PsdObjectAnalysis;
-import java.util.ArrayList;
 import com.h3.creative.mongo.BannerMongoService;
-import com.h3.creative.mongo.PsdObjectAnalysisMongoService;
 import com.h3.creative.mongo.SpecMongoService;
 import com.h3.creative.queue.message.BannerMessage;
 import com.h3.creative.queue.producer.BannerProducer;
@@ -21,9 +17,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,12 +31,10 @@ public class BannerService {
     private final SpecMongoService specMongoService;
     private final BannerProducer bannerProducer;
     private final WorkerClient workerClient;
-    private final PsdObjectAnalysisMongoService psdObjectAnalysisMongoService;
-    private final ObjectMapper objectMapper;
 
     /** 요청에 pipelineVersion이 누락될 때 사용할 기본값. 모든 계층의 단일 기준. */
     public static final String DEFAULT_PIPELINE_VERSION = "clean_v1";
-    private static final Set<String> VALID_PIPELINE_VERSIONS = Set.of("clean_v1", "legacy");
+    private static final Set<String> VALID_PIPELINE_VERSIONS = Set.of("clean_v1");
 
     @Value("${creative.storage.upload-dir}")
     private String uploadDir;
@@ -219,48 +210,6 @@ public class BannerService {
                 })
                 .toList();
 
-        // Stage 21: object-reflow 모드 또는 ai-auto 모드일 때 PsdObjectAnalysis 로드 → Map 스냅샷으로 전달
-        Map<String, Object> objectAnalysisSnapshot = null;
-        boolean objectReflowEnabled = Boolean.TRUE.equals(message.getObjectReflowEnabled());
-        boolean isAiAutoMode = "ai-auto".equals(message.getResizeMode());
-        if ((objectReflowEnabled || isAiAutoMode) && message.getObjectAnalysisId() != null) {
-            try {
-                PsdObjectAnalysis oa = psdObjectAnalysisMongoService.findById(message.getObjectAnalysisId());
-                if (oa == null) {
-                    log.warn("OBJECT_ANALYSIS_NOT_FOUND id={}", message.getObjectAnalysisId());
-                } else if (!"READY".equals(oa.getStatus())) {
-                    log.warn("OBJECT_ANALYSIS_NOT_READY id={} status={}", message.getObjectAnalysisId(), oa.getStatus());
-                } else {
-                    // Source hash validation: stored snapshot must match current PSD file
-                    String storedSha = oa.getSourceFileSha256();
-                    boolean shaValidated = false;
-                    if (storedSha != null && !storedSha.isBlank() && !storedSha.startsWith("__")) {
-                        String actualSha = computeFileSha256(message.getPsdPath());
-                        if (!storedSha.equals(actualSha)) {
-                            String s = storedSha.length() >= 16 ? storedSha.substring(0, 16) : storedSha;
-                            String a = actualSha.length() >= 16 ? actualSha.substring(0, 16) : actualSha;
-                            log.error("OBJECT_ANALYSIS_SOURCE_HASH_MISMATCH id={} stored={} actual={}",
-                                message.getObjectAnalysisId(), s, a);
-                            // fail-closed: mismatched snapshot is not applied
-                        } else {
-                            shaValidated = true;
-                        }
-                    } else {
-                        shaValidated = true; // no hash stored — skip validation
-                    }
-                    if (shaValidated) {
-                        objectAnalysisSnapshot = objectMapper.convertValue(oa, Map.class);
-                        log.info("[PSD_OBJECT_ANALYSIS] trigger=generate source=stored-snapshot"
-                            + " analysisCacheHit=true reused=true gptRequestCount=0"
-                            + " analysisId={} analysisVersion={} model={}",
-                            message.getObjectAnalysisId(), oa.getAnalysisVersion(), oa.getModel());
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("PsdObjectAnalysis 로딩 실패 id={}: {}", message.getObjectAnalysisId(), e.getMessage());
-            }
-        }
-
         // Queue 메시지에서 pipelineVersion이 누락된 경우(레거시 메시지) 방어적 정규화
         String resolvedPipelineVersion = message.getPipelineVersion();
         if (resolvedPipelineVersion == null || resolvedPipelineVersion.isBlank()) {
@@ -272,15 +221,7 @@ public class BannerService {
                 .jobId(jobId)
                 .psdPath(message.getPsdPath())
                 .specs(specItems)
-                .resizeMode(message.getResizeMode())
-                .smartFitStrength(message.getSmartFitStrength())
-                .focalPosition(message.getFocalPosition())
                 .outputFormat(message.getOutputFormat())
-                .sourceType(message.getSourceType() != null ? message.getSourceType() : "image")
-                .psdMode(message.getPsdMode() != null ? message.getPsdMode() : "artboard-first")
-                .selectedArtboardIds(message.getSelectedArtboardIds())
-                .objectReflowEnabled(objectReflowEnabled)
-                .objectAnalysis(objectAnalysisSnapshot)
                 .pipelineVersion(resolvedPipelineVersion)
                 .build();
 
@@ -307,75 +248,8 @@ public class BannerService {
                         br.setFileSize(r.getFileSize());
                         br.setValid(r.getValid());
                         br.setValidationMessage(r.getValidationMessage());
-                        br.setSelectedArtboardId(r.getSelectedArtboardId());
-                        br.setSelectedArtboardName(r.getSelectedArtboardName());
-                        br.setSelectedArtboardType(r.getSelectedArtboardType());
-                        br.setSelectedArtboardBox(r.getSelectedArtboardBox());
-                        br.setArtboardMatchScore(r.getArtboardMatchScore());
-                        br.setSelectedSourceArtboardSize(r.getSelectedSourceArtboardSize());
-                        br.setSourceMatchType(r.getSourceMatchType());
-                        br.setActualPsdRenderMode(r.getActualPsdRenderMode());
                         br.setRenderSource(r.getRenderSource());
                         br.setFallbackUsed(r.getFallbackUsed());
-                        br.setFallbackReason(r.getFallbackReason());
-                        br.setFallbackErrors(r.getFallbackErrors());
-                        br.setSourceWidth(r.getSourceWidth());
-                        br.setSourceHeight(r.getSourceHeight());
-                        br.setResizeStrategy(r.getResizeStrategy());
-                        br.setCandidateType(r.getCandidateType());
-                        br.setCandidateScore(r.getCandidateScore());
-                        br.setBlurAreaRatio(r.getBlurAreaRatio());
-                        br.setCropRatio(r.getCropRatio());
-                        br.setSubjectScale(r.getSubjectScale());
-                        br.setSafeZonePass(r.getSafeZonePass());
-                        br.setRequiredLayerMissing(r.getRequiredLayerMissing());
-                        br.setQualityGate(r.getQualityGate());
-                        br.setQualityLabel(r.getQualityLabel());
-                        br.setLayerReflowAttempted(r.getLayerReflowAttempted());
-                        br.setLayerReflowSucceeded(r.getLayerReflowSucceeded());
-                        br.setLayerReflowError(r.getLayerReflowError());
-                        br.setLayerReflowExtractedLayerCount(r.getLayerReflowExtractedLayerCount());
-                        br.setLayerReflowDetectedRoles(r.getLayerReflowDetectedRoles());
-                        br.setLayerReflowTemplate(r.getLayerReflowTemplate());
-                        br.setUsedLayerRoles(r.getUsedLayerRoles());
-                        br.setObjectReflowAttempted(r.getObjectReflowAttempted());
-                        br.setObjectReflowSucceeded(r.getObjectReflowSucceeded());
-                        br.setObjectReflowMode(r.getObjectReflowMode());
-                        br.setObjectReflowFallbackReason(r.getObjectReflowFallbackReason());
-                        br.setUsedObjectRoles(r.getUsedObjectRoles());
-                        br.setMissingObjectRoles(r.getMissingObjectRoles());
-                        br.setCropFallbackRoles(r.getCropFallbackRoles());
-                        br.setLowConfidenceRoles(r.getLowConfidenceRoles());
-                        br.setObjectSafeZonePass(r.getObjectSafeZonePass());
-                        br.setRenderMode(r.getRenderMode());
-                        br.setObjectReflowUsed(r.getObjectReflowUsed());
-                        br.setObjectReflowFallbackUsed(r.getObjectReflowFallbackUsed());
-                        br.setLayoutScore(r.getLayoutScore());
-                        br.setBackgroundMode(r.getBackgroundMode());
-                        br.setCandidateCount(r.getCandidateCount());
-                        br.setSelectedCandidateId(r.getSelectedCandidateId());
-                        br.setSafeZonePassed(r.getSafeZonePassed());
-                        br.setLayoutScoreStatus(r.getLayoutScoreStatus());
-                        br.setSafeZoneViolations(r.getSafeZoneViolations());
-                        // 9단계: Layout Repair & Quality Meta
-                        br.setRepairAttempted(r.getRepairAttempted());
-                        br.setRepairApplied(r.getRepairApplied());
-                        br.setRepairReasons(r.getRepairReasons());
-                        br.setRepairedObjects(r.getRepairedObjects());
-                        br.setScoringBreakdown(r.getScoringBreakdown());
-                        br.setDuplicateObjectsRemoved(r.getDuplicateObjectsRemoved());
-                        br.setCtaGroupCreated(r.getCtaGroupCreated());
-                        // 9단계: Debug Overlay Optional Fields
-                        br.setCtaVisible(r.getCtaVisible());
-                        br.setCtaOccluded(r.getCtaOccluded());
-                        br.setCtaInsideSafeZone(r.getCtaInsideSafeZone());
-                        br.setCtaGroupBbox(r.getCtaGroupBbox());
-                        br.setHeadlineVisible(r.getHeadlineVisible());
-                        br.setHeadlineClamped(r.getHeadlineClamped());
-                        br.setHeadlineScaled(r.getHeadlineScaled());
-                        br.setHeadlineOverflowFixed(r.getHeadlineOverflowFixed());
-                        br.setBlurFallbackUsed(r.getBlurFallbackUsed());
-                        br.setRenderProvenance(r.getRenderProvenance());
                         return br;
                     }).toList()
                     : List.of();
@@ -393,20 +267,6 @@ public class BannerService {
             if (hasInvalid) {
                 log.warn("Job validation failed={} — 규격 불일치 이미지 존재", jobId);
                 bannerMongoService.updateFailWithResults(jobId, "생성 이미지 크기가 요청 규격과 다릅니다.", results);
-                return;
-            }
-
-            // Bundle C-1: fail-closed verdict propagation
-            // If any result's renderProvenance has overallVerdict=FAIL → treat job as failed
-            boolean verdictFail = results.stream().anyMatch(r -> {
-                java.util.Map<String, Object> prov = r.getRenderProvenance();
-                if (prov == null) return false;
-                Object ov = prov.get("overallVerdict");
-                return "FAIL".equals(ov);
-            });
-            if (verdictFail) {
-                log.warn("Job verdict-failed={} — overallVerdict=FAIL in renderProvenance", jobId);
-                bannerMongoService.updateFailWithResults(jobId, "Stage21 verdict FAIL — overallVerdict=FAIL", results);
                 return;
             }
 
@@ -445,12 +305,4 @@ public class BannerService {
         return bannerMongoService.findAll();
     }
 
-    private String computeFileSha256(String path) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("SHA-256");
-        byte[] data = Files.readAllBytes(Paths.get(path));
-        byte[] digest = md.digest(data);
-        StringBuilder sb = new StringBuilder(64);
-        for (byte b : digest) sb.append(String.format("%02x", b));
-        return sb.toString();
-    }
 }
