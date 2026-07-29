@@ -53,6 +53,20 @@ _LARGE_REMOVAL_THRESHOLD = 0.20
 # in DALL-E's mask and causing it to generate dark/black content.
 _AI_CONTEXT_BUFFER_PX = 40
 
+# ── TYPE B flags ──────────────────────────────────────────────────────────────
+# TYPE A (original): pre-fill + mask → gpt → restore source pixels
+# TYPE B (prototype): full original image + no mask → gpt → no restore
+#
+# _TYPE_B_NO_MASK: send full original image to gpt without a mask.
+#   gpt sees the whole scene and decides what to remove (ad elements) vs. keep (person).
+#   Set False to revert to TYPE A mask-based inpainting.
+_TYPE_B_NO_MASK = True
+
+# _SKIP_SUBJECT_RESTORE: skip Step 3 pixel restore after gpt cleanup.
+#   No restore boundary → no seam. Subject may be slightly altered; acceptable for prototype.
+#   Set False to revert to TYPE A pixel-perfect restore.
+_SKIP_SUBJECT_RESTORE = True
+
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 from clean_pipeline.removal.models import RemovalMaskResult
@@ -61,7 +75,7 @@ from clean_pipeline.scene import (
     openai_cleanup,
     target_transform,
 )
-from clean_pipeline.scene.cleanup_prompt import CLEANUP_PROMPT, OUTPAINT_PROMPT
+from clean_pipeline.scene.cleanup_prompt import CLEANUP_PROMPT, CLEANUP_PROMPT_TYPE_B, OUTPAINT_PROMPT
 from clean_pipeline.scene.models import ScenePlateResult
 
 STAGE = StageName.SCENE_GENERATION
@@ -187,11 +201,32 @@ def generate(
         f"removal_ratio={removal_ratio:.2%} force_ai={force_ai}"
     )
 
-    if bg_std < _UNIFORM_BG_STD_THRESHOLD and not force_ai:
-        # ── Direct fill: uniform background, no API call ─────────────────────
-        # Fill every removal-area pixel with the sampled background color.
-        # This is pixel-perfect and produces no seam because the fill color
-        # matches the immediately adjacent non-removal pixels exactly.
+    if _TYPE_B_NO_MASK:
+        # ── TYPE B: full original image, no mask → gpt decides what to remove ─
+        # No pre-fill, no mask. gpt sees the complete scene and follows the prompt:
+        # "remove ad elements (product/text/panel), keep the person, fill with background."
+        logger.artifact_written(
+            STAGE.value, "(memory) type_b_mode",
+            "TYPE B: sending full original image without mask to gpt-image-1",
+        )
+        removal_ai, fail_code, fail_reason = openai_cleanup.cleanup_no_mask(
+            original_image=original_projection,
+            target_width=target_width,
+            target_height=target_height,
+            api_key=api_key,
+            prompt=CLEANUP_PROMPT_TYPE_B,
+        )
+        if removal_ai is None:
+            return _fail(logger, fail_code, fail_reason)
+        source_cleanup_api_calls = 1
+
+        removal_ai_path = stage_dir / "source_cleanup_ai.png"
+        removal_ai.save(str(removal_ai_path))
+        logger.artifact_written(STAGE.value, str(removal_ai_path),
+                                "TYPE B AI removal result (no mask, full image)")
+
+    elif bg_std < _UNIFORM_BG_STD_THRESHOLD and not force_ai:
+        # ── TYPE A direct fill: uniform background, no API call ──────────────
         removal_arr_rgb = original_arr.copy()
         removal_arr_rgb[proj_rem_arr > 128] = bg_estimate
         removal_ai = Image.fromarray(removal_arr_rgb, "RGB")
@@ -205,22 +240,11 @@ def generate(
         logger.artifact_written(STAGE.value, str(removal_ai_path),
                                 "removal result (direct fill — no API call)")
     else:
-        # ── AI cleanup: complex or dark background ────────────────────────────
-        # Pre-fill the removal area AND a buffer zone around it with natural
-        # background color before sending to gpt-image-1.  This prevents dark
-        # overlay panel pixels from appearing as OPAQUE context pixels in
-        # DALL-E's mask, which would cause it to generate dark/black content.
-        #
-        # Natural bg = median of all non-removal projected pixels.
-        # Buffer = _AI_CONTEXT_BUFFER_PX beyond the dilated removal mask.
+        # ── TYPE A AI cleanup: complex or dark background ─────────────────────
         natural_region = (proj_rem_arr <= 128) & (inverted_arr > 128)
         if natural_region.any():
-            natural_pixels = original_arr[natural_region]  # (N, 3) RGB
+            natural_pixels = original_arr[natural_region]
 
-            # Prefer background-only pixels: bright + low-saturation.
-            # Excludes skin/hair (warm-toned, moderate saturation) so gpt-image-1
-            # receives a background-color hint instead of a skin-color hint,
-            # preventing it from extending the person into the fill area.
             r = natural_pixels[:, 0].astype(np.float32)
             g = natural_pixels[:, 1].astype(np.float32)
             b = natural_pixels[:, 2].astype(np.float32)
@@ -277,11 +301,17 @@ def generate(
                                 "AI removal result (target canvas)")
 
     # ── Step 3: Restore protected-subject pixels from original_projection ────
-    # blend_radius=20: Gaussian soft edge at the restore-mask boundary to avoid
-    # a hard seam between the original photo and the AI-generated fill area.
-    clean_projection = immutable_pixel_restorer.restore(
-        removal_ai, original_projection, proj_restore, blend_radius=20
-    )
+    # TYPE B (_SKIP_SUBJECT_RESTORE=True): use AI output directly — no pixel
+    # boundary, no seam.  Subject may be slightly altered; acceptable for prototype.
+    # TYPE A (_SKIP_SUBJECT_RESTORE=False): restore original pixels with soft blend.
+    if _SKIP_SUBJECT_RESTORE:
+        clean_projection = removal_ai
+        logger.artifact_written(STAGE.value, "(memory) step3_restore",
+                                "SKIPPED (TYPE B): using AI output directly, no restore boundary")
+    else:
+        clean_projection = immutable_pixel_restorer.restore(
+            removal_ai, original_projection, proj_restore, blend_radius=20
+        )
     clean_proj_path = stage_dir / "clean_source_projection.png"
     clean_projection.save(str(clean_proj_path))
     logger.artifact_written(STAGE.value, str(clean_proj_path),

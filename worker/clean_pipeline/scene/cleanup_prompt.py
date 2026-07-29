@@ -1,5 +1,24 @@
 """Prompts used for OpenAI image-edit API calls in the scene pipeline."""
 
+# TYPE B: full-image, no-mask mode.
+# gpt sees the entire scene and must decide what to remove vs. keep.
+CLEANUP_PROMPT_TYPE_B = (
+    "This is an advertisement image. "
+    "Your task: remove ALL advertising elements and fill removed areas with natural background. "
+    "REMOVE completely (fill with surrounding background): "
+    "product containers, skincare jars, bottles, tubes, "
+    "promotional text, brand names, slogans, price tags, "
+    "logos, brand marks, CTA buttons, badges, "
+    "decorative advertising panels or solid-color overlay blocks. "
+    "KEEP EXACTLY AS-IS — do not modify in any way: "
+    "the person / woman / model visible in the image — preserve her position, "
+    "appearance, clothing, and expression precisely. "
+    "Also keep all natural background (walls, fabric, scenery, light gradients). "
+    "Fill every removed area with background that seamlessly matches the surrounding "
+    "color, tone, texture, and lighting direction. "
+    "Result must look like a clean lifestyle photograph with no advertising elements present."
+)
+
 CLEANUP_PROMPT = (
     "This image contains advertising elements in the marked transparent area "
     "(products, logos, promotional text, CTA buttons, badges). "
