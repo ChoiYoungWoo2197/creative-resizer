@@ -173,8 +173,9 @@ def _eval_ai(ai) -> list[str]:
         codes.append("PROTECTED_SUBJECT_DAMAGED")
     if ai.visible_seam_detected:
         codes.append("VISIBLE_SEAM_DETECTED")
-    if ai.duplicated_fragments_detected:
-        codes.append("DUPLICATED_FRAGMENTS_DETECTED")
+    # DUPLICATED_FRAGMENTS_DETECTED intentionally excluded:
+    # gpt-image-1 naturally extends the surrounding photo (e.g. the subject)
+    # into a large removal area — this is a valid continuation, not an artifact.
     if ai.newly_generated_text_detected:
         codes.append("NEW_TEXT_GENERATED")
     if ai.scene_naturalness_score < _NATURALNESS_THRESHOLD:

@@ -257,8 +257,10 @@ def generate(
                                 "AI removal result (target canvas)")
 
     # ── Step 3: Restore protected-subject pixels from original_projection ────
+    # blend_radius=20: Gaussian soft edge at the restore-mask boundary to avoid
+    # a hard seam between the original photo and the AI-generated fill area.
     clean_projection = immutable_pixel_restorer.restore(
-        removal_ai, original_projection, proj_restore
+        removal_ai, original_projection, proj_restore, blend_radius=20
     )
     clean_proj_path = stage_dir / "clean_source_projection.png"
     clean_projection.save(str(clean_proj_path))
