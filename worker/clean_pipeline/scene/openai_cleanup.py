@@ -4,10 +4,14 @@ Rules:
 - API is called exactly once
 - Input image is sent at native resolution (no squishing) — gpt-image-1 accepts non-square input
 - Mask is sent at native resolution, same dimensions as input
-- size="1024x1024" is always specified to guarantee a fixed output size
-- API response must be 1024×1024; FAIL immediately if not
+- size is picked dynamically by _pick_api_size() to minimise aspect-ratio distortion
 - Result is scaled back to (target_width, target_height) before returning
 - Returns (cleaned_image | None, fail_code, fail_reason)
+
+API size selection (gpt-image-1 images.edit supported sizes):
+  1024x1024 (1:1)   — square
+  1536x1024 (3:2)   — landscape  ← chosen when ratio > 1.2  (e.g. 1200×628 → ~27% distortion vs ~91%)
+  1024x1536 (2:3)   — portrait   ← chosen when ratio < 0.8
 """
 from __future__ import annotations
 
@@ -20,7 +24,43 @@ from PIL import Image
 from clean_pipeline.scene.cleanup_prompt import CLEANUP_PROMPT
 
 _API_MODEL = "gpt-image-1"
-_API_W = _API_H = 1024   # expected output size; input may be any size
+
+
+def _pick_api_size(target_width: int, target_height: int) -> str:
+    """Return the gpt-image-1 size string closest to the target aspect ratio.
+
+    Supported sizes: 1024x1024 (1:1), 1536x1024 (1.5:1), 1024x1536 (0.67:1).
+    1200x628 ratio=1.91 → 1536x1024 (distortion ~27% vs ~91% with 1024x1024).
+    """
+    ratio = target_width / target_height
+    if ratio > 1.2:
+        return "1536x1024"
+    if ratio < 0.8:
+        return "1024x1536"
+    return "1024x1024"
+
+
+def _parse_api_size(size_str: str) -> tuple[int, int]:
+    """Parse '1536x1024' → (1536, 1024)."""
+    w, h = size_str.split("x")
+    return int(w), int(h)
+
+
+def _decode_response(response) -> tuple[bytes | None, str, str]:
+    """Extract raw image bytes from an OpenAI images.edit response."""
+    try:
+        item = response.data[0]
+        b64 = getattr(item, "b64_json", None)
+        if b64:
+            return base64.b64decode(b64), "", ""
+        url = getattr(item, "url", None)
+        if not url:
+            return None, "EMPTY_RESPONSE", "API returned neither b64_json nor url"
+        import urllib.request
+        with urllib.request.urlopen(url) as r:  # noqa: S310
+            return r.read(), "", ""
+    except Exception as exc:
+        return None, "RESPONSE_DECODE_FAILED", f"Failed to decode API response: {exc}"
 
 
 def cleanup(
@@ -43,6 +83,9 @@ def cleanup(
     if not api_key:
         return None, "NO_API_KEY", "OPENAI_API_KEY not set"
 
+    api_size = _pick_api_size(target_width, target_height)
+    expected_w, expected_h = _parse_api_size(api_size)
+
     # Build DALL-E mask at native resolution: transparent (alpha=0) = edit, opaque = keep
     src_rgb = projected_image.convert("RGB")
     mask_l = projected_removal_mask.convert("L")
@@ -62,7 +105,6 @@ def cleanup(
     mask_rgba.save(mask_buf, format="PNG")
     mask_bytes = mask_buf.getvalue()
 
-    # API call — exactly once, output forced to 1024×1024
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
@@ -71,38 +113,28 @@ def cleanup(
             image=("image.png", img_bytes),
             mask=("mask.png", mask_bytes),
             prompt=prompt,
-            size="1024x1024",
+            size=api_size,
         )
     except Exception as exc:
         return None, "API_ERROR", f"images.edit failed: {exc}"
 
-    # Decode response — b64_json or URL (SDK version dependent)
+    decoded, fail_code, fail_reason = _decode_response(response)
+    if decoded is None:
+        return None, fail_code, fail_reason
+
     try:
-        item = response.data[0]
-        b64 = getattr(item, "b64_json", None)
-        if b64:
-            decoded = base64.b64decode(b64)
-        else:
-            url = getattr(item, "url", None)
-            if not url:
-                return None, "EMPTY_RESPONSE", "API returned neither b64_json nor url"
-            import urllib.request
-            with urllib.request.urlopen(url) as r:  # noqa: S310
-                decoded = r.read()
         api_output = Image.open(io.BytesIO(decoded))
     except Exception as exc:
-        return None, "RESPONSE_DECODE_FAILED", f"Failed to decode API response: {exc}"
+        return None, "RESPONSE_DECODE_FAILED", f"Failed to open image: {exc}"
 
-    # Verify API returned expected 1024×1024
-    if api_output.size != (_API_W, _API_H):
+    if api_output.size != (expected_w, expected_h):
         return (
             None,
             "CLEANUP_SIZE_MISMATCH",
             f"API returned {api_output.size[0]}×{api_output.size[1]}, "
-            f"expected {_API_W}×{_API_H}",
+            f"expected {expected_w}×{expected_h} (size={api_size})",
         )
 
-    # Scale back to target dimensions
     cleanup_img = api_output.convert("RGB").resize(
         (target_width, target_height), Image.LANCZOS
     )
@@ -127,6 +159,9 @@ def cleanup_no_mask(
     if not api_key:
         return None, "NO_API_KEY", "OPENAI_API_KEY not set"
 
+    api_size = _pick_api_size(target_width, target_height)
+    expected_w, expected_h = _parse_api_size(api_size)
+
     img_buf = io.BytesIO()
     original_image.convert("RGBA").save(img_buf, format="PNG")
     img_bytes = img_buf.getvalue()
@@ -138,33 +173,26 @@ def cleanup_no_mask(
             model=_API_MODEL,
             image=("image.png", img_bytes),
             prompt=prompt,
-            size="1024x1024",
+            size=api_size,
         )
     except Exception as exc:
         return None, "API_ERROR", f"images.edit (no-mask) failed: {exc}"
 
+    decoded, fail_code, fail_reason = _decode_response(response)
+    if decoded is None:
+        return None, fail_code, fail_reason
+
     try:
-        item = response.data[0]
-        b64 = getattr(item, "b64_json", None)
-        if b64:
-            decoded = base64.b64decode(b64)
-        else:
-            url = getattr(item, "url", None)
-            if not url:
-                return None, "EMPTY_RESPONSE", "API returned neither b64_json nor url"
-            import urllib.request
-            with urllib.request.urlopen(url) as r:  # noqa: S310
-                decoded = r.read()
         api_output = Image.open(io.BytesIO(decoded))
     except Exception as exc:
-        return None, "RESPONSE_DECODE_FAILED", f"Failed to decode API response: {exc}"
+        return None, "RESPONSE_DECODE_FAILED", f"Failed to open image: {exc}"
 
-    if api_output.size != (_API_W, _API_H):
+    if api_output.size != (expected_w, expected_h):
         return (
             None,
             "CLEANUP_SIZE_MISMATCH",
             f"API returned {api_output.size[0]}×{api_output.size[1]}, "
-            f"expected {_API_W}×{_API_H}",
+            f"expected {expected_w}×{expected_h} (size={api_size})",
         )
 
     cleanup_img = api_output.convert("RGB").resize(
