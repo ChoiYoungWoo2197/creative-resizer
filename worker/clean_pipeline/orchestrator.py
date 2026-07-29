@@ -61,7 +61,13 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P2: SCENE_ANALYSIS ────────────────────────────────────────────────
-        from clean_pipeline.analysis.openai_analyzer import analyze
+        # TYPE B: GPT-4o + Structured Outputs + 정규화 좌표(0~1000)
+        # TYPE A: o3 + 자유형 JSON + 실제 픽셀 좌표
+        from clean_pipeline.scene.scene_plate_generator import _TYPE_B_NO_MASK
+        if _TYPE_B_NO_MASK:
+            from clean_pipeline.analysis.gpt4o_analyzer import analyze
+        else:
+            from clean_pipeline.analysis.openai_analyzer import analyze
 
         sr, manifest = analyze(
             canonical_path=canonical.canonical_path,
