@@ -20,6 +20,7 @@ from typing import Optional
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from clean_pipeline.analysis.bbox_refiner import refine as refine_bbox
 from clean_pipeline.analysis.gpt4o_prompt import SYSTEM_PROMPT, USER_PROMPT
 from clean_pipeline.analysis.manifest_validator import validate as validate_manifest
 from clean_pipeline.analysis.models import BBox, SceneManifest, SceneObject
@@ -85,7 +86,8 @@ def analyze(
 
     # ── 이미지 인코딩 ─────────────────────────────────────────────────────────
     try:
-        img = Image.open(canonical_path).convert("RGB")
+        _canonical_img = Image.open(canonical_path).convert("RGB")   # 후처리용 원본 보존
+        img = _canonical_img
         if max(img.width, img.height) > _MAX_SIDE:
             scale = _MAX_SIDE / max(img.width, img.height)
             img = img.resize(
@@ -184,6 +186,9 @@ def analyze(
         y1 = max(0, min(y1, image_height - 1))
         x2 = max(x1 + 1, min(x2, image_width))
         y2 = max(y1 + 1, min(y2, image_height))
+
+        # 픽셀 단위 후처리: Canny/Otsu로 좌표 정밀화 (cv2 없으면 원본 유지)
+        x1, y1, x2, y2 = refine_bbox(_canonical_img, x1, y1, x2, y2, role)
         w, h = x2 - x1, y2 - y1
 
         # bbox → 직사각형 polygon (4점)
