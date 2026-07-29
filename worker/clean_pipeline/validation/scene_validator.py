@@ -108,6 +108,15 @@ def validate(
                 stage_dir,
             )
 
+        # Code-level safety: protected_subject IDs must never appear in remainingObjectIds.
+        # gpt-4o occasionally misclassifies the preserved person/model as an ad object.
+        protected_ids = {o.id for o in manifest.objects if o.role == "protected_subject"}
+        if protected_ids & set(ai.remaining_object_ids):
+            ai.remaining_object_ids = [
+                oid for oid in ai.remaining_object_ids if oid not in protected_ids
+            ]
+            ai.ad_objects_remaining = len(ai.remaining_object_ids) > 0
+
         fail_codes = _eval_ai(ai)
         overall_pass = len(fail_codes) == 0
     else:

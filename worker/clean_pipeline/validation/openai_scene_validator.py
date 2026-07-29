@@ -25,13 +25,19 @@ SYSTEM_PROMPT = (
     "  1. CANONICAL — the original advertisement source image\n"
     "  2. SOURCE_PROJECTION — the canonical scaled to fit the target canvas\n"
     "  3. SCENE_PLATE — the cleaned scene with advertising objects removed\n\n"
-    "You also receive a scene manifest listing the ad objects that were supposed to be removed.\n\n"
+    "You also receive a scene manifest that classifies each object by role.\n\n"
+    "ROLE DEFINITIONS (critical — read carefully):\n"
+    "  protected_subject — person, model, or mascot that is part of the NATURAL SCENE.\n"
+    "    These MUST remain visible in SCENE_PLATE. Do NOT list them in remainingObjectIds.\n"
+    "    Do NOT count them as ad objects remaining.\n"
+    "  product / title_group / logo / decorative_ad / text_overlay — advertising elements.\n"
+    "    These must be ABSENT from SCENE_PLATE.\n\n"
     "Inspect SCENE_PLATE carefully, comparing it against CANONICAL and SOURCE_PROJECTION.\n"
     "Respond with ONLY a valid JSON object — no markdown fences, no explanation — "
     "containing these exact fields:\n"
-    "  adObjectsRemaining      (bool)         — true if any ad object is still visible\n"
-    "  remainingObjectIds      (list[string]) — IDs of visible ad objects\n"
-    "  protectedSubjectPreserved (bool)       — true if non-ad subjects are intact\n"
+    "  adObjectsRemaining      (bool)         — true only if a non-protected AD element is still visible\n"
+    "  remainingObjectIds      (list[string]) — IDs of visible AD objects only; NEVER include protected_subject IDs\n"
+    "  protectedSubjectPreserved (bool)       — true if protected_subject objects are intact in SCENE_PLATE\n"
     "  visibleSeamDetected     (bool)         — true if obvious edit seams are visible\n"
     "  duplicatedFragmentsDetected (bool)     — true if any region appears duplicated/mirrored\n"
     "  newlyGeneratedTextDetected  (bool)     — true if new text appeared that was not in CANONICAL\n"
@@ -55,12 +61,25 @@ def _encode(path: str) -> str:
 
 
 def _manifest_summary(manifest: SceneManifest) -> str:
-    lines = [f"imageSize: {manifest.image_width}×{manifest.image_height}", "objects:"]
-    for o in manifest.objects:
-        lines.append(
-            f"  - id={o.id} role={o.role} required={o.required} "
-            f"movable={o.movable} removable={o.removable_from_scene}"
-        )
+    protected = [o for o in manifest.objects if o.role == "protected_subject"]
+    ad_objects = [o for o in manifest.objects if o.role != "protected_subject"]
+
+    lines = [f"imageSize: {manifest.image_width}×{manifest.image_height}"]
+
+    lines.append("\nAD OBJECTS TO REMOVE (must be absent from SCENE_PLATE):")
+    if ad_objects:
+        for o in ad_objects:
+            lines.append(f"  id={o.id}  role={o.role}  desc=\"{o.description}\"")
+    else:
+        lines.append("  (none)")
+
+    lines.append("\nPROTECTED SUBJECTS (must remain — never flag as ad objects):")
+    if protected:
+        for o in protected:
+            lines.append(f"  id={o.id}  role={o.role}  desc=\"{o.description}\"")
+    else:
+        lines.append("  (none)")
+
     return "\n".join(lines)
 
 
