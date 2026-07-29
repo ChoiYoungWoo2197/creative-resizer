@@ -101,15 +101,22 @@ def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
 
 
 def _remove_product_bg(crop_rgba: Image.Image) -> Image.Image:
-    """Background-colour-distance strategy for product objects."""
+    """Brightness-threshold strategy for product objects on dark backgrounds.
+
+    Color-distance approach fails when the product fills the entire crop bbox
+    (e.g. a jar that spans corner-to-corner): edge sampling returns product
+    pixels as bg_color, so the actual dark background is never removed.
+
+    Since should_remove_background() already confirmed the background is dark,
+    brightness thresholding is the correct approach — dark bg pixels have
+    brightness ≈ 0 while product pixels (white/cream/colored jars) are >> 50.
+    """
     arr = np.array(crop_rgba, dtype=np.uint8)          # H×W×4
     rgb = arr[:, :, :3].astype(np.float32)
     existing_alpha = arr[:, :, 3]
 
-    bg_color = _sample_bg_color(rgb)                   # (3,) float
-
-    dist = np.linalg.norm(rgb - bg_color, axis=2)     # H×W, Euclidean
-    keep = (dist >= _PRODUCT_BG_DIST) & (existing_alpha > 0)
+    brightness = rgb.mean(axis=2)                      # H×W, 0-255
+    keep = (brightness >= _KEEP_BRIGHTNESS) & (existing_alpha > 0)
 
     new_alpha = np.where(keep, existing_alpha, 0).astype(np.uint8)
     result = arr.copy()
