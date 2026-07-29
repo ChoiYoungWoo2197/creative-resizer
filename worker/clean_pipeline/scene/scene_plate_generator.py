@@ -215,10 +215,30 @@ def generate(
         # Buffer = _AI_CONTEXT_BUFFER_PX beyond the dilated removal mask.
         natural_region = (proj_rem_arr <= 128) & (inverted_arr > 128)
         if natural_region.any():
-            natural_pixels = original_arr[natural_region]
-            natural_bg = np.median(natural_pixels, axis=0).astype(np.uint8)
+            natural_pixels = original_arr[natural_region]  # (N, 3) RGB
+
+            # Prefer background-only pixels: bright + low-saturation.
+            # Excludes skin/hair (warm-toned, moderate saturation) so gpt-image-1
+            # receives a background-color hint instead of a skin-color hint,
+            # preventing it from extending the person into the fill area.
+            r = natural_pixels[:, 0].astype(np.float32)
+            g = natural_pixels[:, 1].astype(np.float32)
+            b = natural_pixels[:, 2].astype(np.float32)
+            pix_max = np.maximum(np.maximum(r, g), b)
+            pix_min = np.minimum(np.minimum(r, g), b)
+            brightness = pix_max / 255.0
+            saturation = np.where(pix_max > 0, (pix_max - pix_min) / pix_max, 0.0)
+            bg_only_mask = (brightness > 0.75) & (saturation < 0.20)
+
+            if bg_only_mask.sum() >= 100:
+                natural_bg = np.median(natural_pixels[bg_only_mask], axis=0).astype(np.uint8)
+                prefill_source = "bg_only"
+            else:
+                natural_bg = np.median(natural_pixels, axis=0).astype(np.uint8)
+                prefill_source = "all_natural"
         else:
-            natural_bg = bg_estimate  # fallback: nothing else to sample from
+            natural_bg = bg_estimate
+            prefill_source = "fallback_bg_estimate"
 
         extended_removal = proj_removal.filter(
             ImageFilter.MaxFilter(size=2 * _AI_CONTEXT_BUFFER_PX + 1)
@@ -231,7 +251,7 @@ def generate(
 
         logger.artifact_written(
             STAGE.value, "(memory) ai_context_prefill",
-            f"natural_bg={natural_bg.tolist()} buffer={_AI_CONTEXT_BUFFER_PX}px",
+            f"natural_bg={natural_bg.tolist()} source={prefill_source} buffer={_AI_CONTEXT_BUFFER_PX}px",
         )
 
         prefill_path = stage_dir / "source_cleanup_prefill.png"
