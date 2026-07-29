@@ -57,7 +57,13 @@ def composite(
         )
 
     z_index_map = {obj.id: obj.z_index for obj in manifest.objects}
-    sorted_placed = sorted(placed, key=lambda po: z_index_map.get(po.object_id, 0))
+    required_ids = {obj.id for obj in manifest.objects if obj.required}
+    # Skip required=false objects (e.g. decorative_ad panels) — they were removed from
+    # the scene and must not be re-composited back onto the clean scene plate.
+    sorted_placed = sorted(
+        [po for po in placed if po.object_id in required_ids],
+        key=lambda po: z_index_map.get(po.object_id, 0),
+    )
 
     for po in sorted_placed:
         try:
