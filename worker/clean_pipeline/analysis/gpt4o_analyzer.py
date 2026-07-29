@@ -181,6 +181,12 @@ def analyze(
         x2 = int(xmax_n / 1000 * image_width)
         y2 = int(ymax_n / 1000 * image_height)
 
+        # title_group: GPT-4o가 넓은 텍스트의 좌측 경계를 과소평가하는 경향 보정.
+        # Otsu ROI가 실제 텍스트보다 오른쪽에서 시작하면 좌측 글자가 crop 밖으로 유실됨.
+        # 8% 확장(1200px 기준 ≈ 96px)으로 ROI가 실제 텍스트 시작점을 포함하도록 보장.
+        if role == "title_group":
+            x1 = max(0, x1 - int(0.08 * image_width))
+
         # 이미지 경계 내로 clamp
         x1 = max(0, min(x1, image_width - 1))
         y1 = max(0, min(y1, image_height - 1))
