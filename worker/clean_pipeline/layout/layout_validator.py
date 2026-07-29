@@ -137,8 +137,8 @@ def run(
     # Protected subject bboxes in target canvas coordinates
     protected_bboxes = _project_protected_bboxes(manifest, target_width, target_height)
 
-    # Generate candidates
-    all_candidates = candidate_generator.generate(extraction.objects, sz)
+    # Generate candidates (원본 위치 기반 anchor 우선순위 적용)
+    all_candidates = candidate_generator.generate(extraction.objects, sz, image_width=target_width)
 
     # Save candidates.json
     candidates_dict = {

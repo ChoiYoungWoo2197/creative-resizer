@@ -55,18 +55,33 @@ def _anchor_position(anchor: str, sz: SafeZone, w: int, h: int) -> tuple[int, in
 def generate(
     extracted: list[ExtractedObject],
     safe_zone: SafeZone,
+    image_width: int = 0,
 ) -> dict[str, list[ObjectCandidate]]:
     """Return {object_id: [candidates]} in deterministic order.
 
     Dimensions are taken directly from source_bbox (canonical pixel size).
+    When image_width is given, anchors are reordered so that objects whose
+    original centre-x was on the right half of the canvas try right-side
+    anchors first (and vice versa).  This preserves the original layout
+    intent without hard-coding positions.
     """
     result: dict[str, list[ObjectCandidate]] = {}
     for obj in extracted:
-        anchors = _ROLE_ANCHORS.get(obj.role, ["top-center"])
+        base_anchors = list(_ROLE_ANCHORS.get(obj.role, ["top-center"]))
+
+        if image_width > 0:
+            src_cx = obj.source_bbox.x + obj.source_bbox.width / 2
+            if src_cx > image_width / 2:
+                # 원본이 우측 → right 계열 anchor 먼저
+                base_anchors = _prefer_side(base_anchors, "right")
+            else:
+                # 원본이 좌측 → left 계열 anchor 먼저
+                base_anchors = _prefer_side(base_anchors, "left")
+
         orig_w = obj.source_bbox.width
         orig_h = obj.source_bbox.height
         candidates: list[ObjectCandidate] = []
-        for anchor in anchors:
+        for anchor in base_anchors:
             for scale in _SCALES:
                 w = max(1, round(orig_w * scale))
                 h = max(1, round(orig_h * scale))
@@ -81,3 +96,10 @@ def generate(
                 ))
         result[obj.id] = candidates
     return result
+
+
+def _prefer_side(anchors: list[str], side: str) -> list[str]:
+    """Return anchors reordered so that `side`-containing anchors come first."""
+    preferred = [a for a in anchors if side in a]
+    rest = [a for a in anchors if side not in a]
+    return preferred + rest
