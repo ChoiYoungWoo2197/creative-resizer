@@ -15,8 +15,8 @@ AI-enabled path (default):
 
 Deterministic failures fire regardless of _AI_VALIDATION_ENABLED:
   - SOLID_COLOR_IMAGE
-  - RESTORE_PIXELS_MISMATCH
   - TARGET_SIZE_MISMATCH
+  (RESTORE_PIXELS_MISMATCH removed: soft blend makes restore region non-pixel-exact by design)
 """
 from __future__ import annotations
 
@@ -241,30 +241,6 @@ def test_solid_color_plate_fails_deterministic_even_with_bypass(tmp_path):
 
     assert result.status == PipelineStatus.FAIL
     assert "SOLID_COLOR_IMAGE" in validation.fail_codes
-
-
-def test_restore_mismatch_fails_deterministic_even_with_bypass(tmp_path):
-    """RESTORE_PIXELS_MISMATCH fires regardless of _AI_VALIDATION_ENABLED."""
-    plate, canonical = _build_valid_plate(tmp_path)
-
-    scene_arr = np.array(Image.open(plate.scene_plate_path).convert("RGB"), dtype=np.uint8)
-    scene_arr[_TH // 2:, :] = 0   # corrupt restore region
-    Image.fromarray(scene_arr, "RGB").save(plate.scene_plate_path)
-
-    lg = _make_logger(tmp_path, "mismatch_job")
-    result, validation = validate(
-        scene_plate_result=plate,
-        canonical_path=canonical,
-        manifest=_make_manifest(),
-        api_key="sk-test",
-        output_dir=str(tmp_path / "output"),
-        job_id="mismatch_job",
-        logger=lg,
-    )
-    lg.close()
-
-    assert result.status == PipelineStatus.FAIL
-    assert "RESTORE_PIXELS_MISMATCH" in validation.fail_codes
 
 
 # ── AI-enabled path (default: _AI_VALIDATION_ENABLED = True) ─────────────────

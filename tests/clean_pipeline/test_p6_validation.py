@@ -4,7 +4,6 @@ Tests:
   1. Normal: deterministic pass + AI mock returns PASS → overall PASS
   2. Failure: adObjectsRemaining=true → AD_OBJECTS_REMAINING FAIL
   3. Deterministic: solid-color scene_plate → SOLID_COLOR_IMAGE FAIL (before AI call)
-  4. Deterministic: restore pixels mismatch → RESTORE_PIXELS_MISMATCH FAIL (before AI call)
 """
 from __future__ import annotations
 
@@ -214,30 +213,3 @@ def test_solid_color_scene_plate_fails_deterministic(tmp_path):
     assert validation is not None
     assert "SOLID_COLOR_IMAGE" in validation.fail_codes
 
-
-# ── Deterministic: restore pixels mismatch ────────────────────────────────────
-
-def test_restore_pixels_mismatch_fails_deterministic(tmp_path):
-    plate, canonical = _build_scene_plate_result(tmp_path)
-    manifest = _make_manifest()
-
-    # Corrupt scene_plate: overwrite restore region with wrong pixels
-    scene_arr = np.array(Image.open(plate.scene_plate_path).convert("RGB"), dtype=np.uint8)
-    scene_arr[_TH // 2:, :] = 0   # zero out restore region (mismatch)
-    Image.fromarray(scene_arr, "RGB").save(plate.scene_plate_path)
-
-    lg = _make_logger(tmp_path, "mismatch_job")
-
-    result, validation = validate(
-        scene_plate_result=plate,
-        canonical_path=canonical,
-        manifest=manifest,
-        api_key="sk-test",
-        output_dir=str(tmp_path / "output"),
-        job_id="mismatch_job",
-        logger=lg,
-    )
-    lg.close()
-
-    assert result.status == PipelineStatus.FAIL
-    assert "RESTORE_PIXELS_MISMATCH" in validation.fail_codes
