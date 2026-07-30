@@ -21,8 +21,11 @@ from clean_pipeline.extraction.models import ExtractedObject
 from clean_pipeline.layout.models import ObjectCandidate, SafeZone
 
 _ROLE_ANCHORS: dict[str, list[str]] = {
-    "title_group":     ["top-left", "top-center", "top-right"],
-    "product":         ["left-center", "right-center", "center-left", "center-right"],
+    # top 3종 + bottom 2종: 제품이 center에 배치된 후 텍스트가 하단으로 배치될 수 있도록
+    "title_group":     ["top-left", "top-center", "top-right",
+                        "bottom-left", "bottom-center", "bottom-right"],
+    "product":         ["left-center", "right-center", "center-left", "center-right",
+                        "top-left", "top-right"],
     "logo":            ["top-left", "top-right"],
     "cta_group":       ["bottom-left", "bottom-center", "bottom-right"],
     "body_text_group": ["top-left", "top-center", "top-right"],

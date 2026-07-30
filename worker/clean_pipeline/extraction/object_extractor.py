@@ -80,6 +80,10 @@ def extract(
         if not (obj.movable and obj.removable_from_scene):
             continue
 
+        # decorative_ad: removal mask(P4)에서 이미 제거됨 → P7 레이아웃에 다시 배치 불필요
+        if obj.role == "decorative_ad":
+            continue
+
         mask = rasterize_polygon(obj.polygon, w, h)
         bbox = bounding_rect(mask)
 

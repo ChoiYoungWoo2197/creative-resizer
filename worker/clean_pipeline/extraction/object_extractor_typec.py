@@ -122,6 +122,10 @@ def extract(
         if not (obj.movable and obj.removable_from_scene):
             continue
 
+        # decorative_ad: P4 removal mask에서 이미 제거됨 → 레이아웃에 다시 배치 불필요
+        if obj.role == "decorative_ad":
+            continue
+
         # ── 마스크 선택: SAM2 or polygon ─────────────────────────────────────
         sam2_det = sam2_results_by_obj.get(obj.id)
         if sam2_det is not None:
