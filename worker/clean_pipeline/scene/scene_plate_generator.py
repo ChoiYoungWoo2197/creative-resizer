@@ -335,7 +335,11 @@ def generate(
     outpaint_api_call_count = 0
     target_outpaint_ai_path_str = ""
 
-    if has_letterbox:
+    if has_letterbox and not _TYPE_B_NO_MASK:
+        # TYPE A only: letterbox was left black after masked inpaint → fill via outpaint.
+        # TYPE B skips this: the full-canvas AI call already generated content for
+        # the letterbox strips. Running outpaint again on TYPE B creates a seam at
+        # the letterbox boundary (x=offset_x) where two different AI outputs are stitched.
         outpaint_img, fail_code, fail_reason = openai_cleanup.cleanup(
             projected_image=clean_projection,
             projected_removal_mask=letterbox_mask,
@@ -356,6 +360,11 @@ def generate(
         outpaint_api_call_count = 1
     else:
         outpaint_img = clean_projection
+        if has_letterbox and _TYPE_B_NO_MASK:
+            logger.artifact_written(
+                STAGE.value, "(memory) outpaint_skip",
+                "SKIPPED (TYPE B): full-canvas AI already filled letterbox regions — no seam needed",
+            )
 
     # ── Step 6: Restore projected-area pixels from clean_projection ──────────
     # inverted_letterbox (white = projected area) guarantees clean_projection pixels

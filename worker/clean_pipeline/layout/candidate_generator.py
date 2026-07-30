@@ -32,6 +32,11 @@ _ROLE_ANCHORS: dict[str, list[str]] = {
 
 _SCALES: list[float] = [1.0, 0.9, 0.8, 0.7, 0.6]
 
+# Product is the hero element; ensure it covers at least this fraction of canvas width.
+# If the source bbox is smaller, a boost scale is prepended so the picker tries the
+# larger size first (falls back to 1.0+ if it doesn't fit the safe zone).
+_PRODUCT_MIN_CANVAS_RATIO: float = 0.25
+
 
 def _anchor_position(anchor: str, sz: SafeZone, w: int, h: int) -> tuple[int, int]:
     """Return (x, y) top-left position for the given anchor within the safe zone."""
@@ -80,9 +85,21 @@ def generate(
 
         orig_w = obj.source_bbox.width
         orig_h = obj.source_bbox.height
+
+        # Product: prepend a boosted scale if the source is smaller than the minimum.
+        if obj.role == "product" and image_width > 0 and orig_w > 0:
+            min_w = round(image_width * _PRODUCT_MIN_CANVAS_RATIO)
+            if orig_w < min_w:
+                boost = round(min_w / orig_w, 2)
+                scales = [boost] + _SCALES
+            else:
+                scales = _SCALES
+        else:
+            scales = _SCALES
+
         candidates: list[ObjectCandidate] = []
         for anchor in base_anchors:
-            for scale in _SCALES:
+            for scale in scales:
                 w = max(1, round(orig_w * scale))
                 h = max(1, round(orig_h * scale))
                 x, y = _anchor_position(anchor, safe_zone, w, h)
