@@ -50,6 +50,7 @@ class TargetSpec:
     safe_right: int = 0
     safe_bottom: int = 0
     safe_left: int = 0
+    slug: str = ""
 
 
 @dataclass
