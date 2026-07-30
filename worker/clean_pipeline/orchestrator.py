@@ -61,10 +61,14 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P2: SCENE_ANALYSIS ────────────────────────────────────────────────
+        # TYPE C: GPT-4o + 계층 텍스트 그룹화 + person_zone + decorative_panel
         # TYPE B: GPT-4o + Structured Outputs + 정규화 좌표(0~1000)
         # TYPE A: o3 + 자유형 JSON + 실제 픽셀 좌표
+        from clean_pipeline.typec_config import PIPELINE_TYPE
         from clean_pipeline.scene.scene_plate_generator import _TYPE_B_NO_MASK
-        if _TYPE_B_NO_MASK:
+        if PIPELINE_TYPE == "C":
+            from clean_pipeline.analysis.gpt4o_analyzer_typec import analyze
+        elif _TYPE_B_NO_MASK:
             from clean_pipeline.analysis.gpt4o_analyzer import analyze
         else:
             from clean_pipeline.analysis.openai_analyzer import analyze
@@ -84,7 +88,10 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P3: OBJECT_EXTRACTION ─────────────────────────────────────────────
-        from clean_pipeline.extraction.object_extractor import extract
+        if PIPELINE_TYPE == "C":
+            from clean_pipeline.extraction.object_extractor_typec import extract
+        else:
+            from clean_pipeline.extraction.object_extractor import extract
 
         sr, extraction = extract(
             canonical_path=canonical.canonical_path,
