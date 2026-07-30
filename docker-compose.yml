@@ -62,9 +62,10 @@ services:
       # P2 객체 분석(GPT-4o), P5 배경 생성(images.edit), P6 검증(GPT-4o)에 사용
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - MONGODB_URI=${MONGODB_URI}
-      # TYPE B: GPT-4o 분석 + gpt-image-1 마스크 없이 재생성 (기본)
-      # TYPE C: 계층 텍스트 그룹화 + SAM2 정밀 마스크 (GPU 필요)
-      - CLEAN_PIPELINE_TYPE=B
+      # auto: scale + AR 기준으로 규격마다 TYPE B/D 자동 선택
+      # B: 항상 TYPE B (GPT-4o 분석 + 요소 재배치)
+      # D: 항상 TYPE D (contain-scale + AI border outpaint)
+      - CLEAN_PIPELINE_TYPE=auto
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped

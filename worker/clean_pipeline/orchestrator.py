@@ -1,14 +1,22 @@
 """Fail-closed pipeline orchestrator.
 
-Executes all 8 stages in strict order:
+TYPE B flow (P1→P2→P3→P4→P5→P6→P7→P8):
   P1  SOURCE_PREPARATION
-  P2  SCENE_ANALYSIS
-  P3  OBJECT_EXTRACTION
-  P4  REMOVAL_MASK
-  P5  SCENE_GENERATION     (OpenAI DALL-E 2 inpaint, 1 call)
-  P6  SCENE_VALIDATION     (OpenAI GPT-4o, 1 call)
-  P7  LAYOUT
+  P2  SCENE_ANALYSIS       (GPT-4o element detection)
+  P3  OBJECT_EXTRACTION    (RGBA crop per element)
+  P4  REMOVAL_MASK         (inpaint mask build)
+  P5  SCENE_GENERATION     (gpt-image-1 ad removal + outpaint)
+  P6  SCENE_VALIDATION     (GPT-4o naturalness check)
+  P7  LAYOUT               (safe-zone constraint solver)
   P8  FINAL_VALIDATION     (composite + render_validator)
+
+TYPE D flow (P1→P5D→P8):
+  P1  SOURCE_PREPARATION
+  P5D SCENE_GENERATION_D   (contain-scale + AI border outpaint only)
+  P8  FINAL_VALIDATION     (render_validator size check)
+
+Routing: pipeline_type_selector.select() after P1 (scale + ar_ratio criteria).
+Override: CLEAN_PIPELINE_TYPE=B or D forces the type for all specs.
 
 Rules:
   - Any FAIL → stop immediately, do NOT create result.png, do NOT proceed
@@ -59,6 +67,82 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:
             return _fail(job_id, sr, stage_results, logger)
+
+        # Per-spec stages — first spec only for MVP
+        spec: TargetSpec = request.target_specs[0]
+        output_paths: list[str] = []
+
+        # ── Pipeline type routing (after P1, before any analysis) ─────────────
+        from clean_pipeline import pipeline_type_selector
+        pipeline_type = pipeline_type_selector.select(
+            canonical.width, canonical.height, spec.width, spec.height
+        )
+        logger.artifact_written(
+            "ORCHESTRATOR", "(memory) pipeline_type",
+            f"src={canonical.width}×{canonical.height} "
+            f"spec={spec.width}×{spec.height} → TYPE {pipeline_type}",
+        )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TYPE D: P1 → P5D → P8
+        # ─────────────────────────────────────────────────────────────────────
+        if pipeline_type == "D":
+            from clean_pipeline.typed.type_d_outpainter import generate as generate_type_d
+
+            sr, scene_plate = generate_type_d(
+                canonical_path=canonical.canonical_path,
+                target_width=spec.width,
+                target_height=spec.height,
+                safe_left=spec.safe_left,
+                safe_top=spec.safe_top,
+                safe_right=spec.safe_right,
+                safe_bottom=spec.safe_bottom,
+                api_key=resolved_key,
+                output_dir=request.output_directory,
+                job_id=job_id,
+                logger=logger,
+            )
+            stage_results.append(sr)
+            if sr.status == PipelineStatus.FAIL:
+                return _fail(job_id, sr, stage_results, logger)
+
+            # P8: size validation only (no layout compositing for TYPE D)
+            from clean_pipeline.render import render_validator
+
+            is_valid, val_code, val_reason = render_validator.validate(
+                scene_plate.scene_plate_path, spec.width, spec.height
+            )
+            final_sr = StageResult(
+                stage=StageName.FINAL_VALIDATION,
+                status=PipelineStatus.PASS if is_valid else PipelineStatus.FAIL,
+                reasons=[] if is_valid else [f"[{val_code}] {val_reason}"],
+                artifacts={"result": scene_plate.scene_plate_path},
+            )
+            stage_results.append(final_sr)
+            if not is_valid:
+                logger.stage_fail(StageName.FINAL_VALIDATION.value, val_code, val_reason)
+                return _fail(job_id, final_sr, stage_results, logger)
+
+            logger.stage_pass(
+                StageName.FINAL_VALIDATION.value,
+                f"TYPE D result validated: {scene_plate.scene_plate_path}",
+                metrics={"resultPath": scene_plate.scene_plate_path},
+            )
+            output_paths.append(scene_plate.scene_plate_path)
+            logger.job_pass(
+                f"TYPE D job complete — result={scene_plate.scene_plate_path}",
+                metrics={"outputCount": len(output_paths)},
+            )
+            return CleanPipelineResult(
+                job_id=job_id,
+                status=PipelineStatus.PASS,
+                stage_results=stage_results,
+                output_paths=output_paths,
+            )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TYPE B: P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8
+        # ─────────────────────────────────────────────────────────────────────
 
         # ── P2: SCENE_ANALYSIS ────────────────────────────────────────────────
         # TYPE C: GPT-4o + 계층 텍스트 그룹화 + person_zone + decorative_panel
@@ -118,10 +202,6 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:
             return _fail(job_id, sr, stage_results, logger)
-
-        # Per-spec stages — first spec only for MVP
-        spec: TargetSpec = request.target_specs[0]
-        output_paths: list[str] = []
 
         # ── P5: SCENE_GENERATION ──────────────────────────────────────────────
         from clean_pipeline.scene.scene_plate_generator import generate as generate_scene
