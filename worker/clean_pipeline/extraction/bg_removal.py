@@ -54,7 +54,12 @@ _TEXT_ROLES = frozenset({"title_group", "body_text_group", "cta_group", "badge",
 
 
 def should_remove_background(crop_rgba: Image.Image) -> bool:
-    """Return True when the crop corners suggest a uniformly dark background."""
+    """Return True when at least 2 of the 4 crop corners are uniformly dark.
+
+    Mean-of-all-corners fails when one corner samples a bright product pixel
+    (e.g. jar lid), pulling the mean above the threshold even though 3 other
+    corners are pure black.  Majority-vote (≥2 dark) is more robust.
+    """
     arr = np.array(crop_rgba.convert("RGB"), dtype=np.float32)
     h, w = arr.shape[:2]
     s = max(1, min(12, h // 6, w // 6))   # corner sample size
@@ -65,9 +70,10 @@ def should_remove_background(crop_rgba: Image.Image) -> bool:
         arr[-s:, :s],
         arr[-s:, -s:],
     ]
-    corner_pixels = np.concatenate([c.reshape(-1, 3) for c in corners], axis=0)
-    mean_brightness = float(corner_pixels.mean())
-    return mean_brightness < _DARK_DETECT_THRESHOLD
+    dark_count = sum(
+        1 for c in corners if float(c.mean()) < _DARK_DETECT_THRESHOLD
+    )
+    return dark_count >= 2
 
 
 def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:
