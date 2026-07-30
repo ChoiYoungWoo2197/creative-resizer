@@ -61,6 +61,7 @@ services:
       # clean_v1 파이프라인 (P1~P8) — OpenAI API Key 필수
       # P2 객체 분석(GPT-4o), P5 배경 생성(images.edit), P6 검증(GPT-4o)에 사용
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MONGODB_URI=${MONGODB_URI}
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped
