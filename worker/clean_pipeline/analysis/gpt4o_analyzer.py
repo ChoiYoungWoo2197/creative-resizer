@@ -34,10 +34,11 @@ _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
 # GPT-4o category → (내부 role, required)
 _ROLE_MAP: dict[str, tuple[str, bool]] = {
-    "main_product":     ("product",          True),
-    "brand_logo":       ("logo",             False),
-    "advertising_text": ("title_group",      True),
-    "person_zone":      ("protected_subject", False),
+    "main_product":      ("product",          True),
+    "brand_logo":        ("logo",             False),
+    "advertising_text":  ("title_group",      True),
+    "person_zone":       ("protected_subject", False),
+    "decorative_panel":  ("decorative_ad",    False),
 }
 
 

@@ -202,15 +202,45 @@ def generate(
     )
 
     if _TYPE_B_NO_MASK:
-        # ── TYPE B: full original image, no mask → gpt decides what to remove ─
-        # No pre-fill, no mask. gpt sees the complete scene and follows the prompt:
-        # "remove ad elements (product/text/panel), keep the person, fill with background."
+        # ── TYPE B: pre-fill removal area → full image (no mask) → gpt ─────────
+        # Pre-fill the removal mask area (product, text, decorative_panel) with
+        # estimated natural background BEFORE sending to AI.
+        # Without this, dark decorative panels remain in the image and the AI
+        # treats them as "natural background" → black area in scene_plate.
+        natural_region = (proj_rem_arr <= 128) & (inverted_arr > 128)
+        if natural_region.any():
+            natural_pixels = original_arr[natural_region]
+            r = natural_pixels[:, 0].astype(np.float32)
+            g = natural_pixels[:, 1].astype(np.float32)
+            b = natural_pixels[:, 2].astype(np.float32)
+            pix_max = np.maximum(np.maximum(r, g), b)
+            pix_min = np.minimum(np.minimum(r, g), b)
+            brightness = pix_max / 255.0
+            saturation = np.where(pix_max > 0, (pix_max - pix_min) / pix_max, 0.0)
+            bg_only = (brightness > 0.75) & (saturation < 0.20)
+            if bg_only.sum() >= 100:
+                type_b_bg = np.median(natural_pixels[bg_only], axis=0).astype(np.uint8)
+                prefill_source = "bg_only"
+            else:
+                type_b_bg = np.median(natural_pixels, axis=0).astype(np.uint8)
+                prefill_source = "all_natural"
+        else:
+            type_b_bg = bg_estimate
+            prefill_source = "fallback_bg_estimate"
+
+        prefilled_arr = original_arr.copy()
+        prefilled_arr[proj_rem_arr > 128] = type_b_bg
+        type_b_input = Image.fromarray(prefilled_arr, "RGB")
+
+        prefill_path = stage_dir / "type_b_prefill.png"
+        type_b_input.save(str(prefill_path))
         logger.artifact_written(
-            STAGE.value, "(memory) type_b_mode",
-            "TYPE B: sending full original image without mask to gpt-image-1",
+            STAGE.value, str(prefill_path),
+            f"TYPE B pre-filled input (bg={type_b_bg.tolist()} src={prefill_source})",
         )
+
         removal_ai, fail_code, fail_reason = openai_cleanup.cleanup_no_mask(
-            original_image=original_projection,
+            original_image=type_b_input,
             target_width=target_width,
             target_height=target_height,
             api_key=api_key,
@@ -223,7 +253,7 @@ def generate(
         removal_ai_path = stage_dir / "source_cleanup_ai.png"
         removal_ai.save(str(removal_ai_path))
         logger.artifact_written(STAGE.value, str(removal_ai_path),
-                                "TYPE B AI removal result (no mask, full image)")
+                                "TYPE B AI removal result (pre-filled, no mask)")
 
     elif bg_std < _UNIFORM_BG_STD_THRESHOLD and not force_ai:
         # ── TYPE A direct fill: uniform background, no API call ──────────────
