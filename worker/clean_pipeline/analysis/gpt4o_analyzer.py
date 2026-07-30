@@ -34,9 +34,10 @@ _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
 # GPT-4o category → (내부 role, required)
 _ROLE_MAP: dict[str, tuple[str, bool]] = {
-    "main_product":     ("product",     True),
-    "brand_logo":       ("logo",        False),
-    "advertising_text": ("title_group", True),
+    "main_product":     ("product",          True),
+    "brand_logo":       ("logo",             False),
+    "advertising_text": ("title_group",      True),
+    "person_zone":      ("protected_subject", False),
 }
 
 
@@ -200,12 +201,14 @@ def analyze(
         # bbox → 직사각형 polygon (4점)
         polygon = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
 
+        # protected_subject(person_zone): 제거·이동 대상이 아니라 충돌 회피용 참조 영역
+        is_protected = role == "protected_subject"
         objects.append(SceneObject(
             id=f"obj_{i}",
             role=role,
             required=required,
-            movable=True,
-            removable_from_scene=True,
+            movable=not is_protected,
+            removable_from_scene=not is_protected,
             bbox=BBox(x=x1, y=y1, width=w, height=h),
             polygon=polygon,
             confidence=0.9,

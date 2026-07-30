@@ -26,7 +26,7 @@ from clean_pipeline.layout.safe_zone import (
 )
 
 _OVERLAP_THRESHOLD = 0.30
-_PROTECTED_COVERAGE_THRESHOLD = 0.50
+_PROTECTED_COVERAGE_THRESHOLD = 0.30
 
 _ROLE_PRIORITY: dict[str, int] = {
     "product": 0,
