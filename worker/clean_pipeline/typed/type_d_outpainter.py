@@ -353,8 +353,10 @@ def _gradient_blend(
     if feather_px > 0:
         blurred = mask_img.filter(ImageFilter.GaussianBlur(radius=feather_px))
         alpha = np.array(blurred).astype(np.float32) / 255.0
+        # outpaint 영역(흰 캔버스와 blend되면 회색 생김)은 항상 AI 100%
+        alpha = np.where(base_mask_arr > 128, 1.0, alpha)
     else:
-        alpha = base_mask_arr.astype(np.float32) / 255.0
+        alpha = (base_mask_arr > 128).astype(np.float32)
 
     ai_arr   = np.array(ai_img.convert("RGB")).astype(np.float32)
     orig_arr = np.array(original_img.convert("RGB")).astype(np.float32)
