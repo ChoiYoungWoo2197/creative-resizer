@@ -25,6 +25,10 @@ SEQUENTIAL_LR_CALLS: bool = os.environ.get("TYPE_D_SEQUENTIAL_LR", "true").lower
 # 0.0 = 비활성
 DARK_BG_STD_THRESHOLD: float = float(os.environ.get("TYPE_D_DARK_STD", "0.0"))
 
+# 좌우 최소 확장 폭 강제 (px): 원본을 추가 축소하여 각 사이드 확장량을 이 값으로 보장
+# 0 = 비활성 (자동 contain-scale 유지)
+FORCE_SIDE_EXTEND_PX: int = int(os.environ.get("TYPE_D_FORCE_EXTEND_PX", "150"))
+
 # outpaint 최소 면적 비율 미만이면 API 완전 스킵
 MIN_EMPTY_RATIO: float = 0.01
 

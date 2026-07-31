@@ -29,6 +29,7 @@ from clean_pipeline.scene.models import ScenePlateResult
 from clean_pipeline.typed.type_d_config import (
     BLEND_FEATHER_PX,
     DARK_BG_STD_THRESHOLD,
+    FORCE_SIDE_EXTEND_PX,
     MASK_INWARD_EXPAND_PX,
     MIN_EMPTY_RATIO,
     SEPARATE_LR_BRIGHTNESS_DIFF,
@@ -96,6 +97,22 @@ def generate(
         scale = min(target_width / src_w, target_height / src_h)
         render_w = max(1, round(src_w * scale))
         render_h = max(1, round(src_h * scale))
+
+        # FORCE_SIDE_EXTEND_PX: 좌우 확장량이 부족하면 추가 축소
+        if FORCE_SIDE_EXTEND_PX > 0:
+            natural_extend = (target_width - render_w) // 2
+            if natural_extend < FORCE_SIDE_EXTEND_PX:
+                max_render_w = target_width - 2 * FORCE_SIDE_EXTEND_PX
+                scale = max_render_w / src_w
+                render_w = max(1, round(src_w * scale))
+                render_h = max(1, round(src_h * scale))
+                logger.artifact_written(
+                    STAGE.value, "(memory) force_extend",
+                    f"FORCE_SIDE_EXTEND_PX={FORCE_SIDE_EXTEND_PX}px: "
+                    f"자동 확장({natural_extend}px) < 강제 확장 → scale {scale*100:.1f}% "
+                    f"render={render_w}×{render_h}",
+                )
+
         place_x = (target_width - render_w) // 2
         place_y = (target_height - render_h) // 2
 
