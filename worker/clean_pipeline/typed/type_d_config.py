@@ -17,6 +17,10 @@ BLEND_FEATHER_PX: int = int(os.environ.get("TYPE_D_BLEND_FEATHER_PX", "15"))
 # 0 = 비활성 (항상 통합 처리)
 SEPARATE_LR_BRIGHTNESS_DIFF: int = int(os.environ.get("TYPE_D_SEPARATE_LR_DIFF", "0"))
 
+# 순차 L/R 처리: 좌측 완료 결과를 우측 입력으로 사용 (컨텍스트 간섭 차단)
+# True이면 SEPARATE_LR_BRIGHTNESS_DIFF보다 우선 적용
+SEQUENTIAL_LR_CALLS: bool = os.environ.get("TYPE_D_SEQUENTIAL_LR", "true").lower() == "true"
+
 # Rule 5: 인접 픽셀 std 이하이면 AI 없이 단색 직접 채움
 # 0.0 = 비활성
 DARK_BG_STD_THRESHOLD: float = float(os.environ.get("TYPE_D_DARK_STD", "0.0"))

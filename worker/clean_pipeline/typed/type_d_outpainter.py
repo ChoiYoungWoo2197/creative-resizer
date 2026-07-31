@@ -32,9 +32,14 @@ from clean_pipeline.typed.type_d_config import (
     MASK_INWARD_EXPAND_PX,
     MIN_EMPTY_RATIO,
     SEPARATE_LR_BRIGHTNESS_DIFF,
+    SEQUENTIAL_LR_CALLS,
     SOLID_FILL_SAMPLE_WIDTH,
 )
-from clean_pipeline.typed.type_d_prompt import OUTPAINT_PROMPT
+from clean_pipeline.typed.type_d_prompt import (
+    OUTPAINT_PROMPT,
+    OUTPAINT_PROMPT_LEFT,
+    OUTPAINT_PROMPT_RIGHT,
+)
 
 STAGE = StageName.SCENE_GENERATION
 _OUTPUT_SUBDIR = Path("clean_v1") / "05_scene"
@@ -161,7 +166,7 @@ def generate(
 
         work_canvas = Image.fromarray(work_arr)
 
-        # ── Step 5: [Rule 4] 좌우 밝기 차이 → 별도 처리 or 통합 ────────────
+        # ── Step 5: [Rule 4] 순차/별도/통합 처리 분기 ───────────────────────
         api_calls, outpainted = _run_outpaint(
             work_canvas, work_mask, target_width, target_height,
             x1, y1, x2, y2, api_key, stage_dir, logger,
@@ -275,7 +280,26 @@ def _run_outpaint(
     stage_dir: Path,
     logger: PipelineLogger,
 ) -> tuple[int, Image.Image | None]:
-    """Rule 4: 좌우 밝기 차이 큰 경우 L/R 별도 API, 아니면 통합 1회."""
+    """좌우 순차/별도/통합 처리 분기.
+
+    우선순위:
+      1. SEQUENTIAL_LR_CALLS=true → 좌측 먼저 처리 후 결과를 우측 입력으로 사용
+      2. SEPARATE_LR_BRIGHTNESS_DIFF > 0 → 밝기 차이 기반 별도 병렬 처리
+      3. 기본 → 통합 1회 처리
+    """
+    # 순차 L/R 처리 (좌측 완료 결과 → 우측 입력, 컨텍스트 간섭 차단)
+    if SEQUENTIAL_LR_CALLS and x1 > 0 and x2 < target_w:
+        logger.artifact_written(
+            STAGE.value, "(memory) sequential_lr",
+            f"sequential L/R: 좌측 먼저 처리 후 결과를 우측 입력으로 사용 "
+            f"(L={x1}px R={target_w - x2}px)",
+        )
+        return _run_separate_lr(
+            canvas, mask_arr, target_w, target_h, api_key, stage_dir, logger,
+            prompt_left=OUTPAINT_PROMPT_LEFT,
+            prompt_right=OUTPAINT_PROMPT_RIGHT,
+            sequential=True,
+        )
 
     if SEPARATE_LR_BRIGHTNESS_DIFF > 0 and x1 > 0 and x2 < target_w:
         canvas_arr = np.array(canvas)
@@ -319,14 +343,25 @@ def _run_separate_lr(
     api_key: str,
     stage_dir: Path,
     logger: PipelineLogger,
+    prompt_left: str = OUTPAINT_PROMPT,
+    prompt_right: str = OUTPAINT_PROMPT,
+    sequential: bool = False,
 ) -> tuple[int, Image.Image | None]:
-    """Rule 4: 좌/우 마스크를 각각 별도 API 호출 후 병합."""
+    """좌/우 마스크를 각각 별도 API 호출 후 병합.
+
+    sequential=True: 좌측 결과를 우측 입력으로 사용 (컨텍스트 간섭 차단)
+    sequential=False: 두 호출 모두 원본 canvas 사용 후 픽셀 병합
+    """
     canvas_arr = np.array(canvas)
     mid_x = target_w // 2
     api_calls = 0
     merged = canvas_arr.copy()
+    current_input = canvas  # sequential 모드: 이전 결과를 다음 입력으로 사용
 
-    for side, col_start, col_end in [("left", 0, mid_x), ("right", mid_x, target_w)]:
+    for side, col_start, col_end, prompt in [
+        ("left",  0,     mid_x,    prompt_left),
+        ("right", mid_x, target_w, prompt_right),
+    ]:
         side_mask = np.zeros_like(mask_arr)
         side_mask[:, col_start:col_end] = mask_arr[:, col_start:col_end]
 
@@ -334,12 +369,12 @@ def _run_separate_lr(
             continue
 
         result, fail_code, fail_reason = openai_cleanup.cleanup(
-            projected_image=canvas,
+            projected_image=current_input,
             projected_removal_mask=Image.fromarray(side_mask),
             target_width=target_w,
             target_height=target_h,
             api_key=api_key,
-            prompt=OUTPAINT_PROMPT,
+            prompt=prompt,
         )
         api_calls += 1
         if result is None:
@@ -350,6 +385,10 @@ def _run_separate_lr(
         result_arr = np.array(result)
         fill_region = side_mask > 128
         merged[fill_region] = result_arr[fill_region]
+
+        if sequential:
+            # 다음 호출(우측)은 이번 결과(좌측 채워진 이미지)를 입력으로 사용
+            current_input = Image.fromarray(merged)
 
         out_path = stage_dir / f"type_d_outpainted_{side}.png"
         result.save(str(out_path))

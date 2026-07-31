@@ -1,6 +1,10 @@
 """TYPE D outpaint 프롬프트.
 
 프롬프트만 바꿀 때는 이 파일만 수정.
+
+OUTPAINT_PROMPT        : 통합 단일 호출용 (SEQUENTIAL_LR_CALLS=false 시 사용)
+OUTPAINT_PROMPT_LEFT   : 순차 처리 1단계 — 좌측 전용
+OUTPAINT_PROMPT_RIGHT  : 순차 처리 2단계 — 우측 전용 (좌측 결과를 입력으로 받음)
 """
 
 # v9 2026-07-31: 원본 보존 최우선 + 배경 확장 허용 방식
@@ -52,4 +56,46 @@ OUTPAINT_PROMPT = (
     "Quality target:\n"
     "The final image should look like the same original advertisement, naturally completed at 1200 × 560 from the beginning.\n"
     "It should preserve the original ad as much as possible, while making the added or repaired background feel seamless and visually coherent."
+)
+
+# ── 순차 처리 좌측 전용 프롬프트 ─────────────────────────────────────────────
+OUTPAINT_PROMPT_LEFT = (
+    "Edit only the left masked extension area of this advertisement image.\n\n"
+    "The left side contains a bright skincare photograph.\n"
+    "A large white satin fabric reaches the original left boundary.\n"
+    "The upper-left boundary contains a pale blue-white blurred background.\n"
+    "The middle-left and lower-left boundary contain the existing white satin fabric.\n\n"
+    "Continue the fabric's visible outer contour smoothly into the new left area.\n\n"
+    "The contour must:\n"
+    "- begin exactly from the fabric edge visible at the original boundary\n"
+    "- follow the same natural curve and direction\n"
+    "- remain continuous without interruption\n"
+    "- extend naturally toward the new left canvas edge\n\n"
+    "Continue the fabric surface with:\n"
+    "- broad natural folds and smooth curvature\n"
+    "- pearly white highlights and soft blue-gray shadows\n"
+    "- satin-like reflective texture\n"
+    "- matching light direction and photographic softness\n\n"
+    "In the upper-left area, continue the pale blue-white photographic background.\n"
+    "In the middle and lower left areas, continue the existing white satin fabric.\n\n"
+    "Strict prohibitions:\n"
+    "- do not stop the fabric at the original boundary\n"
+    "- do not replace fabric with plain background\n"
+    "- do not mirror, stretch, or duplicate edge pixels\n"
+    "- do not generate hair, skin, a person, text, logos, or products\n"
+    "- do not modify anything outside the masked area"
+)
+
+# ── 순차 처리 우측 전용 프롬프트 ─────────────────────────────────────────────
+OUTPAINT_PROMPT_RIGHT = (
+    "Edit only the right masked extension area of this advertisement image.\n\n"
+    "The right side contains a clean solid black advertising panel.\n"
+    "Continue only the existing black panel background into the new right area.\n\n"
+    "Match the original black tone exactly.\n"
+    "Match any subtle tonal depth or slight variation visible near the boundary.\n\n"
+    "Strict prohibitions:\n"
+    "- do not add text, Korean characters, products, logos, icons, or highlights\n"
+    "- do not add decorative graphics or gradients\n"
+    "- do not mirror, stretch, or duplicate edge pixels\n"
+    "- do not modify anything outside the masked area"
 )
