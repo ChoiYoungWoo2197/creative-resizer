@@ -86,10 +86,16 @@ def generate(
     place_x = (target_width - render_w) // 2
     place_y = (target_height - render_h) // 2
 
+    # 방향별 확장 px 계산
+    extend_left  = place_x
+    extend_right = target_width  - (place_x + render_w)
+    extend_top   = place_y
+    extend_bottom= target_height - (place_y + render_h)
+
     logger.artifact_written(
         STAGE.value, "(memory) type_d_scale",
-        f"src={src_w}×{src_h} target={target_width}×{target_height} "
-        f"scale={scale:.4f} render={render_w}×{render_h} place=({place_x},{place_y})",
+        f"축소: {src_w}×{src_h} → {render_w}×{render_h} ({scale*100:.1f}%) "
+        f"| 확장: L={extend_left} R={extend_right} T={extend_top} B={extend_bottom}px",
     )
 
     # ── Step 2: Place on canvas ──────────────────────────────────────────────
@@ -101,7 +107,8 @@ def generate(
     canvas.save(str(canvas_path))
     logger.artifact_written(
         STAGE.value, str(canvas_path),
-        f"TYPE D: source placed ({render_w}×{render_h} at {place_x},{place_y})",
+        f"TYPE D canvas: {render_w}×{render_h} placed at ({place_x},{place_y}) "
+        f"on {target_width}×{target_height}",
     )
 
     # ── Step 3: Build outpaint mask (white = empty borders) ──────────────────
@@ -120,11 +127,12 @@ def generate(
 
     # ── Step 4: AI outpaint (only if meaningful empty area) ──────────────────
     total_px = target_width * target_height
-    empty_ratio = float((mask_arr > 128).sum()) / total_px
+    empty_px  = int((mask_arr > 128).sum())
+    empty_ratio = float(empty_px) / total_px
 
     logger.artifact_written(
         STAGE.value, "(memory) type_d_empty_ratio",
-        f"empty={empty_ratio:.2%} threshold={_MIN_EMPTY_RATIO:.0%}",
+        f"outpaint: {empty_px}px ({empty_ratio:.1%}) {'→ API 호출' if empty_ratio >= _MIN_EMPTY_RATIO else '→ 스킵'}",
     )
 
     api_calls = 0
@@ -196,10 +204,16 @@ def generate(
 
     logger.stage_pass(
         STAGE.value,
-        f"TYPE D: {target_width}×{target_height} scale={scale:.4f} apiCalls={api_calls}",
+        f"TYPE D PASS | {src_w}×{src_h}→{render_w}×{render_h} ({scale*100:.1f}%) "
+        f"확장 L{extend_left}/R{extend_right}/T{extend_top}/B{extend_bottom}px "
+        f"| API {api_calls}회",
         metrics={
             "mode": "TYPE_D",
-            "scale": round(scale, 4),
+            "scalePercent": round(scale * 100, 1),
+            "extendLeft": extend_left,
+            "extendRight": extend_right,
+            "extendTop": extend_top,
+            "extendBottom": extend_bottom,
             "emptyRatio": round(empty_ratio, 4),
             "totalApiCallCount": api_calls,
         },
