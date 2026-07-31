@@ -57,11 +57,14 @@ def generate(
     stage_dir = Path(output_dir) / job_id / _OUTPUT_SUBDIR
     stage_dir.mkdir(parents=True, exist_ok=True)
 
+    has_safe_zone = (safe_left + safe_top + safe_right + safe_bottom) > 0
     logger.stage_start(
         STAGE.value,
         f"TYPE D: target={target_width}×{target_height} "
+        f"safe_zone={'yes' if has_safe_zone else 'no'} "
         f"expand={MASK_INWARD_EXPAND_PX}px feather={BLEND_FEATHER_PX}px",
-        metrics={"mode": "TYPE_D", "targetWidth": target_width, "targetHeight": target_height},
+        metrics={"mode": "TYPE_D", "targetWidth": target_width, "targetHeight": target_height,
+                 "hasSafeZone": has_safe_zone},
     )
 
     try:
@@ -71,12 +74,25 @@ def generate(
 
     src_w, src_h = source.width, source.height
 
-    # ── Step 1: Contain scale → 캔버스 중앙 배치 ────────────────────────────
-    scale = min(target_width / src_w, target_height / src_h)
-    render_w = max(1, round(src_w * scale))
-    render_h = max(1, round(src_h * scale))
-    place_x = (target_width - render_w) // 2
-    place_y = (target_height - render_h) // 2
+    # ── Step 1: Scale 및 배치 계산 ───────────────────────────────────────────
+    if has_safe_zone:
+        # 세이프존 기준 축소 → 세이프존 중심에 배치 (외곽 전체가 outpaint 대상)
+        safe_w = target_width  - safe_left - safe_right
+        safe_h = target_height - safe_top  - safe_bottom
+        scale = min(safe_w / src_w, safe_h / src_h)
+        render_w = max(1, round(src_w * scale))
+        render_h = max(1, round(src_h * scale))
+        safe_cx = safe_left + safe_w // 2
+        safe_cy = safe_top  + safe_h // 2
+        place_x = safe_cx - render_w // 2
+        place_y = safe_cy - render_h // 2
+    else:
+        # 캔버스 기준 축소 → 캔버스 중앙 배치 (기존 동작)
+        scale = min(target_width / src_w, target_height / src_h)
+        render_w = max(1, round(src_w * scale))
+        render_h = max(1, round(src_h * scale))
+        place_x = (target_width - render_w) // 2
+        place_y = (target_height - render_h) // 2
 
     extend_l = place_x
     extend_r = target_width  - (place_x + render_w)

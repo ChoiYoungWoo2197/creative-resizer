@@ -75,7 +75,9 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         # ── Pipeline type routing (after P1, before any analysis) ─────────────
         from clean_pipeline import pipeline_type_selector
         pipeline_type = pipeline_type_selector.select(
-            canonical.width, canonical.height, spec.width, spec.height
+            canonical.width, canonical.height, spec.width, spec.height,
+            safe_left=spec.safe_left, safe_top=spec.safe_top,
+            safe_right=spec.safe_right, safe_bottom=spec.safe_bottom,
         )
         logger.artifact_written(
             "ORCHESTRATOR", "(memory) pipeline_type",
