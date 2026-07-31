@@ -31,10 +31,18 @@ STAGE = StageName.SCENE_GENERATION
 _OUTPUT_SUBDIR = Path("clean_v1") / "05_scene"
 
 _OUTPAINT_PROMPT = (
-    "Seamlessly extend the background to fill the empty border areas. "
-    "Match the existing colors, lighting, and texture precisely. "
-    "Do NOT add any text, logos, products, people, or advertisement elements. "
-    "Only fill the empty regions with natural background continuation."
+    "Seamlessly extend the background into the empty border areas.\n\n"
+    "Preserve all existing people, products, text, logos, and advertisement elements exactly.\n\n"
+    "Use the pixels and visual structure near each original image boundary as the source for continuation. "
+    "Continue the existing color gradients, lighting direction, blur, fabric flow, folds, highlights, shadows, "
+    "and background texture smoothly across the boundary.\n\n"
+    "Blend the generated area gradually into the original image. "
+    "Do not create a visible seam, straight vertical band, triangular patch, hard edge, pasted-looking region, "
+    "mirrored texture, stretched pixels, or repeated pattern.\n\n"
+    "The transition between the original image and the generated background must be soft and continuous, "
+    "with no detectable border.\n\n"
+    "Do not add any new text, logos, products, people, objects, or advertisement elements. "
+    "Only reconstruct and extend the natural background."
 )
 
 # 빈 영역이 이 비율 미만이면 outpaint API 호출 생략
