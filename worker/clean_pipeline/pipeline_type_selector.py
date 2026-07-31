@@ -1,18 +1,17 @@
 """Per-spec pipeline type selector.
 
+TYPE A: 원본과 규격 동일 → 캐노니컬 그대로 출력 (pass-through)
 TYPE B: GPT-4o scene analysis + element extraction + layout repositioning
 TYPE D: contain-scale + AI border outpaint only (no element analysis)
 
 Selection logic (per spec, runs after P1 canonical load):
-  scale    = min(tgt_w/src_w, tgt_h/src_h)
-  ar_ratio = max(src_ar, tgt_ar) / min(src_ar, tgt_ar)
-  → TYPE D if scale >= TYPE_D_MIN_SCALE AND ar_ratio <= TYPE_D_MAX_AR_RATIO
-  → TYPE B otherwise
+  tgt == src (치수 동일)          → TYPE A
+  safe zone 있음                  → TYPE D (세이프존 기준 축소)
+  scale >= MIN_SCALE & ar <= MAX  → TYPE D (캔버스 기준 축소)
+  그 외                           → TYPE B
 
 Environment variables:
-  CLEAN_PIPELINE_TYPE   "B" | "D" | "auto"  (default: "auto")
-                        "B" or "D" forces the type for all specs.
-                        "auto" applies per-spec selection.
+  CLEAN_PIPELINE_TYPE   "A" | "B" | "D" | "auto"  (default: "auto")
   TYPE_D_MIN_SCALE      float (default: 0.75)
   TYPE_D_MAX_AR_RATIO   float (default: 1.20)
 """
@@ -21,6 +20,7 @@ from __future__ import annotations
 import os
 
 _FORCED_TYPE: str = os.environ.get("CLEAN_PIPELINE_TYPE", "auto").upper()
+_VALID_FORCED = ("A", "B", "D")
 TYPE_D_MIN_SCALE: float = float(os.environ.get("TYPE_D_MIN_SCALE", "0.75"))
 TYPE_D_MAX_AR_RATIO: float = float(os.environ.get("TYPE_D_MAX_AR_RATIO", "1.20"))
 
@@ -36,8 +36,12 @@ def select(
     Safe zone present → always TYPE D (safe-zone scale + outpaint).
     Otherwise auto-route based on scale + aspect-ratio change.
     """
-    if _FORCED_TYPE in ("B", "D"):
+    if _FORCED_TYPE in _VALID_FORCED:
         return _FORCED_TYPE
+
+    # 원본과 규격 동일 → TYPE A (pass-through)
+    if tgt_w == src_w and tgt_h == src_h:
+        return "A"
 
     # 세이프존이 있으면 무조건 TYPE D (세이프존 기준 축소 + 외곽 AI 확장)
     if safe_left + safe_top + safe_right + safe_bottom > 0:

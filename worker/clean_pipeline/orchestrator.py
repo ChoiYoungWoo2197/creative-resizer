@@ -1,5 +1,9 @@
 """Fail-closed pipeline orchestrator.
 
+TYPE A flow (P1→pass):
+  P1  SOURCE_PREPARATION
+  pass  원본과 규격 동일 → 캐노니컬 그대로 출력
+
 TYPE B flow (P1→P2→P3→P4→P5→P6→P7→P8):
   P1  SOURCE_PREPARATION
   P2  SCENE_ANALYSIS       (GPT-4o element detection)
@@ -16,7 +20,7 @@ TYPE D flow (P1→P5D→P8):
   P8  FINAL_VALIDATION     (render_validator size check)
 
 Routing: pipeline_type_selector.select() after P1 (scale + ar_ratio criteria).
-Override: CLEAN_PIPELINE_TYPE=B or D forces the type for all specs.
+Override: CLEAN_PIPELINE_TYPE=A, B, or D forces the type for all specs.
 
 Rules:
   - Any FAIL → stop immediately, do NOT create result.png, do NOT proceed
@@ -84,6 +88,47 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             f"src={canonical.width}×{canonical.height} "
             f"spec={spec.width}×{spec.height} → TYPE {pipeline_type}",
         )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TYPE A: 원본 = 목표 규격 → 캐노니컬 그대로 출력
+        # ─────────────────────────────────────────────────────────────────────
+        if pipeline_type == "A":
+            import shutil
+            from pathlib import Path as _Path
+            from clean_pipeline.render import render_validator
+
+            result_dir = _Path(request.output_directory) / job_id / "clean_v1" / "08_final"
+            result_dir.mkdir(parents=True, exist_ok=True)
+            result_path = str(result_dir / "result.png")
+            shutil.copy2(canonical.canonical_path, result_path)
+
+            logger.artifact_written("ORCHESTRATOR", result_path, "TYPE A: canonical copied as result")
+
+            is_valid, val_code, val_reason = render_validator.validate(
+                result_path, spec.width, spec.height
+            )
+            final_sr = StageResult(
+                stage=StageName.FINAL_VALIDATION,
+                status=PipelineStatus.PASS if is_valid else PipelineStatus.FAIL,
+                reasons=[] if is_valid else [f"[{val_code}] {val_reason}"],
+                artifacts={"result": result_path},
+            )
+            stage_results.append(final_sr)
+            if not is_valid:
+                logger.stage_fail(StageName.FINAL_VALIDATION.value, val_code, val_reason)
+                return _fail(job_id, final_sr, stage_results, logger)
+
+            output_paths.append(result_path)
+            logger.job_pass(
+                f"TYPE A job complete — result={result_path}",
+                metrics={"outputCount": len(output_paths)},
+            )
+            return CleanPipelineResult(
+                job_id=job_id,
+                status=PipelineStatus.PASS,
+                stage_results=stage_results,
+                output_paths=output_paths,
+            )
 
         # ─────────────────────────────────────────────────────────────────────
         # TYPE D: P1 → P5D → P8
