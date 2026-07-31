@@ -59,31 +59,13 @@ OUTPAINT_PROMPT = (
 )
 
 # ── 순차 처리 좌측 전용 프롬프트 ─────────────────────────────────────────────
+# v10 2026-07-31: re-imagine 자유도 + tangent 흐름 중심
 OUTPAINT_PROMPT_LEFT = (
-    "Edit only the left masked extension area of this advertisement image.\n\n"
-    "The left side contains a bright skincare photograph.\n"
-    "A large white satin fabric reaches the original left boundary.\n"
-    "The upper-left boundary contains a pale blue-white blurred background.\n"
-    "The middle-left and lower-left boundary contain the existing white satin fabric.\n\n"
-    "Continue the fabric's visible outer contour smoothly into the new left area.\n\n"
-    "The contour must:\n"
-    "- begin exactly from the fabric edge visible at the original boundary\n"
-    "- follow the same natural curve and direction\n"
-    "- remain continuous without interruption\n"
-    "- extend naturally toward the new left canvas edge\n\n"
-    "Continue the fabric surface with:\n"
-    "- broad natural folds and smooth curvature\n"
-    "- pearly white highlights and soft blue-gray shadows\n"
-    "- satin-like reflective texture\n"
-    "- matching light direction and photographic softness\n\n"
-    "In the upper-left area, continue the pale blue-white photographic background.\n"
-    "In the middle and lower left areas, continue the existing white satin fabric.\n\n"
-    "Strict prohibitions:\n"
-    "- do not stop the fabric at the original boundary\n"
-    "- do not replace fabric with plain background\n"
-    "- do not mirror, stretch, or duplicate edge pixels\n"
-    "- do not generate hair, skin, a person, text, logos, or products\n"
-    "- do not modify anything outside the masked area"
+    "Naturally re-imagine and extend the bright satin fabric backdrop "
+    "from the center towards the far-left edge. "
+    "Smoothly connect the flow of the glossy cloth wrinkles, "
+    "maintaining the natural arc and continuous tangent lines of the folds. "
+    "Do not create any awkward cuts or pixel artifacts."
 )
 
 # ── 순차 처리 우측 전용 프롬프트 ─────────────────────────────────────────────
