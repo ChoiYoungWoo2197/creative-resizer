@@ -77,21 +77,18 @@ def generate(
 
     src_w, src_h = source.width, source.height
 
-    # ── Step 1: Contain scale within safe zone ───────────────────────────────
-    available_w = max(1, target_width - safe_left - safe_right)
-    available_h = max(1, target_height - safe_top - safe_bottom)
-
-    scale = min(available_w / src_w, available_h / src_h)
+    # ── Step 1: Contain scale to full canvas ─────────────────────────────────
+    scale = min(target_width / src_w, target_height / src_h)
     render_w = max(1, round(src_w * scale))
     render_h = max(1, round(src_h * scale))
 
-    # Center within safe zone
-    place_x = safe_left + (available_w - render_w) // 2
-    place_y = safe_top + (available_h - render_h) // 2
+    # Center on full canvas
+    place_x = (target_width - render_w) // 2
+    place_y = (target_height - render_h) // 2
 
     logger.artifact_written(
         STAGE.value, "(memory) type_d_scale",
-        f"src={src_w}×{src_h} available={available_w}×{available_h} "
+        f"src={src_w}×{src_h} target={target_width}×{target_height} "
         f"scale={scale:.4f} render={render_w}×{render_h} place=({place_x},{place_y})",
     )
 
