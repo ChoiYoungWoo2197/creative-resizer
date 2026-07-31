@@ -7,7 +7,7 @@ import os
 
 # Rule 1: 마스크를 원본 안쪽으로 확장 (AI가 경계 픽셀까지 재생성)
 # 0 = 비활성
-MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "0"))
+MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "20"))
 
 # Rule 3: 생성 후 alpha blend 그라데이션 폭 (경계 페더링)
 # 0 = 비활성 (하드 마스크)
