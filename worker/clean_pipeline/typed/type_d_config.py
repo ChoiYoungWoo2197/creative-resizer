@@ -11,7 +11,7 @@ MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "20"))
 
 # Rule 3: 생성 후 alpha blend 그라데이션 폭 (경계 페더링)
 # 0 = 비활성 (하드 마스크)
-BLEND_FEATHER_PX: int = int(os.environ.get("TYPE_D_BLEND_FEATHER_PX", "0"))
+BLEND_FEATHER_PX: int = int(os.environ.get("TYPE_D_BLEND_FEATHER_PX", "15"))
 
 # Rule 4: 좌우 평균 밝기 차이가 이 값 이상이면 L/R 각각 별도 API 호출
 # 0 = 비활성 (항상 통합 처리)
