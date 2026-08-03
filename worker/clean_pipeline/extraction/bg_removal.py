@@ -38,7 +38,7 @@ from PIL import Image, ImageFilter
 _DARK_DETECT_THRESHOLD = 55          # 0-255 mean RGB
 
 # TEXT strategy: keep pixels brighter than this.
-_KEEP_BRIGHTNESS = 50                # 0-255 mean RGB
+_KEEP_BRIGHTNESS = 120               # 0-255 mean RGB
 
 # PRODUCT strategy: colour distance from sampled bg → transparent.
 _PRODUCT_BG_DIST = 40               # Euclidean distance in RGB space
