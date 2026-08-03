@@ -170,7 +170,8 @@ def generate(
                                     f"Rule5: {filled_count}px 단색 직접 채움 (std<{DARK_BG_STD_THRESHOLD})")
 
         # ── Step 4: [Rule 1] 마스크 원본 안쪽으로 확장 ──────────────────────
-        if MASK_INWARD_EXPAND_PX > 0 and int((work_mask > 128).sum()) > 0:
+        # 세이프존 모드에서는 비활성: 원본 경계 침범 시 얼굴/제품 복제 아티팩트 발생
+        if MASK_INWARD_EXPAND_PX > 0 and not has_safe_zone and int((work_mask > 128).sum()) > 0:
             expanded = Image.fromarray(work_mask).filter(
                 ImageFilter.MaxFilter(2 * MASK_INWARD_EXPAND_PX + 1)
             )
