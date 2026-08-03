@@ -6,12 +6,12 @@
 import os
 
 # Rule 1: 마스크를 원본 안쪽으로 확장 (AI가 경계 픽셀까지 재생성)
-# 0 = 비활성
-MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "0"))
+# 0 = 비활성 / Method B: 40px (AI에게 경계 context 제공, 복원은 Rule 3이 담당)
+MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "40"))
 
 # Rule 3: 생성 후 alpha blend 그라데이션 폭 (경계 페더링)
-# 0 = 비활성 (하드 마스크)
-BLEND_FEATHER_PX: int = int(os.environ.get("TYPE_D_BLEND_FEATHER_PX", "0"))
+# 0 = 비활성 / Method B: 40px (AI 생성 결과 위에 원본 복원 + 경계 부드럽게 blend)
+BLEND_FEATHER_PX: int = int(os.environ.get("TYPE_D_BLEND_FEATHER_PX", "40"))
 
 # Rule 4: 좌우 평균 밝기 차이가 이 값 이상이면 L/R 각각 별도 API 호출
 # 0 = 비활성 (항상 통합 처리)
