@@ -1,15 +1,16 @@
-"""LAYOUT stage: validate + orchestrate full layout pipeline.
+"""LAYOUT stage: letterbox projection + validation.
+
+원본 source_bbox를 letterbox contain-scale 공식으로 타겟 캔버스 좌표로 직접 변환.
+anchor 방식·candidate·constraint solver 없음 — 수학 공식으로 deterministic 배치.
 
 Hard Fail codes:
-  NO_VALID_CANDIDATES           — required object has no valid placement
+  NO_REMOVABLE_OBJECTS          — extraction 결과 배치할 객체 없음
+  INVALID_SOURCE_SIZE           — src_width/src_height 누락
   DUPLICATE_OBJECT              — same object_id placed twice
   REQUIRED_OBJECT_MISSING       — required manifest object not placed
   SAFE_ZONE_VIOLATION           — required placed object outside safe zone
   CANVAS_OVERFLOW               — any placed object outside canvas
   EXCESSIVE_OVERLAP             — two placed objects overlap > 30%
-  PROTECTED_SUBJECT_OCCLUDED    — placed object covers > 50% of protected subject
-
-No origin-position fallback. No AI coordinate decisions.
 """
 from __future__ import annotations
 
@@ -21,7 +22,6 @@ from PIL import Image, ImageDraw
 from clean_pipeline.analysis.models import SceneManifest
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.extraction.models import ExtractionResult
-from clean_pipeline.layout import candidate_generator, constraint_solver
 from clean_pipeline.layout.models import LayoutResult, PlacedObject, SafeZone
 from clean_pipeline.layout.safe_zone import (
     compute as compute_safe_zone,
@@ -31,6 +31,7 @@ from clean_pipeline.layout.safe_zone import (
 )
 from clean_pipeline.pipeline_logger import PipelineLogger
 from clean_pipeline.scene.models import ScenePlateResult
+from clean_pipeline.scene.target_transform import compute as compute_tx
 
 STAGE = StageName.LAYOUT
 _OVERLAP_THRESHOLD = 0.30
@@ -128,61 +129,58 @@ def run(
     if not extraction.objects:
         return _fail(logger, "NO_REMOVABLE_OBJECTS", "ExtractionResult has no objects to place")
 
-    # Safe zone
-    sz = compute_safe_zone(target_width, target_height, safe_left, safe_top, safe_right, safe_bottom)
-    if sz.width <= 0 or sz.height <= 0:
+    if src_width <= 0 or src_height <= 0:
         return _fail(
-            logger, "INVALID_SAFE_ZONE",
-            f"Safe zone has zero or negative area: {sz.width}×{sz.height}",
+            logger, "INVALID_SOURCE_SIZE",
+            f"src_width/src_height must be > 0, got {src_width}×{src_height}",
         )
 
-    # Protected subject bboxes in target canvas coordinates
-    protected_bboxes = _project_protected_bboxes(manifest, target_width, target_height)
+    # ── Letterbox transform ───────────────────────────────────────────────────
+    tx = compute_tx(src_width, src_height, target_width, target_height)
+    scale_x = tx.proj_width / tx.src_width
+    scale_y = tx.proj_height / tx.src_height
 
-    # source → target 캔버스 letterbox contain-scale (P5 target_transform과 동일 공식)
-    # source_bbox 치수를 타겟 캔버스 비율로 변환하여 후보 크기를 결정
-    if src_width > 0 and src_height > 0:
-        canvas_scale = min(target_width / src_width, target_height / src_height)
-    else:
-        canvas_scale = 1.0
     logger.artifact_written(
-        STAGE.value, "(memory) canvas_scale",
-        f"src={src_width}×{src_height} target={target_width}×{target_height} "
-        f"canvas_scale={canvas_scale:.4f}",
+        STAGE.value, "[LETTERBOX] transform",
+        f"src={src_width}×{src_height}  "
+        f"proj={tx.proj_width}×{tx.proj_height}  "
+        f"offset=({tx.offset_x},{tx.offset_y})  "
+        f"scale=({scale_x:.4f},{scale_y:.4f})",
     )
 
-    # Generate candidates (원본 위치 기반 anchor 우선순위 적용)
-    all_candidates = candidate_generator.generate(
-        extraction.objects, sz, image_width=target_width, canvas_scale=canvas_scale
-    )
+    # ── 각 객체 letterbox 투영 ────────────────────────────────────────────────
+    placed: list[PlacedObject] = []
+    for obj in extraction.objects:
+        src_x = obj.source_bbox.x
+        src_y = obj.source_bbox.y
+        src_w = obj.source_bbox.width
+        src_h = obj.source_bbox.height
 
-    # Save candidates.json
-    candidates_dict = {
-        obj_id: [
-            {"anchor": c.anchor, "scale": c.scale, "x": c.x, "y": c.y, "w": c.width, "h": c.height}
-            for c in cands
-        ]
-        for obj_id, cands in all_candidates.items()
-    }
-    candidates_json_path = stage_dir / "candidates.json"
-    candidates_json_path.write_text(
-        json.dumps(candidates_dict, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    logger.artifact_written(STAGE.value, str(candidates_json_path), "all candidates")
+        tgt_x = tx.offset_x + round(src_x * scale_x)
+        tgt_y = tx.offset_y + round(src_y * scale_y)
+        tgt_w = max(1, round(src_w * scale_x))
+        tgt_h = max(1, round(src_h * scale_y))
 
-    # Solve
-    placed, fail_code, fail_reason = constraint_solver.solve(
-        all_candidates,
-        extraction.objects,
-        sz,
-        target_width,
-        target_height,
-        protected_bboxes,
-    )
-    if placed is None:
-        return _fail(logger, fail_code, fail_reason)
+        logger.artifact_written(
+            STAGE.value, f"[LETTERBOX] {obj.id} ({obj.role})",
+            f"src=({src_x},{src_y}) {src_w}×{src_h}"
+            f"  →  target=({tgt_x},{tgt_y}) {tgt_w}×{tgt_h}",
+        )
 
-    # Final validation
+        placed.append(PlacedObject(
+            object_id=obj.id,
+            role=obj.role,
+            required=obj.required,
+            anchor="letterbox",
+            scale=round(scale_x, 4),
+            x=tgt_x, y=tgt_y, width=tgt_w, height=tgt_h,
+            source_rgba_path=obj.rgba_path,
+        ))
+
+    # ── Safe zone (validate + debug 용) ───────────────────────────────────────
+    sz = compute_safe_zone(target_width, target_height, safe_left, safe_top, safe_right, safe_bottom)
+
+    # ── Final validation ──────────────────────────────────────────────────────
     is_valid, val_code, val_reason = validate(placed, manifest, sz, target_width, target_height)
     if not is_valid:
         return _fail(logger, val_code, val_reason)
@@ -204,13 +202,12 @@ def run(
     _render_debug(
         scene_plate_result.scene_plate_path, placed, sz, target_width, target_height, str(debug_path)
     )
-    result_obj.candidates_json_path = str(candidates_json_path)
     result_obj.layout_debug_path = str(debug_path)
     logger.artifact_written(STAGE.value, str(debug_path), "debug composite")
 
     logger.stage_pass(
         STAGE.value,
-        f"{len(placed)} objects placed",
+        f"{len(placed)} objects placed via letterbox projection",
         metrics={"placedCount": len(placed)},
     )
 
@@ -219,7 +216,6 @@ def run(
         status=PipelineStatus.PASS,
         metrics={"placedCount": len(placed)},
         artifacts={
-            "candidates_json": str(candidates_json_path),
             "layout_json": str(layout_json_path),
             "layout_debug": str(debug_path),
         },
