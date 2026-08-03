@@ -7,7 +7,7 @@ import os
 
 # Rule 1: 마스크를 원본 안쪽으로 확장 (AI가 경계 픽셀까지 재생성)
 # 0 = 비활성 / Method B: 40px (AI에게 경계 context 제공, 복원은 Rule 3이 담당)
-MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "80"))
+MASK_INWARD_EXPAND_PX: int = int(os.environ.get("TYPE_D_MASK_EXPAND_PX", "120"))
 
 # Rule 3: 생성 후 alpha blend 그라데이션 폭 (경계 페더링)
 # 0 = 비활성 / Method B: 40px (AI 생성 결과 위에 원본 복원 + 경계 부드럽게 blend)
