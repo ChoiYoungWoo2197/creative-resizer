@@ -10,7 +10,6 @@ Hard Fail codes:
   REQUIRED_OBJECT_MISSING       — required manifest object not placed
   SAFE_ZONE_VIOLATION           — required placed object outside safe zone
   CANVAS_OVERFLOW               — any placed object outside canvas
-  EXCESSIVE_OVERLAP             — two placed objects overlap > 30%
 """
 from __future__ import annotations
 
@@ -73,21 +72,6 @@ def validate(
         if po.required and not sz_contains(safe_zone, po.x, po.y, po.width, po.height):
             return False, "SAFE_ZONE_VIOLATION", \
                 f"Required object '{po.object_id}' outside safe zone"
-
-    # Pairwise overlap
-    for i, a in enumerate(placed):
-        for b in placed[i + 1:]:
-            overlap = intersection_area(a.x, a.y, a.width, a.height, b.x, b.y, b.width, b.height)
-            if overlap == 0:
-                continue
-            min_area = min(a.width * a.height, b.width * b.height)
-            if min_area > 0 and overlap / min_area > _OVERLAP_THRESHOLD:
-                return (
-                    False,
-                    "EXCESSIVE_OVERLAP",
-                    f"Objects '{a.object_id}' and '{b.object_id}' overlap "
-                    f"{overlap}/{min_area} = {overlap/min_area:.2f} > {_OVERLAP_THRESHOLD}",
-                )
 
     return True, "", ""
 
