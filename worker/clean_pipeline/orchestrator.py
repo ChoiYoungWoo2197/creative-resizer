@@ -78,16 +78,24 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
 
         # ── Pipeline type routing (after P1, before any analysis) ─────────────
         from clean_pipeline import pipeline_type_selector
-        pipeline_type = pipeline_type_selector.select(
-            canonical.width, canonical.height, spec.width, spec.height,
-            safe_left=spec.safe_left, safe_top=spec.safe_top,
-            safe_right=spec.safe_right, safe_bottom=spec.safe_bottom,
-        )
-        logger.artifact_written(
-            "ORCHESTRATOR", "(memory) pipeline_type",
-            f"src={canonical.width}×{canonical.height} "
-            f"spec={spec.width}×{spec.height} → TYPE {pipeline_type}",
-        )
+        _VALID = ("A", "B", "D")
+        if request.pipeline_type in _VALID:
+            pipeline_type = request.pipeline_type
+            logger.artifact_written(
+                "ORCHESTRATOR", "(memory) pipeline_type",
+                f"TYPE {pipeline_type} (request override)",
+            )
+        else:
+            pipeline_type = pipeline_type_selector.select(
+                canonical.width, canonical.height, spec.width, spec.height,
+                safe_left=spec.safe_left, safe_top=spec.safe_top,
+                safe_right=spec.safe_right, safe_bottom=spec.safe_bottom,
+            )
+            logger.artifact_written(
+                "ORCHESTRATOR", "(memory) pipeline_type",
+                f"src={canonical.width}×{canonical.height} "
+                f"spec={spec.width}×{spec.height} → TYPE {pipeline_type}",
+            )
 
         # ─────────────────────────────────────────────────────────────────────
         # TYPE A: 원본 = 목표 규격 → 캐노니컬 그대로 출력

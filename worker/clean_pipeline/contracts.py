@@ -59,6 +59,7 @@ class CleanPipelineRequest:
     source_path: str
     target_specs: list[TargetSpec]
     output_directory: str
+    pipeline_type: str = ""  # "A"|"B"|"D" 강제 지정, 빈 문자열이면 auto
 
 
 @dataclass

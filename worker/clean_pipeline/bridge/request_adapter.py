@@ -66,11 +66,14 @@ def adapt_request(data: dict, job_id: str, output_directory: str) -> CleanPipeli
     if not target_specs:
         target_specs = [TargetSpec(width=0, height=0)]
 
+    pipeline_type = str(data.get("pipelineType", "")).upper()
+
     return CleanPipelineRequest(
         job_id=job_id,
         source_path=source_path,
         target_specs=target_specs,
         output_directory=output_directory,
+        pipeline_type=pipeline_type,
     )
 
 
