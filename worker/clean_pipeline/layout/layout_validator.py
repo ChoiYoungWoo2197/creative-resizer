@@ -105,6 +105,8 @@ def run(
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
+    src_width: int = 0,
+    src_height: int = 0,
 ) -> tuple[StageResult, LayoutResult | None]:
 
     target_width = scene_plate_result.target_width
@@ -137,8 +139,22 @@ def run(
     # Protected subject bboxes in target canvas coordinates
     protected_bboxes = _project_protected_bboxes(manifest, target_width, target_height)
 
+    # source → target 캔버스 letterbox contain-scale (P5 target_transform과 동일 공식)
+    # source_bbox 치수를 타겟 캔버스 비율로 변환하여 후보 크기를 결정
+    if src_width > 0 and src_height > 0:
+        canvas_scale = min(target_width / src_width, target_height / src_height)
+    else:
+        canvas_scale = 1.0
+    logger.artifact_written(
+        STAGE.value, "(memory) canvas_scale",
+        f"src={src_width}×{src_height} target={target_width}×{target_height} "
+        f"canvas_scale={canvas_scale:.4f}",
+    )
+
     # Generate candidates (원본 위치 기반 anchor 우선순위 적용)
-    all_candidates = candidate_generator.generate(extraction.objects, sz, image_width=target_width)
+    all_candidates = candidate_generator.generate(
+        extraction.objects, sz, image_width=target_width, canvas_scale=canvas_scale
+    )
 
     # Save candidates.json
     candidates_dict = {

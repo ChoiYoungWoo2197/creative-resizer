@@ -64,10 +64,14 @@ def generate(
     extracted: list[ExtractedObject],
     safe_zone: SafeZone,
     image_width: int = 0,
+    canvas_scale: float = 1.0,
 ) -> dict[str, list[ObjectCandidate]]:
     """Return {object_id: [candidates]} in deterministic order.
 
-    Dimensions are taken directly from source_bbox (canonical pixel size).
+    canvas_scale: min(target_w/src_w, target_h/src_h) — letterbox contain scale.
+    Applies this scale to source_bbox dimensions so object sizes are proportional
+    to the target canvas rather than the original source canvas.
+
     When image_width is given, anchors are reordered so that objects whose
     original centre-x was on the right half of the canvas try right-side
     anchors first (and vice versa).  This preserves the original layout
@@ -86,8 +90,9 @@ def generate(
                 # 원본이 좌측 → left 계열 anchor 먼저
                 base_anchors = _prefer_side(base_anchors, "left")
 
-        orig_w = obj.source_bbox.width
-        orig_h = obj.source_bbox.height
+        # source_bbox는 원본 canonical 픽셀 기준 → canvas_scale로 타겟 캔버스 크기로 변환
+        orig_w = max(1, round(obj.source_bbox.width * canvas_scale))
+        orig_h = max(1, round(obj.source_bbox.height * canvas_scale))
 
         # Product: prepend a boosted scale if the source is smaller than the minimum.
         if obj.role == "product" and image_width > 0 and orig_w > 0:
