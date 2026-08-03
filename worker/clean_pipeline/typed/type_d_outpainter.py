@@ -40,6 +40,7 @@ from clean_pipeline.typed.type_d_prompt import (
     OUTPAINT_PROMPT,
     OUTPAINT_PROMPT_LEFT,
     OUTPAINT_PROMPT_RIGHT,
+    OUTPAINT_PROMPT_SAFEZONE,
 )
 
 STAGE = StageName.SCENE_GENERATION
@@ -187,6 +188,7 @@ def generate(
         api_calls, outpainted = _run_outpaint(
             work_canvas, work_mask, target_width, target_height,
             x1, y1, x2, y2, api_key, stage_dir, logger,
+            has_safe_zone=has_safe_zone,
         )
         if outpainted is None:
             # _run_outpaint already logged; need to return fail
@@ -296,14 +298,39 @@ def _run_outpaint(
     api_key: str,
     stage_dir: Path,
     logger: PipelineLogger,
+    has_safe_zone: bool = False,
 ) -> tuple[int, Image.Image | None]:
     """좌우 순차/별도/통합 처리 분기.
 
     우선순위:
+      0. has_safe_zone=True → 4방향 통합 1회 (OUTPAINT_PROMPT_SAFEZONE)
       1. SEQUENTIAL_LR_CALLS=true → 좌측 먼저 처리 후 결과를 우측 입력으로 사용
       2. SEPARATE_LR_BRIGHTNESS_DIFF > 0 → 밝기 차이 기반 별도 병렬 처리
       3. 기본 → 통합 1회 처리
     """
+    # 세이프존 모드: 4방향 확장이므로 sequential L/R 대신 통합 단일 호출
+    if has_safe_zone:
+        logger.artifact_written(
+            STAGE.value, "(memory) safezone_unified",
+            "safe zone 모드: 4방향 통합 단일 호출 (OUTPAINT_PROMPT_SAFEZONE)",
+        )
+        outpaint_mask = Image.fromarray(mask_arr)
+        result, fail_code, fail_reason = openai_cleanup.cleanup(
+            projected_image=canvas,
+            projected_removal_mask=outpaint_mask,
+            target_width=target_w,
+            target_height=target_h,
+            api_key=api_key,
+            prompt=OUTPAINT_PROMPT_SAFEZONE,
+        )
+        if result is None:
+            logger.artifact_written(STAGE.value, "(memory) api_error", f"{fail_code}: {fail_reason}")
+            return 1, None
+        out_path = stage_dir / "type_d_outpainted.png"
+        result.save(str(out_path))
+        logger.artifact_written(STAGE.value, str(out_path), "TYPE D: AI outpaint result (safezone)")
+        return 1, result
+
     # 순차 L/R 처리 (좌측 완료 결과 → 우측 입력, 컨텍스트 간섭 차단)
     if SEQUENTIAL_LR_CALLS and x1 > 0 and x2 < target_w:
         logger.artifact_written(

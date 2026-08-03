@@ -58,6 +58,36 @@ OUTPAINT_PROMPT = (
     "It should preserve the original ad as much as possible, while making the added or repaired background feel seamless and visually coherent."
 )
 
+# ── 세이프존 모드 통합 프롬프트 (4방향 확장, 단일 호출) ─────────────────────
+# 세이프존 있을 때: sequential L/R 대신 이 프롬프트로 1회 통합 처리
+OUTPAINT_PROMPT_SAFEZONE = (
+    "Edit the provided advertisement image directly.\n\n"
+    "The original advertisement has been scaled down and placed in the center of a larger canvas. "
+    "All four sides of the canvas are empty and must be filled.\n\n"
+    "Fill each side naturally to match the original scene:\n\n"
+    "Left side:\n"
+    "Continue the white satin fabric backdrop. "
+    "Match the glossy folds, soft shadows, and pearly highlights of the existing fabric. "
+    "Keep the same elegant satin texture and natural drape direction.\n\n"
+    "Right side:\n"
+    "Continue the dark black advertising panel. "
+    "Match the exact black tone. "
+    "Do not add text, logos, icons, or any new elements.\n\n"
+    "Top side:\n"
+    "Continue the pale blue-white photographic background upward. "
+    "Keep it soft, bright, and blurred, consistent with the studio lighting in the original.\n\n"
+    "Bottom side:\n"
+    "Continue the white satin fabric folds and shadows downward. "
+    "Keep the fabric texture and shadow depth consistent with the existing scene.\n\n"
+    "Strict prohibitions:\n"
+    "- do not generate new people, products, text, logos, or decorative elements\n"
+    "- do not mirror, stretch, or repeat edge pixels\n"
+    "- do not create seams, bands, or visible boundaries between original and generated areas\n"
+    "- do not modify anything inside the original advertisement area\n\n"
+    "Quality target:\n"
+    "The final image should look like the same advertisement, naturally photographed at this wider canvas size from the beginning."
+)
+
 # ── 순차 처리 좌측 전용 프롬프트 ─────────────────────────────────────────────
 # v10 2026-07-31: re-imagine 자유도 + tangent 흐름 중심
 OUTPAINT_PROMPT_LEFT = (
