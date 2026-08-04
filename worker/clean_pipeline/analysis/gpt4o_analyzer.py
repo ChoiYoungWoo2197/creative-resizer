@@ -164,6 +164,7 @@ def analyze(
 
     # ── 정규화 좌표 → SceneManifest 변환 ─────────────────────────────────────
     objects: list[SceneObject] = []
+    raw_text_boundaries: dict[int, int] = {}  # obj index → refine 전 GPT-4o y1 (픽셀)
 
     for i, elem in enumerate(parsed.detected_elements):
         role, required = _ROLE_MAP.get(elem.category, ("decorative_ad", False))
@@ -195,6 +196,10 @@ def analyze(
         x2 = max(x1 + 1, min(x2, image_width))
         y2 = max(y1 + 1, min(y2, image_height))
 
+        # refine 전 GPT-4o 원본 y1 저장 (title_group 클리핑 기준용)
+        if role == "title_group":
+            raw_text_boundaries[i] = y1
+
         # 픽셀 단위 후처리: Canny/Otsu로 좌표 정밀화 (cv2 없으면 원본 유지)
         x1, y1, x2, y2 = refine_bbox(_canonical_img, x1, y1, x2, y2, role)
         w, h = x2 - x1, y2 - y1
@@ -223,8 +228,9 @@ def analyze(
         return _fail(logger, "NO_OBJECTS_DETECTED", "GPT-4o detected no objects in the image")
 
     # refine_bbox 패딩(20px)이 인접 텍스트 경계를 침범하는 경우 방어:
-    # product bbox 하단이 title_group 상단을 넘으면 title_group 상단으로 클리핑.
-    _clip_product_vs_text(objects, logger)
+    # product bbox 하단이 title_group 상단을 넘으면 GPT-4o 원본 경계로 클리핑.
+    # (refine된 title_group y1은 실제 텍스트보다 위에 있을 수 있어 jar 바닥을 과잉 제거함)
+    _clip_product_vs_text(objects, raw_text_boundaries, logger)
 
     manifest = SceneManifest(
         job_id=job_id,
@@ -287,16 +293,20 @@ def analyze(
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
-def _clip_product_vs_text(objects: list[SceneObject], logger: PipelineLogger) -> None:
-    """product bbox가 title_group와 겹치면 겹치는 방향으로 product를 클리핑.
+def _clip_product_vs_text(
+    objects: list[SceneObject],
+    raw_text_boundaries: dict[int, int],
+    logger: PipelineLogger,
+) -> None:
+    """product bbox가 title_group와 겹치면 GPT-4o 원본 경계로 클리핑.
 
-    refine_bbox의 _PADDING=20이 인접 텍스트 영역을 침범할 때 텍스트 픽셀이
-    product RGBA crop에 유입되는 현상을 방지한다.
+    refine_bbox가 title_group y1을 위로 확장(패딩)하면 jar 바닥이 과잉 제거됨.
+    GPT-4o 원본 y1을 기준으로 클리핑하여 jar를 최대한 보존한다.
     """
     products = [o for o in objects if o.role == "product"]
-    texts = [o for o in objects if o.role == "title_group"]
+    text_entries = [(o, i) for i, o in enumerate(objects) if o.role == "title_group"]
     for prod in products:
-        for text in texts:
+        for text, text_idx in text_entries:
             px1, py1 = prod.bbox.x, prod.bbox.y
             px2, py2 = px1 + prod.bbox.width, py1 + prod.bbox.height
             tx1, ty1 = text.bbox.x, text.bbox.y
@@ -306,24 +316,27 @@ def _clip_product_vs_text(objects: list[SceneObject], logger: PipelineLogger) ->
             prod_cy = (py1 + py2) / 2
             text_cy = (ty1 + ty2) / 2
             if text_cy > prod_cy and py2 > ty1:
-                # 텍스트가 제품 아래 → product 하단을 title_group 상단으로 클리핑
-                new_py2 = ty1
+                # GPT-4o 원본 y1 우선 사용 (refine 확장 무시하여 jar 바닥 보존)
+                clip_y = raw_text_boundaries.get(text_idx, ty1)
+                new_py2 = clip_y
                 new_h = new_py2 - py1
                 if new_h >= 10:
                     logger.artifact_written(
                         STAGE.value, f"[CLIP] {prod.id}",
-                        f"product y2 {py2} → {new_py2} (title_group y1={ty1})",
+                        f"product y2 {py2} → {new_py2} "
+                        f"(gpt4o_text_y1={clip_y}, refined_text_y1={ty1})",
                     )
                     prod.bbox = BBox(x=px1, y=py1, width=px2 - px1, height=new_h)
                     prod.polygon = [[px1, py1], [px2, py1], [px2, new_py2], [px1, new_py2]]
             elif text_cy < prod_cy and py1 < ty2:
-                # 텍스트가 제품 위 → product 상단을 title_group 하단으로 클리핑
-                new_py1 = ty2
+                clip_y = raw_text_boundaries.get(text_idx, ty2)
+                new_py1 = clip_y
                 new_h = py2 - new_py1
                 if new_h >= 10:
                     logger.artifact_written(
                         STAGE.value, f"[CLIP] {prod.id}",
-                        f"product y1 {py1} → {new_py1} (title_group y2={ty2})",
+                        f"product y1 {py1} → {new_py1} "
+                        f"(gpt4o_text_y2={clip_y}, refined_text_y2={ty2})",
                     )
                     prod.bbox = BBox(x=px1, y=new_py1, width=px2 - px1, height=new_h)
                     prod.polygon = [[px1, new_py1], [px2, new_py1], [px2, py2], [px1, py2]]
