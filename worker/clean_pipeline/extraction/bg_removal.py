@@ -116,6 +116,9 @@ def _remove_product_bg(crop_rgba: Image.Image) -> Image.Image:
     Since should_remove_background() already confirmed the background is dark,
     brightness thresholding is the correct approach — dark bg pixels have
     brightness ≈ 0 while product pixels (white/cream/colored jars) are >> 50.
+
+    After thresholding, keep only the largest connected blob to remove stray
+    text characters or noise that survive the brightness cut.
     """
     arr = np.array(crop_rgba, dtype=np.uint8)          # H×W×4
     rgb = arr[:, :, :3].astype(np.float32)
@@ -125,10 +128,27 @@ def _remove_product_bg(crop_rgba: Image.Image) -> Image.Image:
     keep = (brightness >= _KEEP_BRIGHTNESS) & (existing_alpha > 0)
 
     new_alpha = np.where(keep, existing_alpha, 0).astype(np.uint8)
+    new_alpha = _keep_largest_blob(new_alpha)
+
     result = arr.copy()
     result[:, :, 3] = new_alpha
 
     return _feather(Image.fromarray(result, "RGBA"))
+
+
+def _keep_largest_blob(alpha: np.ndarray) -> np.ndarray:
+    """연결된 픽셀 덩어리 중 가장 큰 것만 남기고 나머지(텍스트 문자 등)를 제거."""
+    try:
+        import cv2
+    except ImportError:
+        return alpha
+    binary = (alpha > 0).astype(np.uint8) * 255
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    if num_labels <= 1:
+        return alpha
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    mask = labels == largest
+    return np.where(mask, alpha, 0).astype(np.uint8)
 
 
 def _sample_bg_color(rgb: np.ndarray) -> np.ndarray:
