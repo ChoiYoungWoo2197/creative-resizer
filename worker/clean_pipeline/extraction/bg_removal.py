@@ -155,11 +155,11 @@ def _remove_product_bg(crop_rgba: Image.Image) -> Image.Image:
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     closed_binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
-    # ── 3. Largest Blob: 잔여 텍스트 조각 제거 ───────────────────────────────
-    final_alpha = _keep_largest_blob_from_binary(closed_binary, new_alpha)
-
+    # Largest Blob을 적용하지 않음:
+    # logo bbox가 product bbox와 겹칠 때 logo 픽셀이 "작은 덩어리"로 오인되어
+    # 투명 처리되는 문제 방지. Flood Fill + MORPH_CLOSE로 외곽 배경 제거 충분.
     result = arr.copy()
-    result[:, :, 3] = final_alpha
+    result[:, :, 3] = np.where(closed_binary > 0, new_alpha, 0).astype(np.uint8)
     return _feather(Image.fromarray(result, "RGBA"))
 
 
