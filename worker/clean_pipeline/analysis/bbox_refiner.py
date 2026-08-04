@@ -82,13 +82,13 @@ def refine(
     if abs_x2 - abs_x1 < 4 or abs_y2 - abs_y1 < 4:
         return x1, y1, x2, y2
 
-    # Canny/Otsu가 실제 객체 일부만 잡아 원본보다 >40% 좁힐 경우 원본 유지.
-    # e.g. 유리병처럼 그라데이션 윤곽선이 있으면 에지가 일부만 잡힘 → bbox 반토막.
+    # Canny/Otsu가 실제 객체 일부만 잡아 원본보다 >25% 좁힐 경우 원본 유지.
+    # e.g. 연한 색상 용기처럼 배경과 유사한 제품은 에지가 일부만 잡혀 bbox가 축소됨.
     orig_w = x2 - x1
     orig_h = y2 - y1
-    if orig_w > 0 and (abs_x2 - abs_x1) < orig_w * 0.60:
+    if orig_w > 0 and (abs_x2 - abs_x1) < orig_w * 0.75:
         return x1, y1, x2, y2
-    if orig_h > 0 and (abs_y2 - abs_y1) < orig_h * 0.60:
+    if orig_h > 0 and (abs_y2 - abs_y1) < orig_h * 0.75:
         return x1, y1, x2, y2
 
     return abs_x1, abs_y1, abs_x2, abs_y2

@@ -30,6 +30,7 @@ from clean_pipeline.removal.models import RemovalMaskResult
 
 STAGE = StageName.REMOVAL_MASK
 _DILATION_PX = 3
+_LEFT_GAP_PX = 80   # title_group 등 좌측 경계의 어두운 배경 패널 커버를 위한 확장 폭
 _OUTPUT_SUBDIR = Path("clean_v1") / "04_removal"
 
 
@@ -89,6 +90,16 @@ def build(
 
         np.maximum(union_arr, full, out=union_arr)
         loaded_count += 1
+
+    # 좌측 갭 확장: removable 객체 마스크의 leftmost 경계에서 _LEFT_GAP_PX 만큼 좌측 연장.
+    # title_group bbox 좌측에 존재하는 어두운 배경 패널 구간을 removal_mask에 포함시킴.
+    cols_with_mask = np.where(union_arr.max(axis=0) > 0)[0]
+    if len(cols_with_mask) > 0:
+        leftmost_col = int(cols_with_mask[0])
+        gap_start = max(0, leftmost_col - _LEFT_GAP_PX)
+        if gap_start < leftmost_col:
+            rows_with_mask = union_arr[:, leftmost_col:].max(axis=1) > 0
+            union_arr[rows_with_mask, gap_start:leftmost_col] = 255
 
     # Guard: union must be non-empty before dilation
     if loaded_count > 0 and union_arr.max() == 0:
