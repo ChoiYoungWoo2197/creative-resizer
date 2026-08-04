@@ -205,7 +205,9 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         # TYPE A: o3 + 자유형 JSON + 실제 픽셀 좌표
         from clean_pipeline.typec_config import PIPELINE_TYPE
         from clean_pipeline.scene.scene_plate_generator import _TYPE_B_NO_MASK
-        if PIPELINE_TYPE == "C":
+        if PIPELINE_TYPE == "CLAUDE":
+            from clean_pipeline.analysis.claude_analyzer import analyze
+        elif PIPELINE_TYPE == "C":
             from clean_pipeline.analysis.gpt4o_analyzer_typec import analyze
         elif _TYPE_B_NO_MASK:
             from clean_pipeline.analysis.gpt4o_analyzer import analyze
