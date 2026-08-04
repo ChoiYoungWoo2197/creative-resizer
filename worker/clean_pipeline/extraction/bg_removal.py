@@ -107,48 +107,79 @@ def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
 
 
 def _remove_product_bg(crop_rgba: Image.Image) -> Image.Image:
-    """Brightness-threshold strategy for product objects on dark backgrounds.
+    """Flood Fill + MORPH_CLOSE + Largest Blob strategy for product objects.
 
-    Color-distance approach fails when the product fills the entire crop bbox
-    (e.g. a jar that spans corner-to-corner): edge sampling returns product
-    pixels as bg_color, so the actual dark background is never removed.
-
-    Since should_remove_background() already confirmed the background is dark,
-    brightness thresholding is the correct approach — dark bg pixels have
-    brightness ≈ 0 while product pixels (white/cream/colored jars) are >> 50.
-
-    After thresholding, keep only the largest connected blob to remove stray
-    text characters or noise that survive the brightness cut.
+    1. Flood Fill from 4 corners: only pixels reachable from the dark outer
+       boundary are removed → jar lid/shadow (not connected to corners) survive.
+    2. MORPH_CLOSE: bridges thin gaps between jar body and lid so they form
+       one connected blob instead of two separate ones.
+    3. Largest Blob: removes stray text characters that survived step 1.
     """
-    arr = np.array(crop_rgba, dtype=np.uint8)          # H×W×4
-    rgb = arr[:, :, :3].astype(np.float32)
-    existing_alpha = arr[:, :, 3]
-
-    brightness = rgb.mean(axis=2)                      # H×W, 0-255
-    keep = (brightness >= _KEEP_BRIGHTNESS) & (existing_alpha > 0)
-
-    new_alpha = np.where(keep, existing_alpha, 0).astype(np.uint8)
-    new_alpha = _keep_largest_blob(new_alpha)
-
-    result = arr.copy()
-    result[:, :, 3] = new_alpha
-
-    return _feather(Image.fromarray(result, "RGBA"))
-
-
-def _keep_largest_blob(alpha: np.ndarray) -> np.ndarray:
-    """연결된 픽셀 덩어리 중 가장 큰 것만 남기고 나머지(텍스트 문자 등)를 제거."""
     try:
         import cv2
     except ImportError:
-        return alpha
-    binary = (alpha > 0).astype(np.uint8) * 255
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        return _remove_product_bg_fallback(crop_rgba)
+
+    arr = np.array(crop_rgba, dtype=np.uint8)
+    rgb = arr[:, :, :3]
+    alpha = arr[:, :, 3]
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape
+
+    # ── 1. Flood Fill: 모서리에서 연결된 어두운 외곽 배경만 제거 ─────────────
+    ff_mask = np.zeros((h + 2, w + 2), np.uint8)
+    bg_filled = gray.copy()
+    for seed_x, seed_y in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+        if gray[seed_y, seed_x] < 60:
+            cv2.floodFill(
+                bg_filled, ff_mask, (seed_x, seed_y), 255,
+                loDiff=30, upDiff=30,
+                flags=4 | cv2.FLOODFILL_FIXED_RANGE,
+            )
+    is_outer_bg = ff_mask[1:-1, 1:-1] == 1
+
+    new_alpha = alpha.copy()
+    new_alpha[is_outer_bg] = 0
+
+    # ── 2. MORPH_CLOSE: 뚜껑-본체 사이 미세 끊김 메우기 ─────────────────────
+    binary = (new_alpha > 0).astype(np.uint8) * 255
+    kernel_size = max(3, int(min(h, w) * 0.025))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    closed_binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+    # ── 3. Largest Blob: 잔여 텍스트 조각 제거 ───────────────────────────────
+    final_alpha = _keep_largest_blob_from_binary(closed_binary, new_alpha)
+
+    result = arr.copy()
+    result[:, :, 3] = final_alpha
+    return _feather(Image.fromarray(result, "RGBA"))
+
+
+def _keep_largest_blob_from_binary(closed_binary: np.ndarray, original_alpha: np.ndarray) -> np.ndarray:
+    """MORPH_CLOSE된 바이너리 기준으로 가장 큰 blob 영역만 original_alpha에서 복원."""
+    try:
+        import cv2
+    except ImportError:
+        return original_alpha
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(closed_binary, connectivity=8)
     if num_labels <= 1:
-        return alpha
+        return original_alpha
     largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    mask = labels == largest
-    return np.where(mask, alpha, 0).astype(np.uint8)
+    valid_mask = labels == largest
+    return np.where(valid_mask, original_alpha, 0).astype(np.uint8)
+
+
+def _remove_product_bg_fallback(crop_rgba: Image.Image) -> Image.Image:
+    """cv2 없을 때 밝기 임계값 폴백."""
+    arr = np.array(crop_rgba, dtype=np.uint8)
+    rgb = arr[:, :, :3].astype(np.float32)
+    existing_alpha = arr[:, :, 3]
+    keep = (rgb.mean(axis=2) >= _KEEP_BRIGHTNESS) & (existing_alpha > 0)
+    result = arr.copy()
+    result[:, :, 3] = np.where(keep, existing_alpha, 0).astype(np.uint8)
+    return _feather(Image.fromarray(result, "RGBA"))
 
 
 def _sample_bg_color(rgb: np.ndarray) -> np.ndarray:
