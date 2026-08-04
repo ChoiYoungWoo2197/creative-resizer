@@ -1,7 +1,7 @@
-"""SCENE_ANALYSIS stage — TYPE B path: GPT-4o + Structured Outputs.
+"""SCENE_ANALYSIS stage — TYPE B path: GPT-4.1 + Structured Outputs.
 
 OpenAI 공식 가이드 기반:
-  - model  : gpt-4o-2024-08-06  (Structured Outputs 공식 지원 최초 버전)
+  - model  : gpt-4.1  (Structured Outputs 지원)
   - API    : client.beta.chat.completions.parse()  (strict=true 자동 적용)
   - 좌표계 : [ymin, xmin, ymax, xmax] 정규화 0~1000
              → ViT 패치 그리드가 상대 비율로 인식하기 때문에 실제 픽셀값보다 정확
@@ -28,7 +28,7 @@ from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.SCENE_ANALYSIS
-_MODEL = "gpt-4o-2024-08-06"
+_MODEL = "gpt-4.1"
 _MAX_SIDE = 1600
 _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
