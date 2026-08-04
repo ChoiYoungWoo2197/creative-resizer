@@ -34,8 +34,14 @@ from PIL import Image, ImageFilter
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
 
-# Corner brightness below this → consider background dark → trigger removal.
+# Border band sampling: border pixels darker than this count as "dark".
 _DARK_DETECT_THRESHOLD = 55          # 0-255 mean RGB
+
+# Border band thickness and minimum dark-pixel ratio to trigger bg removal.
+# Using the full border band (not just 4 corners) handles tight crops where
+# the product fills the corners but leaves dark strips along some edges.
+_DARK_BORDER_WIDTH = 3               # px — top/bottom/left/right strip
+_DARK_RATIO_THRESHOLD = 0.15         # 15 % of border pixels must be dark
 
 # TEXT strategy: keep pixels brighter than this.
 _KEEP_BRIGHTNESS = 50                # 0-255 mean RGB
@@ -54,26 +60,26 @@ _TEXT_ROLES = frozenset({"title_group", "body_text_group", "cta_group", "badge",
 
 
 def should_remove_background(crop_rgba: Image.Image) -> bool:
-    """Return True when at least 2 of the 4 crop corners are uniformly dark.
+    """Return True when the crop border contains enough dark background pixels.
 
-    Mean-of-all-corners fails when one corner samples a bright product pixel
-    (e.g. jar lid), pulling the mean above the threshold even though 3 other
-    corners are pure black.  Majority-vote (≥2 dark) is more robust.
+    The previous 4-corner approach fails when the product fills the corners
+    (e.g. a tight jar crop): all 4 corners sample bright product pixels and
+    the function returns False even though dark background strips exist along
+    the edges.  Sampling the full border band catches those strips.
     """
     arr = np.array(crop_rgba.convert("RGB"), dtype=np.float32)
     h, w = arr.shape[:2]
-    s = max(1, min(12, h // 6, w // 6))   # corner sample size
+    b = min(_DARK_BORDER_WIDTH, h // 2, w // 2)   # band width, clamped
 
-    corners = [
-        arr[:s, :s],
-        arr[:s, -s:],
-        arr[-s:, :s],
-        arr[-s:, -s:],
-    ]
-    dark_count = sum(
-        1 for c in corners if float(c.mean()) < _DARK_DETECT_THRESHOLD
-    )
-    return dark_count >= 2
+    brightness = arr.mean(axis=2)   # H×W, 0-255
+    border = np.concatenate([
+        brightness[:b, :].ravel(),
+        brightness[-b:, :].ravel(),
+        brightness[:, :b].ravel(),
+        brightness[:, -b:].ravel(),
+    ])
+    dark_ratio = float((border < _DARK_DETECT_THRESHOLD).sum()) / len(border)
+    return dark_ratio >= _DARK_RATIO_THRESHOLD
 
 
 def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:
