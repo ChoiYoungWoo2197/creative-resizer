@@ -222,6 +222,10 @@ def analyze(
     if not objects:
         return _fail(logger, "NO_OBJECTS_DETECTED", "GPT-4o detected no objects in the image")
 
+    # refine_bbox 패딩(20px)이 인접 텍스트 경계를 침범하는 경우 방어:
+    # product bbox 하단이 title_group 상단을 넘으면 title_group 상단으로 클리핑.
+    _clip_product_vs_text(objects, logger)
+
     manifest = SceneManifest(
         job_id=job_id,
         source_sha256=source_sha256,
@@ -282,6 +286,48 @@ def analyze(
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
+
+def _clip_product_vs_text(objects: list[SceneObject], logger: PipelineLogger) -> None:
+    """product bbox가 title_group와 겹치면 겹치는 방향으로 product를 클리핑.
+
+    refine_bbox의 _PADDING=20이 인접 텍스트 영역을 침범할 때 텍스트 픽셀이
+    product RGBA crop에 유입되는 현상을 방지한다.
+    """
+    products = [o for o in objects if o.role == "product"]
+    texts = [o for o in objects if o.role == "title_group"]
+    for prod in products:
+        for text in texts:
+            px1, py1 = prod.bbox.x, prod.bbox.y
+            px2, py2 = px1 + prod.bbox.width, py1 + prod.bbox.height
+            tx1, ty1 = text.bbox.x, text.bbox.y
+            tx2, ty2 = tx1 + text.bbox.width, ty1 + text.bbox.height
+            if px2 <= tx1 or px1 >= tx2 or py2 <= ty1 or py1 >= ty2:
+                continue  # 겹침 없음
+            prod_cy = (py1 + py2) / 2
+            text_cy = (ty1 + ty2) / 2
+            if text_cy > prod_cy and py2 > ty1:
+                # 텍스트가 제품 아래 → product 하단을 title_group 상단으로 클리핑
+                new_py2 = ty1
+                new_h = new_py2 - py1
+                if new_h >= 10:
+                    logger.artifact_written(
+                        STAGE.value, f"[CLIP] {prod.id}",
+                        f"product y2 {py2} → {new_py2} (title_group y1={ty1})",
+                    )
+                    prod.bbox = BBox(x=px1, y=py1, width=px2 - px1, height=new_h)
+                    prod.polygon = [[px1, py1], [px2, py1], [px2, new_py2], [px1, new_py2]]
+            elif text_cy < prod_cy and py1 < ty2:
+                # 텍스트가 제품 위 → product 상단을 title_group 하단으로 클리핑
+                new_py1 = ty2
+                new_h = py2 - new_py1
+                if new_h >= 10:
+                    logger.artifact_written(
+                        STAGE.value, f"[CLIP] {prod.id}",
+                        f"product y1 {py1} → {new_py1} (title_group y2={ty2})",
+                    )
+                    prod.bbox = BBox(x=px1, y=new_py1, width=px2 - px1, height=new_h)
+                    prod.polygon = [[px1, new_py1], [px2, new_py1], [px2, py2], [px1, py2]]
+
 
 def _fail(
     logger: PipelineLogger,
