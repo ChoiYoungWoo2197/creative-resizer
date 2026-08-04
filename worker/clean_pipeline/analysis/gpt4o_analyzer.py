@@ -28,7 +28,7 @@ from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.SCENE_ANALYSIS
-_MODEL = "gpt-4.1"
+_MODEL = "gpt-4.1-mini"
 _MAX_SIDE = 1600
 _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
