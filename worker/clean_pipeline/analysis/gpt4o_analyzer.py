@@ -20,7 +20,7 @@ from typing import Optional
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from clean_pipeline.analysis.bbox_refiner import refine as refine_bbox
+from clean_pipeline.analysis.bbox_refiner import refine as refine_bbox, scan_product_bottom
 from clean_pipeline.analysis.gpt4o_prompt import SYSTEM_PROMPT, USER_PROMPT
 from clean_pipeline.analysis.manifest_validator import validate as validate_manifest
 from clean_pipeline.analysis.models import BBox, SceneManifest, SceneObject
@@ -218,6 +218,31 @@ def analyze(
             text_content=elem.text_content or "",
             description=f"{elem.category} detected by {_MODEL}",
         ))
+
+    # 픽셀 스캔 후처리: product y2를 실제 용기 바닥까지 확장.
+    # GPT는 용기 표면 라벨 텍스트 하단을 용기 끝으로 오인하므로
+    # 어두운 배경에서 하향 스캔으로 실제 바닥을 확정한다.
+    product_obj = next((o for o in objects if o.role == "product"), None)
+    if product_obj is not None:
+        old_y2 = product_obj.bbox.y + product_obj.bbox.height
+        new_y2 = scan_product_bottom(
+            _canonical_img,
+            product_obj.bbox.x,
+            product_obj.bbox.y,
+            product_obj.bbox.x + product_obj.bbox.width,
+            old_y2,
+            image_height,
+        )
+        if new_y2 > old_y2:
+            px1 = product_obj.bbox.x
+            py1 = product_obj.bbox.y
+            px2 = px1 + product_obj.bbox.width
+            product_obj.bbox.height = new_y2 - py1
+            product_obj.polygon = [[px1, py1], [px2, py1], [px2, new_y2], [px1, new_y2]]
+            logger.artifact_written(
+                STAGE.value, "(pixel-scan)",
+                f"product y2 extended {old_y2} → {new_y2} (+{new_y2 - old_y2}px)",
+            )
 
     if not objects:
         return _fail(logger, "NO_OBJECTS_DETECTED", "GPT-4o detected no objects in the image")
