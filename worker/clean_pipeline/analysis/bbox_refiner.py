@@ -212,6 +212,15 @@ def scan_product_bottom(
 
     corrected_y2 = int(np.max(ys))
 
+    # exclude_rects 클리핑: GrabCut이 텍스트를 전경으로 오인해 과잉 확장하는 경우 방지.
+    # corrected_y2가 exclude_rect y1 이상이면 해당 rect 시작점 바로 위로 제한.
+    if exclude_rects:
+        for ex_x1, ex_y1, ex_x2, ex_y2 in exclude_rects:
+            # valid x 범위와 겹치는 exclude_rect만 적용
+            if ex_x1 < valid_x2 and ex_x2 > valid_x1:
+                if corrected_y2 >= ex_y1:
+                    corrected_y2 = min(corrected_y2, ex_y1 - 1)
+
     # 안전장치: y1+10보다 작으면 이상치로 판단 → 원본 반환
     if corrected_y2 < y1 + 10:
         return current_y2
