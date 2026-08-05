@@ -132,7 +132,7 @@ def extract(
         # Background removal: if the crop sits on a dark background,
         # strip background pixels so the object composites cleanly
         # onto any new (non-dark) scene plate.
-        if should_remove_background(cropped_rgba):
+        if should_remove_background(cropped_rgba, obj.role):
             cropped_rgba = remove_background(cropped_rgba, obj.role)
             cropped_rgba = tight_crop(cropped_rgba)
             logger.artifact_written(

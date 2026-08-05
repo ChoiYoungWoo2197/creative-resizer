@@ -69,13 +69,15 @@ _TIGHT_CROP_PADDING = 2
 # ── Public ────────────────────────────────────────────────────────────────────
 
 
-def should_remove_background(crop_rgba: Image.Image) -> bool:
-    """Return True when the crop border is dominantly dark OR achromatic-bright.
+def should_remove_background(crop_rgba: Image.Image, role: str = "") -> bool:
+    """Return True when the crop needs background removal.
 
-    Detects two kinds of backgrounds that need removal:
-      • Dark panels (solid black/dark background behind text)
-      • Achromatic-bright panels (white/grey background — low saturation, high brightness)
+    TEXT roles always need removal (글자 외 배경 제거가 목적이므로 배경 유형과 무관).
+    Other roles: trigger on dark or achromatic-bright border pixels.
     """
+    if role in _TEXT_ROLES:
+        return True
+
     arr = np.array(crop_rgba.convert("RGB"), dtype=np.float32)
     h, w = arr.shape[:2]
     b = min(_DARK_BORDER_WIDTH, h // 2, w // 2)
