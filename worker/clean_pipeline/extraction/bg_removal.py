@@ -143,10 +143,37 @@ def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
     else:
         text_mask = (thresh == 255)  # 어두운 배경 → 밝은 글자 보존
 
+    # 세로선 필터: crop 좌측 경계에 붙은 가늘고 긴 디자인 요소 제거
+    text_mask_arr = np.where(text_mask, np.uint8(255), np.uint8(0))
+    text_mask_arr = _filter_vertical_lines(text_mask_arr, h, w, _cv2)
+    text_mask = text_mask_arr > 0
+
     new_alpha = np.where(text_mask & (alpha > 0), alpha, 0).astype(np.uint8)
     result = arr.copy()
     result[:, :, 3] = new_alpha
     return _feather(Image.fromarray(result, "RGBA"))
+
+
+def _filter_vertical_lines(binary_mask: np.ndarray, img_h: int, img_w: int, cv2) -> np.ndarray:
+    """Otsu 마스크에서 crop 좌측 경계에 붙은 가늘고 긴 세로선 제거.
+
+    세로선 판정 조건 (3가지 모두 해당 시 제거):
+      1) x 좌표가 crop 좌측 끝 근처 (x <= 15px)
+      2) 높이가 crop 높이의 50% 이상
+      3) 너비가 매우 가늚 (comp_w <= 10px)
+    """
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask)
+    cleaned = binary_mask.copy()
+    for i in range(1, num_labels):  # 0은 배경
+        x      = stats[i, cv2.CC_STAT_LEFT]
+        comp_w = stats[i, cv2.CC_STAT_WIDTH]
+        comp_h = stats[i, cv2.CC_STAT_HEIGHT]
+        is_near_left_border = (x <= 15)
+        is_tall = (comp_h > img_h * 0.5)
+        is_thin = (comp_w <= 10)
+        if is_near_left_border and is_tall and is_thin:
+            cleaned[labels == i] = 0
+    return cleaned
 
 
 def _remove_text_bg_fallback(crop_rgba: Image.Image) -> Image.Image:
