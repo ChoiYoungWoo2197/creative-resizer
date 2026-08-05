@@ -152,16 +152,36 @@ def scan_product_bottom(
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
 
+    prod_x1, prod_x2 = rect_x, rect_x + rect_w
+
     if exclude_rects:
         # rect 내부를 GC_PR_FGD(추정 전경)로 초기화한 뒤
-        # 텍스트 영역을 GC_BGD(확실한 배경)로 강제 차단
+        # 텍스트 영역을 GC_BGD(확실한 배경)로 강제 차단.
+        # 단, product x 범위(prod_x1~prod_x2)와 겹치는 구역은 GC_BGD 대신
+        # GC_PR_BGD(추정 배경)로 완화 — 바닥선 탐색이 완전 차단되지 않도록 보정.
         mask[rect_y: rect_y + rect_h, rect_x: rect_x + rect_w] = cv2.GC_PR_FGD
         for ex_x1, ex_y1, ex_x2, ex_y2 in exclude_rects:
             clip_x1 = max(0, ex_x1)
             clip_y1 = max(0, ex_y1)
             clip_x2 = min(img_bgr.shape[1], ex_x2)
             clip_y2 = min(img_bgr.shape[0], ex_y2)
-            mask[clip_y1:clip_y2, clip_x1:clip_x2] = cv2.GC_BGD
+
+            # 1) product x 기준 좌측 → GC_BGD
+            left_x2 = min(clip_x2, prod_x1)
+            if clip_x1 < left_x2:
+                mask[clip_y1:clip_y2, clip_x1:left_x2] = cv2.GC_BGD
+
+            # 2) product x 기준 우측 → GC_BGD
+            right_x1 = max(clip_x1, prod_x2)
+            if right_x1 < clip_x2:
+                mask[clip_y1:clip_y2, right_x1:clip_x2] = cv2.GC_BGD
+
+            # 3) product x 범위 내부 겹침 구간 → GC_PR_BGD (완전 차단 대신 추정 배경 힌트)
+            overlap_x1 = max(clip_x1, prod_x1)
+            overlap_x2 = min(clip_x2, prod_x2)
+            if overlap_x1 < overlap_x2:
+                mask[clip_y1:clip_y2, overlap_x1:overlap_x2] = cv2.GC_PR_BGD
+
         grabcut_mode = cv2.GC_INIT_WITH_MASK
     else:
         grabcut_mode = cv2.GC_INIT_WITH_RECT
