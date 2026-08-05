@@ -1,14 +1,16 @@
 """Background removal for extracted RGBA crops.
 
-Used in P3 OBJECT_EXTRACTION when an object sits on a uniformly dark background
-(e.g. a solid black advertising panel).  Converts the polygon-masked RGBA crop
-so that background pixels become transparent.
+Used in P3 OBJECT_EXTRACTION when an object sits on a dark or achromatic
+(white/grey) background.  Converts the polygon-masked RGBA crop so that
+background pixels become transparent.
 
 Two strategies, chosen by role:
   TEXT   (title_group, body_text_group, cta_group, badge, logo)
-         Bright-pixel keep: any pixel whose mean RGB brightness >= _KEEP_BRIGHTNESS
-         is kept; darker pixels become transparent.  Works well for light-coloured
-         text / icons on a black or very dark panel.
+         Removes:
+           • dark pixels (brightness < _KEEP_BRIGHTNESS) — solid dark panel bg
+           • achromatic-bright pixels (saturation range < _ACHROMATIC_RANGE
+             AND brightness > _BRIGHT_BG) — white/grey panel bg
+         Keeps everything else (coloured text, dark-on-light body text).
 
   PRODUCT (product)
          Background-colour removal: sample the crop edges to estimate the
@@ -22,7 +24,7 @@ result blends naturally onto any new background.
 Public API
 ----------
 should_remove_background(crop_rgba) -> bool
-    Returns True when the crop's corners are uniformly dark.
+    Returns True when the crop border contains dark OR achromatic-bright pixels.
 
 remove_background(crop_rgba, role) -> Image.Image
     Returns a new RGBA image with background pixels made transparent.
@@ -37,14 +39,18 @@ from PIL import Image, ImageFilter
 # Border band sampling: border pixels darker than this count as "dark".
 _DARK_DETECT_THRESHOLD = 55          # 0-255 mean RGB
 
-# Border band thickness and minimum dark-pixel ratio to trigger bg removal.
-# Using the full border band (not just 4 corners) handles tight crops where
-# the product fills the corners but leaves dark strips along some edges.
+# Border band thickness and minimum dark/achromatic-pixel ratio to trigger bg removal.
 _DARK_BORDER_WIDTH = 3               # px — top/bottom/left/right strip
-_DARK_RATIO_THRESHOLD = 0.15         # 15 % of border pixels must be dark
+_DARK_RATIO_THRESHOLD = 0.15         # 15 % of border pixels must qualify
 
-# TEXT strategy: keep pixels brighter than this.
+# TEXT strategy: remove dark pixels below this brightness.
 _KEEP_BRIGHTNESS = 50                # 0-255 mean RGB
+
+# TEXT strategy: achromatic (white/grey) background detection.
+# Pixels where max(R,G,B)-min(R,G,B) < _ACHROMATIC_RANGE  AND  brightness > _BRIGHT_BG
+# are treated as achromatic background and made transparent.
+_ACHROMATIC_RANGE = 30               # colour range; 0 = pure grey/white
+_BRIGHT_BG = 120                     # minimum brightness to count as "bright background"
 
 # PRODUCT strategy: colour distance from sampled bg → transparent.
 _PRODUCT_BG_DIST = 40               # Euclidean distance in RGB space
@@ -60,26 +66,31 @@ _TEXT_ROLES = frozenset({"title_group", "body_text_group", "cta_group", "badge",
 
 
 def should_remove_background(crop_rgba: Image.Image) -> bool:
-    """Return True when the crop border contains enough dark background pixels.
+    """Return True when the crop border is dominantly dark OR achromatic-bright.
 
-    The previous 4-corner approach fails when the product fills the corners
-    (e.g. a tight jar crop): all 4 corners sample bright product pixels and
-    the function returns False even though dark background strips exist along
-    the edges.  Sampling the full border band catches those strips.
+    Detects two kinds of backgrounds that need removal:
+      • Dark panels (solid black/dark background behind text)
+      • Achromatic-bright panels (white/grey background — low saturation, high brightness)
     """
     arr = np.array(crop_rgba.convert("RGB"), dtype=np.float32)
     h, w = arr.shape[:2]
-    b = min(_DARK_BORDER_WIDTH, h // 2, w // 2)   # band width, clamped
+    b = min(_DARK_BORDER_WIDTH, h // 2, w // 2)
 
-    brightness = arr.mean(axis=2)   # H×W, 0-255
-    border = np.concatenate([
-        brightness[:b, :].ravel(),
-        brightness[-b:, :].ravel(),
-        brightness[:, :b].ravel(),
-        brightness[:, -b:].ravel(),
+    border_px = np.concatenate([
+        arr[:b, :].reshape(-1, 3),
+        arr[-b:, :].reshape(-1, 3),
+        arr[:, :b].reshape(-1, 3),
+        arr[:, -b:].reshape(-1, 3),
     ])
-    dark_ratio = float((border < _DARK_DETECT_THRESHOLD).sum()) / len(border)
-    return dark_ratio >= _DARK_RATIO_THRESHOLD
+    brightness = border_px.mean(axis=1)
+    sat_range = border_px.max(axis=1) - border_px.min(axis=1)
+
+    dark_ratio = float((brightness < _DARK_DETECT_THRESHOLD).sum()) / len(border_px)
+    achromatic_bright_ratio = float(
+        ((sat_range < _ACHROMATIC_RANGE) & (brightness > _BRIGHT_BG)).sum()
+    ) / len(border_px)
+
+    return dark_ratio >= _DARK_RATIO_THRESHOLD or achromatic_bright_ratio >= _DARK_RATIO_THRESHOLD
 
 
 def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:
@@ -97,13 +108,27 @@ def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:
 
 
 def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
-    """Brightness-threshold strategy for text / icon objects."""
-    arr = np.array(crop_rgba, dtype=np.uint8)          # H×W×4
-    rgb = arr[:, :, :3].astype(np.float32)
-    existing_alpha = arr[:, :, 3]                      # polygon mask alpha
+    """Brightness + achromatic strategy for text / icon objects.
 
-    brightness = rgb.mean(axis=2)                      # H×W, 0-255
-    keep = (brightness >= _KEEP_BRIGHTNESS) & (existing_alpha > 0)
+    Removes two kinds of background:
+      • dark pixels (brightness < _KEEP_BRIGHTNESS) — dark panel background
+      • achromatic-bright pixels (low saturation AND high brightness)
+        — white/grey panel background
+
+    Coloured text (high saturation) and dark-coloured text (low brightness)
+    that is NOT achromatic-bright are preserved.
+    """
+    arr = np.array(crop_rgba, dtype=np.uint8)
+    rgb = arr[:, :, :3].astype(np.float32)
+    existing_alpha = arr[:, :, 3]
+
+    brightness = rgb.mean(axis=2)
+    sat_range = rgb.max(axis=2) - rgb.min(axis=2)
+
+    is_dark_bg = brightness < _KEEP_BRIGHTNESS
+    is_achromatic_bright_bg = (sat_range < _ACHROMATIC_RANGE) & (brightness > _BRIGHT_BG)
+
+    keep = ~(is_dark_bg | is_achromatic_bright_bg) & (existing_alpha > 0)
 
     new_alpha = np.where(keep, existing_alpha, 0).astype(np.uint8)
     result = arr.copy()
