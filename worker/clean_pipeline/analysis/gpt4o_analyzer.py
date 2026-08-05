@@ -244,6 +244,27 @@ def analyze(
                 f"product y2 extended {old_y2} → {new_y2} (+{new_y2 - old_y2}px)",
             )
 
+    # title_group y1 clamp: GPT가 title_group bbox 상단을 product 영역까지 크게 잡는 경우
+    # Otsu 정밀화도 product 라벨 텍스트를 감지해 y1을 더 올릴 수 있으므로
+    # product y2 이후로 title_group y1을 강제 조정한다.
+    if product_obj is not None:
+        product_y2 = product_obj.bbox.y + product_obj.bbox.height
+        for obj in objects:
+            if obj.role == "title_group" and obj.bbox.y < product_y2:
+                old_y1 = obj.bbox.y
+                new_h = (obj.bbox.y + obj.bbox.height) - product_y2
+                if new_h > 0:
+                    obj.bbox.y = product_y2
+                    obj.bbox.height = new_h
+                    tx1 = obj.bbox.x
+                    tx2 = tx1 + obj.bbox.width
+                    obj.polygon = [[tx1, product_y2], [tx2, product_y2],
+                                   [tx2, product_y2 + new_h], [tx1, product_y2 + new_h]]
+                    logger.artifact_written(
+                        STAGE.value, "(title-clamp)",
+                        f"{obj.id} y1 clamped {old_y1} → {product_y2} (product y2={product_y2})",
+                    )
+
     if not objects:
         return _fail(logger, "NO_OBJECTS_DETECTED", "GPT-4o detected no objects in the image")
 
