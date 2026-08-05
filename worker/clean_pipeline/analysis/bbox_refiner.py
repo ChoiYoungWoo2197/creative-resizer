@@ -110,12 +110,16 @@ def scan_product_bottom(
     x2: int,
     current_y2: int,
     image_height: int,
+    exclude_rects: list[tuple[int, int, int, int]] | None = None,
 ) -> int:
     """GrabCut으로 실제 용기 바닥 y2를 반환.
 
     GPT는 용기 표면의 라벨 텍스트(AZULENE, Yadah 등)를 보고
     해당 텍스트 하단을 용기 끝으로 잘못 판단한다.
     GrabCut으로 전경(용기)과 배경을 분리하여 실제 최하단 픽셀을 확정한다.
+
+    exclude_rects: 텍스트 등 전경으로 오인될 수 있는 영역의 (x1,y1,x2,y2) 목록.
+                  해당 영역을 GC_BGD로 강제 지정하여 침범을 차단한다.
     cv2 없으면 current_y2 반환.
     """
     try:
@@ -148,9 +152,23 @@ def scan_product_bottom(
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
 
+    if exclude_rects:
+        # rect 내부를 GC_PR_FGD(추정 전경)로 초기화한 뒤
+        # 텍스트 영역을 GC_BGD(확실한 배경)로 강제 차단
+        mask[rect_y: rect_y + rect_h, rect_x: rect_x + rect_w] = cv2.GC_PR_FGD
+        for ex_x1, ex_y1, ex_x2, ex_y2 in exclude_rects:
+            clip_x1 = max(0, ex_x1)
+            clip_y1 = max(0, ex_y1)
+            clip_x2 = min(img_bgr.shape[1], ex_x2)
+            clip_y2 = min(img_bgr.shape[0], ex_y2)
+            mask[clip_y1:clip_y2, clip_x1:clip_x2] = cv2.GC_BGD
+        grabcut_mode = cv2.GC_INIT_WITH_MASK
+    else:
+        grabcut_mode = cv2.GC_INIT_WITH_RECT
+
     try:
         cv2.grabCut(img_bgr, mask, rect, bgd_model, fgd_model,
-                    iterCount=_GRABCUT_ITER, mode=cv2.GC_INIT_WITH_RECT)
+                    iterCount=_GRABCUT_ITER, mode=grabcut_mode)
     except cv2.error:
         return current_y2
 
