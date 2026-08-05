@@ -128,10 +128,15 @@ def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
     # Otsu: 이미지마다 최적 threshold 자동 계산
     _, thresh = _cv2.threshold(gray, 0, 255, _cv2.THRESH_BINARY + _cv2.THRESH_OTSU)
 
-    # 테두리 2px 평균으로 배경이 밝은지/어두운지 판단
+    # 테두리 평균으로 배경이 밝은지/어두운지 판단
+    # 이미지가 4px 이하일 때 2:-2 슬라이싱이 역전되는 문제 방지
     h, w = gray.shape
-    border_mask = np.ones((h, w), dtype=bool)
-    border_mask[2:-2, 2:-2] = False
+    b_pad = min(2, max(1, h // 4), max(1, w // 4))
+    border_mask = np.zeros((h, w), dtype=bool)
+    border_mask[:b_pad, :] = True
+    border_mask[-b_pad:, :] = True
+    border_mask[:, :b_pad] = True
+    border_mask[:, -b_pad:] = True
 
     if gray[border_mask].mean() > 128:
         text_mask = (thresh == 0)    # 밝은 배경 → 어두운 글자 보존
