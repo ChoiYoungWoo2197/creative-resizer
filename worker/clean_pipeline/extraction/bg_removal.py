@@ -131,6 +131,66 @@ def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:
 # ── Strategies ────────────────────────────────────────────────────────────────
 
 
+def _trim_bbox_by_projection(
+    crop_img: Image.Image,
+    edge_threshold: int = 50,
+    min_density_ratio: float = 0.05,
+) -> Image.Image:
+    """Canny Edge + Projection Profile로 텍스트 밀집 영역만 inner-trim.
+
+    P2 BBox가 마스카라 같은 인접 오브젝트를 포함해 과하게 잡혔을 때,
+    Otsu 이진화 전에 먼저 호출해 실제 글자 영역으로 crop을 줄인다.
+    cv2 없으면 원본 반환.
+    """
+    try:
+        import cv2 as _cv2
+    except ImportError:
+        return crop_img
+
+    img_np = np.array(crop_img)
+    if img_np.ndim == 3:
+        gray = _cv2.cvtColor(img_np, _cv2.COLOR_RGBA2GRAY if img_np.shape[2] == 4 else _cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_np.copy()
+
+    h, w = gray.shape
+    if h <= 10 or w <= 10:
+        return crop_img
+
+    edges = _cv2.Canny(gray, edge_threshold, edge_threshold * 2)
+
+    y_profile = np.sum(edges > 0, axis=1)
+    y_max = np.max(y_profile)
+    if y_max == 0:
+        return crop_img
+
+    valid_y = np.where(y_profile > y_max * min_density_ratio)[0]
+    if len(valid_y) == 0:
+        return crop_img
+    trim_y1, trim_y2 = int(valid_y[0]), int(valid_y[-1])
+
+    x_profile = np.sum(edges[trim_y1:trim_y2 + 1, :] > 0, axis=0)
+    x_max = np.max(x_profile)
+    if x_max == 0:
+        return crop_img
+
+    valid_x = np.where(x_profile > x_max * min_density_ratio)[0]
+    if len(valid_x) == 0:
+        return crop_img
+    trim_x1, trim_x2 = int(valid_x[0]), int(valid_x[-1])
+
+    pad = 3
+    fx1 = max(0, trim_x1 - pad)
+    fy1 = max(0, trim_y1 - pad)
+    fx2 = min(w, trim_x2 + 1 + pad)
+    fy2 = min(h, trim_y2 + 1 + pad)
+
+    if (fx2 - fx1) < 10 or (fy2 - fy1) < 10:
+        return crop_img
+
+    return crop_img.crop((fx1, fy1, fx2, fy2))
+
+
 def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
     """Otsu 이진화 기반 TEXT 배경 제거.
 
@@ -142,6 +202,9 @@ def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
         import cv2 as _cv2
     except ImportError:
         return _remove_text_bg_fallback(crop_rgba)
+
+    # Otsu 전에 Projection Profile로 텍스트 영역만 inner-trim (마스카라 등 인접 오브젝트 제거)
+    crop_rgba = _trim_bbox_by_projection(crop_rgba)
 
     arr = np.array(crop_rgba, dtype=np.uint8)
     rgb = arr[:, :, :3]
