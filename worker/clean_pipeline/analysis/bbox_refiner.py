@@ -22,7 +22,7 @@ refine(image_rgb, x1, y1, x2, y2, role) -> tuple[int, int, int, int]
 
 scan_product_bottom(image_pil, x1, y1, x2, current_y2, image_height) -> int
     GPT가 라벨 텍스트 하단에서 끊은 product y2를 실제 용기 바닥까지 확장한다.
-    배경이 어두운 이미지 전용 (밝기 임계값 기반).
+    GrabCut 기반 (복잡한 배경에서도 동작).
 """
 from __future__ import annotations
 
@@ -33,10 +33,9 @@ _PADDING = 20          # ROI 크롭 시 여유 픽셀 (에지 검출 정확도 �
 _CANNY_LOW = 30
 
 # ── scan_product_bottom 전용 상수 ─────────────────────────────────────────────
-_SCAN_BRIGHTNESS = 30    # 배경(검은색)과 구분하는 밝기 임계값
-_SCAN_DARK_ROWS  = 5     # 연속 어두운 행이 이 수 이상이면 용기 끝으로 판단
-_SCAN_MAX_EXPAND = 300   # 최대 하향 탐색 픽셀 (무한 확장 방지)
-_SCAN_CENTER_PCT = 0.60  # 제품 가로 중심부 비율 (에지 노이즈 제거용)
+_GRABCUT_Y_EXPAND = 150  # current_y2 아래로 GrabCut rect를 확장할 픽셀
+_GRABCUT_ITER     = 3    # GrabCut 반복 횟수 (속도/정밀도 균형)
+_GRABCUT_X_MARGIN = 0.1  # 외곽 노이즈 제외용 x 마진 비율 (양쪽 10%)
 _CANNY_HIGH = 100
 _MORPH_ITER = 2        # Morphological closing 반복 횟수
 
@@ -112,46 +111,74 @@ def scan_product_bottom(
     current_y2: int,
     image_height: int,
 ) -> int:
-    """픽셀 스캔으로 실제 용기 바닥 y2를 반환.
+    """GrabCut으로 실제 용기 바닥 y2를 반환.
 
     GPT는 용기 표면의 라벨 텍스트(AZULENE, Yadah 등)를 보고
     해당 텍스트 하단을 용기 끝으로 잘못 판단한다.
-    current_y2 아래를 하향 스캔하여 연속된 어두운 행이 나타나는 직전을
-    실제 용기 바닥으로 확정한다.
-
-    배경이 어두운 이미지 전용: 밝기 > _SCAN_BRIGHTNESS 를 제품 픽셀로 판단.
+    GrabCut으로 전경(용기)과 배경을 분리하여 실제 최하단 픽셀을 확정한다.
+    cv2 없으면 current_y2 반환.
     """
-    img = np.array(image_pil.convert("RGB"))
-    H, W = img.shape[:2]
-
-    # 제품 가로 중심부만 스캔 (좌우 에지·그림자 노이즈 제거)
-    cx      = (x1 + x2) // 2
-    half_w  = max(1, int((x2 - x1) * _SCAN_CENTER_PCT / 2))
-    scan_x1 = max(0, cx - half_w)
-    scan_x2 = min(W, cx + half_w)
-
-    if scan_x1 >= scan_x2:
+    try:
+        import cv2
+    except ImportError:
         return current_y2
 
-    scan_start  = max(0, current_y2)
-    scan_cap    = min(H, current_y2 + _SCAN_MAX_EXPAND)
-    dark_count  = 0
-    last_bright = current_y2 - 1
+    img_array = np.array(image_pil)
+    if img_array.ndim == 2:
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
+    elif img_array.shape[2] == 4:
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
+    else:
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
-    for row_y in range(scan_start, scan_cap):
-        row_max = int(img[row_y, scan_x1:scan_x2].max())
-        if row_max > _SCAN_BRIGHTNESS:
-            last_bright = row_y
-            dark_count  = 0
-        else:
-            dark_count += 1
-            if dark_count >= _SCAN_DARK_ROWS:
-                break
+    # GrabCut rect: current_y2 아래로 확장 (GPT가 중간에서 잘랐을 수 있으므로)
+    extended_y2 = min(image_height - 1, current_y2 + _GRABCUT_Y_EXPAND)
 
-    if last_bright < current_y2:
-        return current_y2  # 스캔 구간에 밝은 픽셀 없음 → 원본 유지
+    rect_x = max(0, x1)
+    rect_y = max(0, y1)
+    rect_w = min(img_bgr.shape[1] - rect_x - 1, x2 - x1)
+    rect_h = min(img_bgr.shape[0] - rect_y - 1, extended_y2 - y1)
 
-    return min(last_bright + 1, image_height)
+    if rect_w <= 5 or rect_h <= 5:
+        return current_y2
+
+    rect = (rect_x, rect_y, rect_w, rect_h)
+
+    mask      = np.zeros(img_bgr.shape[:2], np.uint8)
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+
+    try:
+        cv2.grabCut(img_bgr, mask, rect, bgd_model, fgd_model,
+                    iterCount=_GRABCUT_ITER, mode=cv2.GC_INIT_WITH_RECT)
+    except cv2.error:
+        return current_y2
+
+    # GC_FGD(확실한 전경) | GC_PR_FGD(추정 전경) 모두 전경으로 처리
+    fg_mask = np.where(
+        (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 1, 0
+    ).astype(np.uint8)
+
+    # x 방향 양쪽 10% 마진으로 외곽 노이즈 제외
+    x_margin = int(rect_w * _GRABCUT_X_MARGIN)
+    valid_x1 = rect_x + x_margin
+    valid_x2 = rect_x + rect_w - x_margin
+    if valid_x2 <= valid_x1:
+        valid_x1, valid_x2 = rect_x, rect_x + rect_w
+
+    roi_fg = fg_mask[:, valid_x1:valid_x2]
+    ys, _ = np.where(roi_fg == 1)
+
+    if len(ys) == 0:
+        return current_y2
+
+    corrected_y2 = int(np.max(ys))
+
+    # 안전장치: y1+10보다 작으면 이상치로 판단 → 원본 반환
+    if corrected_y2 < y1 + 10:
+        return current_y2
+
+    return corrected_y2
 
 
 # ── 역할별 알고리즘 ────────────────────────────────────────────────────────────
