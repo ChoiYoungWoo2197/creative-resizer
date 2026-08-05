@@ -32,7 +32,13 @@ from PIL import Image
 _PADDING = 20          # ROI 크롭 시 여유 픽셀 (에지 검출 정확도 향상)
 _CANNY_LOW = 30
 
-# ── scan_product_bottom 전용 상수 ─────────────────────────────────────────────
+# ── scan_product_bottom_1d 전용 상수 (1D 프로파일 스캔) ──────────────────────
+_SCAN_BRIGHTNESS = 30    # 배경(검은색)과 구분하는 밝기 임계값
+_SCAN_DARK_ROWS  = 5     # 연속 어두운 행이 이 수 이상이면 용기 끝으로 판단
+_SCAN_MAX_EXPAND = 300   # 최대 하향 탐색 픽셀
+_SCAN_CENTER_PCT = 0.60  # 제품 가로 중심부 비율 (에지 노이즈 제거용)
+
+# ── scan_product_bottom 전용 상수 (GrabCut — 현재 미사용) ──────────────────────
 _GRABCUT_Y_EXPAND = 150  # current_y2 아래로 GrabCut rect를 확장할 픽셀
 _GRABCUT_ITER     = 3    # GrabCut 반복 횟수 (속도/정밀도 균형)
 _GRABCUT_X_MARGIN = 0.1  # 외곽 노이즈 제외용 x 마진 비율 (양쪽 10%)
@@ -101,6 +107,51 @@ def refine(
         return x1, y1, x2, y2
 
     return abs_x1, abs_y1, abs_x2, abs_y2
+
+
+def scan_product_bottom_1d(
+    image_pil: Image.Image,
+    x1: int,
+    y1: int,
+    x2: int,
+    current_y2: int,
+    image_height: int,
+) -> int:
+    """1D 프로파일 스캔으로 실제 용기 바닥 y2를 반환.
+
+    current_y2 아래를 하향 스캔하여 연속된 어두운 행이 나타나는 직전을
+    실제 용기 바닥으로 확정한다. 배경이 어두운 이미지 전용.
+    """
+    img = np.array(image_pil.convert("RGB"))
+    H, W = img.shape[:2]
+
+    cx      = (x1 + x2) // 2
+    half_w  = max(1, int((x2 - x1) * _SCAN_CENTER_PCT / 2))
+    scan_x1 = max(0, cx - half_w)
+    scan_x2 = min(W, cx + half_w)
+
+    if scan_x1 >= scan_x2:
+        return current_y2
+
+    scan_start  = max(0, current_y2)
+    scan_cap    = min(H, current_y2 + _SCAN_MAX_EXPAND)
+    dark_count  = 0
+    last_bright = current_y2 - 1
+
+    for row_y in range(scan_start, scan_cap):
+        row_max = int(img[row_y, scan_x1:scan_x2].max())
+        if row_max > _SCAN_BRIGHTNESS:
+            last_bright = row_y
+            dark_count  = 0
+        else:
+            dark_count += 1
+            if dark_count >= _SCAN_DARK_ROWS:
+                break
+
+    if last_bright < current_y2:
+        return current_y2
+
+    return min(last_bright + 1, image_height)
 
 
 def scan_product_bottom(

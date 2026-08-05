@@ -20,7 +20,7 @@ from typing import Optional
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from clean_pipeline.analysis.bbox_refiner import refine as refine_bbox, scan_product_bottom
+from clean_pipeline.analysis.bbox_refiner import refine as refine_bbox, scan_product_bottom_1d
 from clean_pipeline.analysis.gpt4o_prompt import SYSTEM_PROMPT, USER_PROMPT
 from clean_pipeline.analysis.manifest_validator import validate as validate_manifest
 from clean_pipeline.analysis.models import BBox, SceneManifest, SceneObject
@@ -225,19 +225,13 @@ def analyze(
     product_obj = next((o for o in objects if o.role == "product"), None)
     if product_obj is not None:
         old_y2 = product_obj.bbox.y + product_obj.bbox.height
-        _TEXT_EXCLUDE_ROLES = frozenset({"title_group", "body_text_group", "cta_group", "badge"})
-        exclude_rects = [
-            (o.bbox.x, o.bbox.y, o.bbox.x + o.bbox.width, o.bbox.y + o.bbox.height)
-            for o in objects if o.role in _TEXT_EXCLUDE_ROLES
-        ]
-        new_y2 = scan_product_bottom(
+        new_y2 = scan_product_bottom_1d(
             _canonical_img,
             product_obj.bbox.x,
             product_obj.bbox.y,
             product_obj.bbox.x + product_obj.bbox.width,
             old_y2,
             image_height,
-            exclude_rects=exclude_rects or None,
         )
         if new_y2 > old_y2:
             px1 = product_obj.bbox.x
