@@ -62,6 +62,10 @@ _FEATHER_RADIUS = 1.5
 _TEXT_ROLES = frozenset({"title_group", "body_text_group", "cta_group", "badge", "logo"})
 
 
+# tight_crop padding (px) — alpha 경계에서 약간의 여유 확보
+_TIGHT_CROP_PADDING = 2
+
+
 # ── Public ────────────────────────────────────────────────────────────────────
 
 
@@ -91,6 +95,24 @@ def should_remove_background(crop_rgba: Image.Image) -> bool:
     ) / len(border_px)
 
     return dark_ratio >= _DARK_RATIO_THRESHOLD or achromatic_bright_ratio >= _DARK_RATIO_THRESHOLD
+
+
+def tight_crop(rgba: Image.Image) -> Image.Image:
+    """alpha > 0인 픽셀의 tight bbox로 크롭. 상하좌우 빈 여백 제거."""
+    arr = np.array(rgba)
+    alpha = arr[:, :, 3]
+    rows = np.any(alpha > 0, axis=1)
+    cols = np.any(alpha > 0, axis=0)
+    if not rows.any():
+        return rgba
+    h, w = arr.shape[:2]
+    r_min, r_max = np.where(rows)[0][[0, -1]]
+    c_min, c_max = np.where(cols)[0][[0, -1]]
+    r_min = max(0, r_min - _TIGHT_CROP_PADDING)
+    r_max = min(h - 1, r_max + _TIGHT_CROP_PADDING)
+    c_min = max(0, c_min - _TIGHT_CROP_PADDING)
+    c_max = min(w - 1, c_max + _TIGHT_CROP_PADDING)
+    return rgba.crop((c_min, r_min, c_max + 1, r_max + 1))
 
 
 def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:

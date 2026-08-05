@@ -23,7 +23,7 @@ from PIL import Image
 
 from clean_pipeline.analysis.models import SceneManifest
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
-from clean_pipeline.extraction.bg_removal import remove_background, should_remove_background
+from clean_pipeline.extraction.bg_removal import remove_background, should_remove_background, tight_crop
 from clean_pipeline.extraction.models import (
     ExtractedObject,
     ExtractionResult,
@@ -134,9 +134,10 @@ def extract(
         # onto any new (non-dark) scene plate.
         if should_remove_background(cropped_rgba):
             cropped_rgba = remove_background(cropped_rgba, obj.role)
+            cropped_rgba = tight_crop(cropped_rgba)
             logger.artifact_written(
                 STAGE.value, "(memory) bg_removal",
-                f"id={obj.id} role={obj.role} dark-bg detected → background removed",
+                f"id={obj.id} role={obj.role} dark-bg detected → background removed + tight-cropped",
             )
 
         # Save artefacts
