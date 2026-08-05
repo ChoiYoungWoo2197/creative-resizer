@@ -108,16 +108,44 @@ def remove_background(crop_rgba: Image.Image, role: str) -> Image.Image:
 
 
 def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
-    """Brightness + achromatic strategy for text / icon objects.
+    """Otsu 이진화 기반 TEXT 배경 제거.
 
-    Removes two kinds of background:
-      • dark pixels (brightness < _KEEP_BRIGHTNESS) — dark panel background
-      • achromatic-bright pixels (low saturation AND high brightness)
-        — white/grey panel background
-
-    Coloured text (high saturation) and dark-coloured text (low brightness)
-    that is NOT achromatic-bright are preserved.
+    Otsu가 히스토그램 분석으로 전경(글자)/배경 분리 최적 threshold를 자동 계산한다.
+    어두운 배경 위 밝은 글자, 밝은 배경 위 어두운 글자 모두 자동 처리.
+    cv2 없으면 brightness + saturation 방식으로 fallback.
     """
+    try:
+        import cv2 as _cv2
+    except ImportError:
+        return _remove_text_bg_fallback(crop_rgba)
+
+    arr = np.array(crop_rgba, dtype=np.uint8)
+    rgb = arr[:, :, :3]
+    alpha = arr[:, :, 3]
+
+    gray = _cv2.cvtColor(rgb, _cv2.COLOR_RGB2GRAY)
+
+    # Otsu: 이미지마다 최적 threshold 자동 계산
+    _, thresh = _cv2.threshold(gray, 0, 255, _cv2.THRESH_BINARY + _cv2.THRESH_OTSU)
+
+    # 테두리 2px 평균으로 배경이 밝은지/어두운지 판단
+    h, w = gray.shape
+    border_mask = np.ones((h, w), dtype=bool)
+    border_mask[2:-2, 2:-2] = False
+
+    if gray[border_mask].mean() > 128:
+        text_mask = (thresh == 0)    # 밝은 배경 → 어두운 글자 보존
+    else:
+        text_mask = (thresh == 255)  # 어두운 배경 → 밝은 글자 보존
+
+    new_alpha = np.where(text_mask & (alpha > 0), alpha, 0).astype(np.uint8)
+    result = arr.copy()
+    result[:, :, 3] = new_alpha
+    return _feather(Image.fromarray(result, "RGBA"))
+
+
+def _remove_text_bg_fallback(crop_rgba: Image.Image) -> Image.Image:
+    """cv2 없을 때: brightness + saturation 방식 fallback."""
     arr = np.array(crop_rgba, dtype=np.uint8)
     rgb = arr[:, :, :3].astype(np.float32)
     existing_alpha = arr[:, :, 3]
@@ -129,11 +157,9 @@ def _remove_text_bg(crop_rgba: Image.Image) -> Image.Image:
     is_achromatic_bright_bg = (sat_range < _ACHROMATIC_RANGE) & (brightness > _BRIGHT_BG)
 
     keep = ~(is_dark_bg | is_achromatic_bright_bg) & (existing_alpha > 0)
-
     new_alpha = np.where(keep, existing_alpha, 0).astype(np.uint8)
     result = arr.copy()
     result[:, :, 3] = new_alpha
-
     return _feather(Image.fromarray(result, "RGBA"))
 
 
