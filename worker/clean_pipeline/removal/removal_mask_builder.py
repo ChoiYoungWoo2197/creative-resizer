@@ -52,8 +52,8 @@ def build(
         metrics={"objectCount": len(extraction.objects)},
     )
 
-    # Candidates: all objects in ExtractionResult (movable+removable, no protected)
-    candidates = extraction.objects
+    # Candidates: all objects + decorative_masks (movable+removable, no protected)
+    candidates = extraction.objects + extraction.decorative_masks
     if not candidates:
         return _fail(
             logger, "NO_REMOVABLE_OBJECTS",

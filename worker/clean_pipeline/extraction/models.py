@@ -38,6 +38,7 @@ class ExtractionResult:
     job_id: str
     objects: list[ExtractedObject] = field(default_factory=list)
     protected: list[ProtectedMask] = field(default_factory=list)
+    decorative_masks: list[ExtractedObject] = field(default_factory=list)
     extraction_json_path: str = ""
 
     def to_dict(self) -> dict:
@@ -45,6 +46,7 @@ class ExtractionResult:
             "jobId": self.job_id,
             "objectCount": len(self.objects),
             "protectedCount": len(self.protected),
+            "decorativeMaskCount": len(self.decorative_masks),
             "objects": [
                 {
                     "id": o.id,

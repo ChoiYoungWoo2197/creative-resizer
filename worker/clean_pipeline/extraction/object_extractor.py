@@ -65,6 +65,7 @@ def extract(
     w, h = canonical.width, canonical.height
     extracted: list[ExtractedObject] = []
     protected: list[ProtectedMask] = []
+    decorative: list[ExtractedObject] = []
 
     for obj in manifest.objects:
         # ── protected_subject → full-size mask only ─────────────────────────
@@ -80,8 +81,28 @@ def extract(
         if not (obj.movable and obj.removable_from_scene):
             continue
 
-        # decorative_ad: removal mask(P4)에서 이미 제거됨 → P7 레이아웃에 다시 배치 불필요
+        # decorative_ad: RGBA 추출 없이 mask만 생성 → P4 removal_mask union에 포함
         if obj.role == "decorative_ad":
+            dec_mask = rasterize_polygon(obj.polygon, w, h)
+            dec_bbox = bounding_rect(dec_mask)
+            if dec_bbox is not None:
+                dx1, dy1, dx2, dy2 = dec_bbox
+                cropped_dec_mask = dec_mask.crop((dx1, dy1, dx2, dy2))
+                dec_mask_path = obj_dir / f"{obj.id}.mask.png"
+                cropped_dec_mask.save(str(dec_mask_path), format="PNG")
+                logger.artifact_written(STAGE.value, str(dec_mask_path),
+                                        f"decorative mask id={obj.id} bbox={dec_bbox}")
+                decorative.append(ExtractedObject(
+                    id=obj.id,
+                    role=obj.role,
+                    required=False,
+                    movable=True,
+                    removable_from_scene=True,
+                    source_bbox=SourceBBox(x=dx1, y=dy1, width=dx2 - dx1, height=dy2 - dy1),
+                    rgba_path="",
+                    mask_path=str(dec_mask_path),
+                    meta_path="",
+                ))
             continue
 
         mask = rasterize_polygon(obj.polygon, w, h)
@@ -160,6 +181,7 @@ def extract(
         job_id=job_id,
         objects=extracted,
         protected=protected,
+        decorative_masks=decorative,
     )
 
     extraction_json_path = stage_dir / "extraction.json"
@@ -169,8 +191,8 @@ def extract(
 
     logger.stage_pass(
         STAGE.value,
-        f"{len(extracted)} objects extracted, {len(protected)} protected masks",
-        metrics={"extractedCount": len(extracted), "protectedCount": len(protected)},
+        f"{len(extracted)} objects extracted, {len(protected)} protected, {len(decorative)} decorative masks",
+        metrics={"extractedCount": len(extracted), "protectedCount": len(protected), "decorativeCount": len(decorative)},
     )
 
     return StageResult(
