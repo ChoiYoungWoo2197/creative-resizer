@@ -58,9 +58,11 @@ _PRODUCT_BG_DIST = 40               # Euclidean distance in RGB space
 # Feather radius applied after alpha thresholding (reduces hard edges).
 _FEATHER_RADIUS = 1.5
 
-# Vertical line filter: connected component width threshold.
-# Components narrower than this (px) near the left border are removed.
+# Vertical line filter: connected component thresholds.
+# Components near the left border that are narrower than _MAX_WIDTH
+# AND taller than _MIN_HEIGHT_RATIO × crop height are removed.
 _VERTICAL_LINE_MAX_WIDTH = 20
+_VERTICAL_LINE_MIN_HEIGHT_RATIO = 0.25
 
 # Roles that use TEXT (brightness-threshold) strategy.
 _TEXT_ROLES = frozenset({"title_group", "body_text_group", "cta_group", "badge", "logo"})
@@ -260,7 +262,7 @@ def _filter_vertical_lines(binary_mask: np.ndarray, img_h: int, img_w: int, cv2)
         comp_w = stats[i, cv2.CC_STAT_WIDTH]
         comp_h = stats[i, cv2.CC_STAT_HEIGHT]
         is_near_left_border = (x <= 15)
-        is_tall = (comp_h > img_h * 0.5)
+        is_tall = (comp_h > img_h * _VERTICAL_LINE_MIN_HEIGHT_RATIO)
         is_thin = (comp_w <= _VERTICAL_LINE_MAX_WIDTH)
         if is_near_left_border and is_tall and is_thin:
             cleaned[labels == i] = 0
