@@ -168,10 +168,10 @@ def analyze(
         STAGE.value, str(raw_path),
         f"GPT-4o structured response ({len(parsed.detected_elements)} elements)",
     )
-    logger.artifact_written(
-        STAGE.value, "(reasoning)",
-        f"CoT: {parsed.reasoning_summary[:120]}",
-    )
+    for line in parsed.reasoning_summary.split("\n"):
+        line = line.strip()
+        if line:
+            logger.artifact_written(STAGE.value, "(reasoning)", line)
 
     # ── 정규화 좌표 → SceneManifest 변환 ─────────────────────────────────────
     objects: list[SceneObject] = []
