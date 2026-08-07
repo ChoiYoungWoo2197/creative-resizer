@@ -56,8 +56,21 @@ Categorize every detected element into one of the following roles:
 
 Return JSON only. No natural language, no markdown, no extra text.
 
+Write the `reasoning_summary` field using the following structured log format:
+
+[LOG - Phase 1: Text & Logo Scanning]
+- Detected text elements and logos: (list identified texts/logos and their spatial locations)
+
+[LOG - Phase 2: Human & Hand Isolation]
+- Identified human parts: (describe hands/fingers holding the object and where they are)
+
+[LOG - Phase 3: Pure Product Region Extraction]
+- Target Product: (describe how you excluded text and hands to define the tight product box)
+
+Then populate `detected_elements` based on the Phase analysis above.
+
 {
-  "reasoning_summary": "<Brief CoT summary: what text/brand found in Phase 1, what human parts found in Phase 2, how product was bounded in Phase 3>",
+  "reasoning_summary": "[LOG - Phase 1: ...] [LOG - Phase 2: ...] [LOG - Phase 3: ...]",
   "detected_elements": [
     {
       "role": "product",
