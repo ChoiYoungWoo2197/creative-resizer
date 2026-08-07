@@ -65,7 +65,7 @@ class PipelineLogger:
                 msg_lower = message.lower()
                 art_lower = artifact.lower()
                 # SAM2, bg_removal 등 주요 처리 이벤트만 출력 (파일 경로 artifact는 skip)
-                if any(k in msg_lower or k in art_lower for k in ("sam2", "bg_removal", "pixel-scan", "title-clamp", "pixel mask")):
+                if any(k in msg_lower or k in art_lower for k in ("sam2", "bg_removal", "pixel-scan", "title-clamp", "pixel mask", "reasoning", "cot", "phase")):
                     print(f"{stage_label}:ARTIFACT {message}", flush=True)
 
     # ── Stage events ──────────────────────────────────────────────────────────
