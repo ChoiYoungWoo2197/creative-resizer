@@ -188,6 +188,14 @@ def analyze(
 
         ymin_n, xmin_n, ymax_n, xmax_n = elem.bbox_2d
 
+        # Role Hierarchy 할당 로그 — GPT role → 내부 role 매핑 + 정규화 좌표
+        text_hint = f' text="{elem.text_content[:20]}"' if elem.text_content else ""
+        logger.artifact_written(
+            STAGE.value, "(role-hierarchy)",
+            f"[Role] obj_{i}: {elem.role} → {role}{text_hint} "
+            f"bbox_norm=({ymin_n},{xmin_n},{ymax_n},{xmax_n})",
+        )
+
         # 정규화 0~1000 → 실제 픽셀 좌표
         x1 = int(xmin_n / 1000 * image_width)
         y1 = int(ymin_n / 1000 * image_height)
