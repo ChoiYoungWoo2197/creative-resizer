@@ -69,6 +69,7 @@ services:
       # D: 항상 TYPE D (contain-scale + AI border outpaint)
       # CLAUDE: TYPE B 파이프라인 + Claude P2 분석기
       - CLEAN_PIPELINE_TYPE=${CLEAN_PIPELINE_TYPE:-auto}
+      - FAL_KEY=${FAL_KEY}
     volumes:
       - /opt/creative-resizer/storage:/app/storage
     restart: unless-stopped
