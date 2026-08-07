@@ -105,7 +105,33 @@ def extract(
                 ))
             continue
 
-        mask = rasterize_polygon(obj.polygon, w, h)
+        # product role은 SAM2 픽셀 마스크 우선 (FAL_KEY 있는 경우)
+        if obj.role == "product":
+            from clean_pipeline.extraction.fal_sam2_client import SAM2Error, extract_sam2_mask
+            try:
+                sam2_mask = extract_sam2_mask(
+                    canonical.convert("RGB"),
+                    obj.bbox.x,
+                    obj.bbox.y,
+                    obj.bbox.width,
+                    obj.bbox.height,
+                )
+                if sam2_mask is not None:
+                    mask = sam2_mask
+                    logger.artifact_written(
+                        STAGE.value,
+                        "(memory) sam2_mask",
+                        f"[SAM2] pixel mask id={obj.id} "
+                        f"bbox=({obj.bbox.x},{obj.bbox.y},{obj.bbox.width}x{obj.bbox.height})",
+                    )
+                else:
+                    # FAL_KEY 미설정 — 기존 polygon 방식으로 처리
+                    mask = rasterize_polygon(obj.polygon, w, h)
+            except SAM2Error as exc:
+                return _fail(logger, "SAM2_FAILED", str(exc))
+        else:
+            mask = rasterize_polygon(obj.polygon, w, h)
+
         bbox = bounding_rect(mask)
 
         if bbox is None:
