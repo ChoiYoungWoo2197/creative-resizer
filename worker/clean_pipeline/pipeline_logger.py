@@ -51,6 +51,23 @@ class PipelineLogger:
         record.update(extra)
         print(json.dumps(record, ensure_ascii=False), file=self._fh, flush=True)
 
+        # 파일 모드일 때 docker logs에서 읽기 쉽게 stdout에도 출력
+        if self._owns_fh:
+            stage_label = f"[{stage}]" if stage else "[JOB]"
+            if event == "stage_start":
+                print(f"{stage_label}:START {message}", flush=True)
+            elif event == "stage_pass":
+                print(f"{stage_label}:PASS {message}", flush=True)
+            elif event == "stage_fail":
+                print(f"{stage_label}:FAIL [{failure_code}] {message}", flush=True)
+            elif event == "artifact_written":
+                artifact = extra.get("artifact", "")
+                msg_lower = message.lower()
+                art_lower = artifact.lower()
+                # SAM2, bg_removal 등 주요 처리 이벤트만 출력 (파일 경로 artifact는 skip)
+                if any(k in msg_lower or k in art_lower for k in ("sam2", "bg_removal", "pixel-scan", "title-clamp", "pixel mask")):
+                    print(f"{stage_label}:ARTIFACT {message}", flush=True)
+
     # ── Stage events ──────────────────────────────────────────────────────────
 
     def stage_start(
