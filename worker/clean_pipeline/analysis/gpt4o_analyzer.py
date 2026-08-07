@@ -32,12 +32,15 @@ _MODEL = "gpt-4.1"
 _MAX_SIDE = 1600
 _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
-# GPT-4o category → (내부 role, required)
+# GPT role → (내부 role, required)
 _ROLE_MAP: dict[str, tuple[str, bool]] = {
-    "main_product":      ("product",          True),
-    "brand_logo":        ("logo",             False),
-    "advertising_text":  ("title_group",      True),
+    "product":           ("product",          True),
+    "sub_product":       ("product",          False),
+    "title_group":       ("title_group",      True),
+    "logo":              ("logo",             False),
+    "badge":             ("logo",             False),
     "person_zone":       ("protected_subject", False),
+    "protected_subject": ("protected_subject", False),
     "decorative_panel":  ("decorative_ad",    False),
 }
 
@@ -45,19 +48,22 @@ _ROLE_MAP: dict[str, tuple[str, bool]] = {
 # ── Pydantic 스키마 (Structured Outputs — strict=true 자동 적용) ──────────────
 
 class DetectedElement(BaseModel):
-    category: str = Field(
-        description="main_product, brand_logo, advertising_text 중 하나",
+    role: str = Field(
+        description="product, sub_product, title_group, logo, badge, person_zone 중 하나",
     )
-    box_2d: list[int] = Field(
+    bbox_2d: list[int] = Field(
         description="[ymin, xmin, ymax, xmax] 형태의 0~1000 정규화 좌표 4개 정수",
     )
     text_content: Optional[str] = Field(
         default=None,
-        description="category가 advertising_text일 경우 실제 텍스트 내용",
+        description="role이 title_group/badge일 경우 실제 텍스트 내용",
     )
 
 
 class AdLayoutResponse(BaseModel):
+    reasoning_summary: str = Field(
+        description="Phase 1~3 CoT 분석 요약",
+    )
     detected_elements: list[DetectedElement]
 
 
@@ -143,10 +149,11 @@ def analyze(
             {
                 "model": _MODEL,
                 "type": "TYPE_B_structured_outputs",
+                "reasoning_summary": parsed.reasoning_summary,
                 "detected_elements": [
                     {
-                        "category": e.category,
-                        "box_2d": e.box_2d,
+                        "role": e.role,
+                        "bbox_2d": e.bbox_2d,
                         "text_content": e.text_content,
                     }
                     for e in parsed.detected_elements
@@ -161,21 +168,25 @@ def analyze(
         STAGE.value, str(raw_path),
         f"GPT-4o structured response ({len(parsed.detected_elements)} elements)",
     )
+    logger.artifact_written(
+        STAGE.value, "(reasoning)",
+        f"CoT: {parsed.reasoning_summary[:120]}",
+    )
 
     # ── 정규화 좌표 → SceneManifest 변환 ─────────────────────────────────────
     objects: list[SceneObject] = []
 
     for i, elem in enumerate(parsed.detected_elements):
-        role, required = _ROLE_MAP.get(elem.category, ("decorative_ad", False))
+        role, required = _ROLE_MAP.get(elem.role, ("decorative_ad", False))
 
-        if len(elem.box_2d) != 4:
+        if len(elem.bbox_2d) != 4:
             logger.artifact_written(
                 STAGE.value, "(skip)",
-                f"obj_{i}: box_2d length={len(elem.box_2d)} (expected 4)",
+                f"obj_{i}: bbox_2d length={len(elem.bbox_2d)} (expected 4)",
             )
             continue
 
-        ymin_n, xmin_n, ymax_n, xmax_n = elem.box_2d
+        ymin_n, xmin_n, ymax_n, xmax_n = elem.bbox_2d
 
         # 정규화 0~1000 → 실제 픽셀 좌표
         x1 = int(xmin_n / 1000 * image_width)
@@ -216,7 +227,7 @@ def analyze(
             group_id=None,
             z_index=i,
             text_content=elem.text_content or "",
-            description=f"{elem.category} detected by {_MODEL}",
+            description=f"{elem.role} detected by {_MODEL}",
         ))
 
     # 픽셀 스캔 후처리: product y2를 실제 용기 바닥까지 확장.

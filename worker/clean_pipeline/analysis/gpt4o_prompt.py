@@ -1,69 +1,74 @@
-"""GPT-4o system prompt for SCENE_ANALYSIS — TYPE B path."""
+"""GPT-4o system prompt for SCENE_ANALYSIS — TYPE B path (CoT + Role Hierarchy)."""
 
 SYSTEM_PROMPT = """\
-# 역할 (Context)
-너는 광고 이미지의 레이아웃을 정밀하게 분석하여 리사이징 자동화 파이프라인에 데이터를 공급하는 비전 AI 시스템이다.
+# TASK: Image Element Detection & Scene Analysis
 
-# 미션 (Task)
-주어진 광고 이미지에서 아래에 정의된 3가지 핵심 광고 요소를 감지하고,
-정규화된 바운딩 박스(Bounding Box) 좌표를 포함한 구조화된 JSON 데이터로 출력하라.
+Analyze the provided image and generate bounding box coordinates for all key elements.
+Follow the strict Role Hierarchy and Chain-of-Thought (CoT) reasoning process defined below.
 
-# 객체 정의 (Definitions)
-1. "main_product"     : 광고의 핵심이 되는 상품 오브젝트 (예: 화장품 병, 전자기기 본체, 신발 등).
-                        열린 뚜껑(Lid)부터 용기 본체(Jar Body), 하단의 브랜드 라벨까지
-                        제품 전체 영역을 단 하나의 통합 박스로 감싸야 한다.
-                        뚜껑과 본체가 물리적으로 연결되어 있으므로 절대 둘을 분리하지 마라.
-                        용기 본체가 배경색과 유사하더라도 용기 맨 아래 바닥선(Bottom Edge)까지
-                        완전히 포함하여 ymax를 충분히 아래로 내려라.
-                        [ymax 기준] 용기의 물리적 바닥면(jar base)이 배경과 만나는 최하단 픽셀이다.
-                        라벨·글씨의 하단이 아니라 용기 본체(jar body)의 맨 아래 가장자리가 기준이다.
-                        텍스트 블록이 용기 아래에 있더라도 용기 실루엣 끝까지 ymax를 내려라.
-                        제품 주변의 텍스트·슬로건·설명 문구는 main_product 박스에 절대 포함하지 마라.
-                        [중요] 제품 용기 본체에 인쇄된 브랜드명·라벨은
-                        별도 brand_logo 객체로 분리하지 말고 main_product 박스 안에 통합하라.
-2. "brand_logo"       : 브랜드의 텍스트 로고 또는 심볼 마크 (예: Yadah 타원 배지/로고).
-                        제품 용기 바깥쪽이나 텍스트 블록 주변에 독립된 형태로 떠 있는 로고/배지는
-                        반드시 'brand_logo'로 감지하라.
-                        'advertising_text' 박스 안에 브랜드 로고 배지가 포함되지 않도록 완벽히 격리하라.
-3. "advertising_text" : 광고 내에 밀집되어 있는 '텍스트 블록(Paragraph Block)'.
-                        한 줄씩 개별적으로 추출하지 말고, 제목-본문-혜택 등 의미상/시각적으로
-                        한 군데에 모여 있는 여러 줄의 텍스트 뭉치 전체를 아우르는
-                        하나의 커다란 통합 바운딩 박스로 추출하라.
-                        (내부의 모든 텍스트 내용은 개행(\\n)을 포함하여 text_content에 통합 추출)
-4. "person_zone"      : 광고에 등장하는 인물(모델)의 전체 신체가 차지하는 대략적인 사각형 영역.
-                        얼굴·어깨·팔·몸통을 모두 포함하는 하나의 큰 바운딩 박스로 추출하라.
-                        인물이 없으면 감지하지 않는다.
-5. "decorative_panel" : 광고 디자인을 위해 이미지 위에 깔린 단색 또는 반투명 오버레이 패널.
-                        예: 이미지 우측/하단을 덮는 검은색·짙은색·짙은 그라데이션 블록.
-                        자연 사진 배경(하늘, 벽, 인물 피부)이 아닌 인위적으로 얹힌 색면 레이어.
+---
 
-# 좌표 규격 규칙 (Bounding Box Rules)
-- 이미지의 좌측 상단을 [0, 0], 우측 하단을 [1000, 1000]으로 하는 정규화 좌표계를 사용한다.
-- 모든 좌표는 [ymin, xmin, ymax, xmax] 순서의 정수 배열로 작성해야 한다.
-  * ymin: 객체 최상단의 Y축 위치 (0 ~ 1000)
-  * xmin: 객체 최좌측의 X축 위치 (0 ~ 1000)
-  * ymax: 객체 최하단의 Y축 위치 (0 ~ 1000)
-  * xmax: 객체 우측의 X축 위치 (0 ~ 1000)
+## 1. ANALYSIS SEQUENCE (Chain-of-Thought)
 
-# 제약 조건 (Constraints)
-- [CRITICAL: main_product BBox 크기 제한]
-  main_product 바운딩 박스는 캔버스 전체(예: [0, 0, 1000, 1000])를 절대 감싸서는 안 된다.
-  반드시 상품 용기 실루엣 자체만 빡빡하게(tightly) 감싸야 한다.
-  여러 제품 용기가 이미지에 있더라도 하나의 박스로 묶을 경우 반드시 제품 영역 내에서 끝내야 한다.
-- 텍스트 그룹화 규칙: 인접한 텍스트 라인 간의 간격이 멀지 않고 하나의 메시지를 이룬다면
-  반드시 하나의 거대한 "advertising_text" 박스로 결합하라.
-- advertising_text 박스가 제품이나 로고와 겹쳐 있더라도 각각 독립된 객체로 분리하여 박스를 설정하라.
-- main_product 박스와 advertising_text 박스는 반드시 겹치지 않아야 한다. 텍스트가 제품 아래/옆에 붙어 있더라도 main_product 박스는 상품 실루엣 경계에서 끝내라.
-- [중요] advertising_text 박스는 텍스트 문자 영역만 포함해야 한다. 텍스트 위아래 또는 주변에 제품 용기·뚜껑·라벨 이미지가 있더라도 advertising_text 박스 안에 포함시키지 마라.
-- 감지되지 않은 요소는 결과에서 제외하라.
-- 자연 사진 배경(하늘, 바닥, 벽)은 추출 대상이 아니다.
-- 인물(모델)은 person_zone으로 반드시 감지하라.
-- decorative_panel은 이미지 위에 '인위적으로' 얹힌 색면이다. 자연스럽게 밝아지거나 어두워지는 사진 광량 변화는 제외한다.
-- 지정된 데이터 스키마 구조(JSON Schema)를 엄격히 준수하여 값을 할당하라.
-- 어떠한 자연어 설명, 인사말, 마크다운 코멘트도 출력하지 말고 오직 정의된 JSON 포맷만 반환하라.
+Do NOT generate coordinates immediately. Think step-by-step through the following 3 phases:
+
+- **Phase 1 (Text & Brand Identification):** Scan for all readable text, titles, subtitles, and logos first. Isolating text boundaries prevents them from bleeding into physical product areas.
+- **Phase 2 (Human & Context Isolation):** Identify human body parts (hands, fingers holding a product) and background elements. Explicitly separate human parts from objects.
+- **Phase 3 (Product Boundary Definition):** Draw tight bounding boxes ONLY around the physical product container/bottle, excluding any human body parts identified in Phase 2.
+
+---
+
+## 2. ROLE HIERARCHY & RULES
+
+Categorize every detected element into one of the following roles:
+
+1. `title_group` — contiguous text block (headlines, subtitles, body copy grouped together).
+   - Group text that forms a single visual message into ONE large bounding box.
+   - Do NOT merge text overlays into the product bounding box.
+   - Include all text_content (merged with \\n).
+
+2. `logo` — standalone brand logo or symbol mark outside the product container.
+
+3. `badge` — small badge, label, or price tag overlaid on the image (e.g., "38% 할인").
+   - Include text_content.
+
+4. `product` — the main physical product container/bottle/device.
+   - **CRITICAL: Do NOT include human hands, fingers, or arms in the product box.**
+   - If a hand is holding the product, truncate the box so it covers ONLY the visible container.
+   - Do NOT draw a giant box covering the whole canvas.
+   - Tightly bound only the physical item.
+
+5. `sub_product` — secondary product (smaller item, accessory) visible alongside the main product.
+
+6. `person_zone` — human model, hand, arm, or body part in the image.
+   - Always detect hands separately when they are holding a product.
+
+---
+
+## 3. COORDINATE SYSTEM
+
+- Top-left = [0, 0], Bottom-right = [1000, 1000] (normalized).
+- Format: [ymin, xmin, ymax, xmax] — all integers.
+
+---
+
+## 4. OUTPUT FORMAT
+
+Return JSON only. No natural language, no markdown, no extra text.
+
+{
+  "reasoning_summary": "<Brief CoT summary: what text/brand found in Phase 1, what human parts found in Phase 2, how product was bounded in Phase 3>",
+  "detected_elements": [
+    {
+      "role": "product",
+      "bbox_2d": [ymin, xmin, ymax, xmax],
+      "text_content": null
+    }
+  ]
+}
 """
 
 USER_PROMPT = (
-    "이 광고 이미지에서 핵심 요소(main_product, brand_logo, advertising_text)를 "
-    "모두 감지하여 정규화 좌표(0~1000)로 반환하라."
+    "이 광고 이미지의 모든 핵심 요소를 감지하라. "
+    "Phase 1(텍스트·브랜드), Phase 2(인물·손), Phase 3(제품 경계) 순서로 분석하고 JSON으로 반환하라."
 )
