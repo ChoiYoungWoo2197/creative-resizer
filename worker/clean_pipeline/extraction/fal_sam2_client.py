@@ -1,11 +1,11 @@
-"""SAM2 cloud segmentation via fal.ai — product bbox crop 후 픽셀 마스크 생성.
+"""SAM2 cloud segmentation via fal.ai — product 픽셀 마스크 생성.
 
-전략 B: 전체 이미지가 아닌 product bbox 영역만 crop하여 SAM2에 전달.
-crop 이미지 기준 마스크를 원본 캔버스 크기 좌표에 복원하여 L mode PIL Image 반환.
+전체 이미지를 SAM2에 전달하고 product bbox를 box prompt로 지정.
+SAM2가 이미지 전체 맥락에서 bbox 안의 주요 객체(제품)를 픽셀 단위로 세그먼트.
 
 엔드포인트: fal-ai/sam2/image
-입력: crop 이미지 data URI + 전체 box 프롬프트 [0, 0, crop_w, crop_h]
-출력: RGBA PNG → alpha 채널 → L mode mask → 원본 캔버스에 bbox 위치 복원
+입력: 전체 이미지 data URI + product bbox box 프롬프트 [x1, y1, x2, y2]
+출력: RGBA PNG alpha 채널 → L mode mask (원본 캔버스 크기)
 """
 from __future__ import annotations
 
@@ -47,31 +47,29 @@ def extract_sam2_mask(
 
     img_w, img_h = image.size
 
-    # bbox가 캔버스 전체를 덮으면 SAM2가 전경/배경을 구분할 수 없음 → P2 bbox 문제 명확히 알림
+    # bbox가 캔버스 전체를 덮으면 SAM2 box prompt 의미 없음 → P2 bbox 문제 명확히 노출
     if bbox_w >= img_w * _CANVAS_COVERAGE_THRESHOLD and bbox_h >= img_h * _CANVAS_COVERAGE_THRESHOLD:
         raise SAM2Error(
             f"[SAM2] product bbox ({bbox_w}x{bbox_h}) covers entire canvas "
             f"({img_w}x{img_h}) — P2 GPT bbox quality problem"
         )
 
-    # 1. bbox 영역 crop (경계 clamp 포함)
-    crop_box = (
-        max(0, bbox_x),
-        max(0, bbox_y),
-        min(img_w, bbox_x + bbox_w),
-        min(img_h, bbox_y + bbox_h),
-    )
-    cropped = image.crop(crop_box).convert("RGB")
-    crop_w, crop_h = cropped.size
+    # bbox clamp
+    x1 = max(0, bbox_x)
+    y1 = max(0, bbox_y)
+    x2 = min(img_w, bbox_x + bbox_w)
+    y2 = min(img_h, bbox_y + bbox_h)
 
-    # 2. SAM2 호출 — crop 이미지 전체를 box 프롬프트로 전달
+    # 1. 전체 이미지를 SAM2에 전달 + product bbox를 box prompt로 지정
+    #    crop 후 전체 box를 주면 SAM2가 이미지 전체를 마스크로 반환하므로,
+    #    전체 이미지에서 bbox 영역을 명시해야 제품만 세그먼트된다.
     try:
         import fal_client
         result = fal_client.subscribe(
             _ENDPOINT,
             arguments={
-                "image_url": _to_data_uri(cropped),
-                "prompts": [{"type": "box", "box": [0, 0, crop_w, crop_h]}],
+                "image_url": _to_data_uri(image.convert("RGB")),
+                "prompts": [{"type": "box", "box": [x1, y1, x2, y2]}],
             },
         )
     except SAM2Error:
@@ -79,7 +77,7 @@ def extract_sam2_mask(
     except Exception as exc:
         raise SAM2Error(f"[SAM2] fal.ai call failed: {exc}") from exc
 
-    # 3. RGBA PNG URL → alpha 채널(L mode) 추출
+    # 2. RGBA PNG URL → alpha 채널(L mode) = 픽셀 마스크
     try:
         img_info = result.get("image") or {}
         url = img_info.get("url", "")
@@ -88,17 +86,14 @@ def extract_sam2_mask(
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         rgba = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-        _, _, _, crop_alpha = rgba.split()
-        # SAM2 응답 크기가 crop 크기와 다를 수 있으므로 리사이즈
-        crop_mask = crop_alpha.resize((crop_w, crop_h), Image.LANCZOS)
+        _, _, _, full_alpha = rgba.split()
+        # SAM2 응답 크기가 원본과 다를 수 있으므로 리사이즈
+        full_mask = full_alpha.resize((img_w, img_h), Image.LANCZOS)
     except SAM2Error:
         raise
     except Exception as exc:
         raise SAM2Error(f"[SAM2] Mask download failed: {exc}") from exc
 
-    # 4. 원본 캔버스 크기 검은 배경에 bbox 위치(crop_box 좌상단)에 crop 마스크 붙이기
-    full_mask = Image.new("L", (img_w, img_h), 0)
-    full_mask.paste(crop_mask, (crop_box[0], crop_box[1]))
     return full_mask
 
 
