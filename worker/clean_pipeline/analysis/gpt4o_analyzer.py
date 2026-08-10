@@ -271,6 +271,8 @@ def analyze(
     if not objects:
         return _fail(logger, "NO_OBJECTS_DETECTED", "GPT-4o detected no objects in the image")
 
+    objects = _filter_product_overlapping_titles(objects, logger)
+
     manifest = SceneManifest(
         job_id=job_id,
         source_sha256=source_sha256,
@@ -341,3 +343,38 @@ def _fail(
         status=PipelineStatus.FAIL,
         reasons=[message],
     ), None
+
+
+def _filter_product_overlapping_titles(
+    objects: list[SceneObject],
+    logger: PipelineLogger,
+) -> list[SceneObject]:
+    """title_group/logo가 product bbox 안에 60% 이상 포함되면 제거 (guardrail)."""
+    product_objs = [o for o in objects if o.role == "product"]
+    if not product_objs:
+        return objects
+    filtered = []
+    for obj in objects:
+        if obj.role in {"title_group", "logo"}:
+            removed = False
+            for prod in product_objs:
+                ix1 = max(obj.bbox.x, prod.bbox.x)
+                iy1 = max(obj.bbox.y, prod.bbox.y)
+                ix2 = min(obj.bbox.x + obj.bbox.width, prod.bbox.x + prod.bbox.width)
+                iy2 = min(obj.bbox.y + obj.bbox.height, prod.bbox.y + prod.bbox.height)
+                if ix2 > ix1 and iy2 > iy1:
+                    inter = (ix2 - ix1) * (iy2 - iy1)
+                    obj_area = obj.bbox.width * obj.bbox.height
+                    if obj_area > 0 and inter / obj_area > 0.6:
+                        logger.artifact_written(
+                            STAGE.value, "(guardrail)",
+                            f"[P2 Guardrail] removed {obj.role} {obj.id} — "
+                            f"{inter / obj_area:.0%} inside product bbox",
+                        )
+                        removed = True
+                        break
+            if not removed:
+                filtered.append(obj)
+        else:
+            filtered.append(obj)
+    return filtered

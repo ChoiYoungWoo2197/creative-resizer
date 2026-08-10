@@ -26,6 +26,8 @@ Categorize every detected element into one of the following roles:
    - Group text that forms a single visual message into ONE large bounding box.
    - Do NOT merge text overlays into the product bounding box.
    - Include all text_content (merged with \\n).
+   - **CRITICAL EXCLUSION: Do NOT assign `title_group` to text, logos, or physical parts (caps, lids, pumps, nozzles, labels) that are printed on or physically attached to the product container. Those belong to `product`.**
+   - Only detect marketing copy floating on the background or overlaid across the scene — NOT on the product surface itself.
 
 2. `logo` — standalone brand logo or symbol mark outside the product container.
 
