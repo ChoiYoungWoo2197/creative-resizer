@@ -256,12 +256,12 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             from clean_pipeline.extraction.object_extractor import extract
 
         sr, extraction = extract(
-            canonical_path=canonical.canonical_path,
+            canonical_path=clean_canonical_path,
             manifest=manifest,
             output_dir=request.output_directory,
             job_id=job_id,
             logger=logger,
-            clean_canonical_path=clean_canonical_path,
+            original_canonical_path=canonical.canonical_path,
         )
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:
