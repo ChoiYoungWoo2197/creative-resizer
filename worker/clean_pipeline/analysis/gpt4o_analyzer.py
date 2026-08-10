@@ -33,12 +33,13 @@ _MAX_SIDE = 1600
 _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
 # GPT role → (내부 role, required)
+# logo/badge는 title_group에 통합 — 별도 감지 없음
 _ROLE_MAP: dict[str, tuple[str, bool]] = {
     "product":           ("product",          True),
     "sub_product":       ("product",          False),
     "title_group":       ("title_group",      True),
-    "logo":              ("logo",             False),
-    "badge":             ("logo",             False),
+    "logo":              ("title_group",      False),  # brand_logo → title_group 흡수
+    "badge":             ("title_group",      False),
     "person_zone":       ("protected_subject", False),
     "protected_subject": ("protected_subject", False),
     "decorative_panel":  ("decorative_ad",    False),
@@ -59,7 +60,7 @@ _ROLE_Z_INDEX: dict[str, int] = {
 
 class DetectedElement(BaseModel):
     role: str = Field(
-        description="product, sub_product, title_group, logo, badge, person_zone 중 하나",
+        description="product, sub_product, title_group, badge, person_zone 중 하나",
     )
     bbox_2d: list[int] = Field(
         description="[ymin, xmin, ymax, xmax] 형태의 0~1000 정규화 좌표 4개 정수",

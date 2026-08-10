@@ -28,21 +28,20 @@ Categorize every detected element into one of the following roles:
    - Include all text_content (merged with \\n).
    - **CRITICAL EXCLUSION: Do NOT assign `title_group` to text, logos, or physical parts (caps, lids, pumps, nozzles, labels) that are printed on or physically attached to the product container. Those belong to `product`.**
    - Only detect marketing copy floating on the background or overlaid across the scene — NOT on the product surface itself.
+   - **Brand logos and symbol marks must be included inside the `title_group` box if they appear alongside marketing text. Do NOT output a separate `logo` element.**
 
-2. `logo` — standalone brand logo or symbol mark outside the product container.
-
-3. `badge` — small badge, label, or price tag overlaid on the image (e.g., "38% 할인").
+2. `badge` — small badge, label, or price tag overlaid on the image (e.g., "38% 할인").
    - Include text_content.
 
-4. `product` — the main physical product container/bottle/device.
+3. `product` — the main physical product container/bottle/device.
    - **CRITICAL: Do NOT include human hands, fingers, or arms in the product box.**
    - If a hand is holding the product, truncate the box so it covers ONLY the visible container.
    - Do NOT draw a giant box covering the whole canvas.
    - Tightly bound only the physical item.
 
-5. `sub_product` — secondary product (smaller item, accessory) visible alongside the main product.
+4. `sub_product` — secondary product (smaller item, accessory) visible alongside the main product.
 
-6. `person_zone` — human model, hand, arm, or body part in the image.
+5. `person_zone` — human model, hand, arm, or body part in the image.
    - Always detect hands separately when they are holding a product.
 
 ---
