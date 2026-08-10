@@ -81,8 +81,9 @@ def extract(
         if not (obj.movable and obj.removable_from_scene):
             continue
 
-        # decorative_ad: RGBA 추출 없이 mask만 생성 → P4 removal_mask union에 포함
-        if obj.role == "decorative_ad":
+        # decorative_ad / title_group: RGBA 추출 없이 mask만 생성 → P4 removal_mask union에 포함
+        # title_group은 P2.5 lama로 이미 제거됨 — P7/P8 재배치하면 lama 잔재가 scene 위에 합성됨
+        if obj.role in {"decorative_ad", "title_group"}:
             dec_mask = rasterize_polygon(obj.polygon, w, h)
             dec_bbox = bounding_rect(dec_mask)
             if dec_bbox is not None:
