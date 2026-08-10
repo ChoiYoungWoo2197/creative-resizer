@@ -44,6 +44,16 @@ _ROLE_MAP: dict[str, tuple[str, bool]] = {
     "decorative_panel":  ("decorative_ad",    False),
 }
 
+# role별 z_index — 낮을수록 먼저 합성(배경 쪽), 높을수록 나중(전경 쪽)
+# title_group/logo 텍스트 레이어는 product 위에 표시되어야 함
+_ROLE_Z_INDEX: dict[str, int] = {
+    "product":           0,
+    "protected_subject": 0,
+    "decorative_ad":     0,
+    "logo":              5,
+    "title_group":      10,
+}
+
 
 # ── Pydantic 스키마 (Structured Outputs — strict=true 자동 적용) ──────────────
 
@@ -228,7 +238,7 @@ def analyze(
             polygon=polygon,
             confidence=0.9,
             group_id=None,
-            z_index=i,
+            z_index=_ROLE_Z_INDEX.get(role, i),
             text_content=elem.text_content or "",
             description=f"{elem.role} detected by {_MODEL}",
         ))
