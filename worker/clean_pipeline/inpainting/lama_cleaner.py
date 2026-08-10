@@ -73,8 +73,7 @@ def clean(
         bx1 = max(0, obj.bbox.x - _MASK_PADDING)
         by1 = max(0, obj.bbox.y - _MASK_PADDING)
         bx2 = min(W, obj.bbox.x + obj.bbox.width + _MASK_PADDING)
-        # title_group은 bbox 하단을 이미지 끝까지 확장
-        by2 = H if obj.role == "title_group" else min(H, obj.bbox.y + obj.bbox.height + _MASK_PADDING)
+        by2 = min(H, obj.bbox.y + obj.bbox.height + _MASK_PADDING)
         draw.rectangle([bx1, by1, bx2, by2], fill=(255, 255, 255))
         logger.artifact_written(
             STAGE.value, "(mask)",

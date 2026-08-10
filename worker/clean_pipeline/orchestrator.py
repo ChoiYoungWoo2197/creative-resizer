@@ -283,7 +283,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         from clean_pipeline.scene.scene_plate_generator import generate as generate_scene
 
         sr, scene_plate = generate_scene(
-            canonical_path=canonical.canonical_path,
+            canonical_path=clean_canonical_path,
             removal_result=removal,
             target_width=spec.width,
             target_height=spec.height,
