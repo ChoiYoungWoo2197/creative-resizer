@@ -202,20 +202,15 @@ def analyze(
         x2 = int(xmax_n / 1000 * image_width)
         y2 = int(ymax_n / 1000 * image_height)
 
-        # title_group: GPT-4o가 넓은 텍스트의 좌측 경계를 과소평가하는 경향 보정.
-        # Otsu ROI가 실제 텍스트보다 오른쪽에서 시작하면 좌측 글자가 crop 밖으로 유실됨.
-        # 8% 확장(1200px 기준 ≈ 96px)으로 ROI가 실제 텍스트 시작점을 포함하도록 보장.
-        if role == "title_group":
-            x1 = max(0, x1 - int(0.08 * image_width))
-
         # 이미지 경계 내로 clamp
         x1 = max(0, min(x1, image_width - 1))
         y1 = max(0, min(y1, image_height - 1))
         x2 = max(x1 + 1, min(x2, image_width))
         y2 = max(y1 + 1, min(y2, image_height))
 
-        # 픽셀 단위 후처리: Canny/Otsu로 좌표 정밀화 (cv2 없으면 원본 유지)
-        x1, y1, x2, y2 = refine_bbox(_canonical_img, x1, y1, x2, y2, role)
+        # product만 Canny로 정밀화 (SAM2 crop bbox 품질). title_group/logo는 lama 마스크로 처리.
+        if role == "product":
+            x1, y1, x2, y2 = refine_bbox(_canonical_img, x1, y1, x2, y2, role)
         w, h = x2 - x1, y2 - y1
 
         # bbox → 직사각형 polygon (4점)
@@ -262,27 +257,6 @@ def analyze(
                 STAGE.value, "(pixel-scan)",
                 f"product y2 extended {old_y2} → {new_y2} (+{new_y2 - old_y2}px)",
             )
-
-    # title_group y1 clamp: GPT가 title_group bbox 상단을 product 영역까지 크게 잡는 경우
-    # Otsu 정밀화도 product 라벨 텍스트를 감지해 y1을 더 올릴 수 있으므로
-    # product y2 이후로 title_group y1을 강제 조정한다.
-    if product_obj is not None:
-        product_y2 = product_obj.bbox.y + product_obj.bbox.height
-        for obj in objects:
-            if obj.role == "title_group" and obj.bbox.y < product_y2:
-                old_y1 = obj.bbox.y
-                new_h = (obj.bbox.y + obj.bbox.height) - product_y2
-                if new_h > 0:
-                    obj.bbox.y = product_y2
-                    obj.bbox.height = new_h
-                    tx1 = obj.bbox.x
-                    tx2 = tx1 + obj.bbox.width
-                    obj.polygon = [[tx1, product_y2], [tx2, product_y2],
-                                   [tx2, product_y2 + new_h], [tx1, product_y2 + new_h]]
-                    logger.artifact_written(
-                        STAGE.value, "(title-clamp)",
-                        f"{obj.id} y1 clamped {old_y1} → {product_y2} (product y2={product_y2})",
-                    )
 
     if not objects:
         return _fail(logger, "NO_OBJECTS_DETECTED", "GPT-4o detected no objects in the image")

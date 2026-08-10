@@ -228,6 +228,24 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         if sr.status == PipelineStatus.FAIL:
             return _fail(job_id, sr, stage_results, logger)
 
+        # ── P2.5: INPAINTING_CLEANUP ──────────────────────────────────────────
+        # title_group/logo 오버레이 텍스트를 lama로 제거한 clean_canonical 생성.
+        # FAL_KEY 없거나 실패 시 canonical_path 그대로 pass-through.
+        from clean_pipeline.inpainting.lama_cleaner import clean as lama_clean
+
+        sr, clean_canonical_path = lama_clean(
+            canonical_path=canonical.canonical_path,
+            manifest=manifest,
+            image_width=canonical.width,
+            image_height=canonical.height,
+            output_dir=request.output_directory,
+            job_id=job_id,
+            logger=logger,
+        )
+        stage_results.append(sr)
+        if sr.status == PipelineStatus.FAIL:
+            return _fail(job_id, sr, stage_results, logger)
+
         # ── P3: OBJECT_EXTRACTION ─────────────────────────────────────────────
         if PIPELINE_TYPE == "C":
             from clean_pipeline.extraction.object_extractor_typec import extract
@@ -235,7 +253,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             from clean_pipeline.extraction.object_extractor import extract
 
         sr, extraction = extract(
-            canonical_path=canonical.canonical_path,
+            canonical_path=clean_canonical_path,
             manifest=manifest,
             output_dir=request.output_directory,
             job_id=job_id,
