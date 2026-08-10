@@ -5,7 +5,7 @@ SAM2가 이미지 전체 맥락에서 bbox 안의 주요 객체(제품)를 픽�
 
 엔드포인트: fal-ai/sam2/image
 입력: 전체 이미지 data URI + product bbox box 프롬프트 [x1, y1, x2, y2]
-출력: RGBA PNG alpha 채널 → L mode mask (원본 캔버스 크기)
+출력: L mode(Grayscale) 이진 마스크 (흰=전경, 검=배경, 원본 캔버스 크기)
 """
 from __future__ import annotations
 
@@ -77,7 +77,10 @@ def extract_sam2_mask(
     except Exception as exc:
         raise SAM2Error(f"[SAM2] fal.ai call failed: {exc}") from exc
 
-    # 2. RGBA PNG URL → alpha 채널(L mode) = 픽셀 마스크
+    # 2. 마스크 이미지 다운로드 → L mode 변환
+    # fal-ai/sam2/image 응답은 RGBA PNG가 아닌 L mode(Grayscale) 또는 RGB 이진 마스크.
+    # .convert("RGBA") 후 알파 채널을 꺼내면 A=255 전체 → 전체 흰색 버그 발생.
+    # .convert("L")로 직접 변환하여 픽셀 밝기 값(0~255)을 마스크로 사용.
     try:
         img_info = result.get("image") or {}
         url = img_info.get("url", "")
@@ -85,10 +88,9 @@ def extract_sam2_mask(
             raise SAM2Error(f"[SAM2] No image URL in fal.ai response: {result}")
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
-        rgba = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-        _, _, _, full_alpha = rgba.split()
-        # SAM2 응답 크기가 원본과 다를 수 있으므로 리사이즈
-        full_mask = full_alpha.resize((img_w, img_h), Image.LANCZOS)
+        raw = Image.open(io.BytesIO(resp.content))
+        # 이진 마스크이므로 NEAREST 리사이즈로 흰/검 경계 유지
+        full_mask = raw.convert("L").resize((img_w, img_h), Image.NEAREST)
     except SAM2Error:
         raise
     except Exception as exc:
