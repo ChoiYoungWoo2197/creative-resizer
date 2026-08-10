@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
 from clean_pipeline.analysis.bbox_refiner import refine as refine_bbox, scan_product_bottom_1d
@@ -52,6 +52,10 @@ _ROLE_Z_INDEX: dict[str, int] = {
     "logo":              5,
     "title_group":      10,
 }
+
+# inpaint_mask 대상 역할 및 padding
+_INPAINT_MASK_ROLES: frozenset[str] = frozenset({"title_group", "logo"})
+_INPAINT_PAD: int = 10
 
 
 # ── Pydantic 스키마 (Structured Outputs — strict=true 자동 적용) ──────────────
@@ -303,6 +307,26 @@ def analyze(
     manifest_path = stage_dir / "manifest.json"
     manifest_path.write_text(manifest.to_json(), encoding="utf-8")
 
+    # inpaint_mask.png: title_group / logo bbox (+_INPAINT_PAD px) → 흰색 마스크
+    # Bbox 범위만 마스킹 (y2를 하단 전체로 과도하게 확장하지 않음)
+    inpaint_mask = Image.new("L", (image_width, image_height), 0)
+    _idraw = ImageDraw.Draw(inpaint_mask)
+    inpaint_targets: list[str] = []
+    for obj in objects:
+        if obj.role in _INPAINT_MASK_ROLES:
+            mx1 = max(0, obj.bbox.x - _INPAINT_PAD)
+            my1 = max(0, obj.bbox.y - _INPAINT_PAD)
+            mx2 = min(image_width,  obj.bbox.x + obj.bbox.width  + _INPAINT_PAD)
+            my2 = min(image_height, obj.bbox.y + obj.bbox.height + _INPAINT_PAD)
+            _idraw.rectangle([mx1, my1, mx2, my2], fill=255)
+            inpaint_targets.append(f"{obj.role}({obj.id})")
+    inpaint_mask_path = stage_dir / "inpaint_mask.png"
+    inpaint_mask.save(str(inpaint_mask_path))
+    logger.artifact_written(
+        STAGE.value, str(inpaint_mask_path),
+        f"inpaint mask targets={inpaint_targets} pad={_INPAINT_PAD}px",
+    )
+
     removable_count = sum(1 for o in objects if o.removable_from_scene)
     required_count = sum(1 for o in objects if o.required)
 
@@ -334,6 +358,7 @@ def analyze(
         artifacts={
             "manifest": str(manifest_path),
             "raw_response": str(raw_path),
+            "inpaint_mask": str(inpaint_mask_path),
         },
     ), manifest
 

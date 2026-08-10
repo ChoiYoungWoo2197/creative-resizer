@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
+import numpy as np
 from PIL import Image
 
 from clean_pipeline.analysis.models import SceneManifest
@@ -35,6 +37,10 @@ from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.OBJECT_EXTRACTION
 _OUTPUT_SUBDIR = Path("clean_v1") / "03_extraction"
+
+
+# ── Alpha 정제 파라미터 ────────────────────────────────────────────────────────
+_FLOOD_FILL_SEEDS: tuple[tuple[int, int], ...] = ((0, 0), (-1, 0), (0, -1), (-1, -1))  # 4 corners
 
 
 def extract(
@@ -175,6 +181,16 @@ def extract(
                 f"id={obj.id} role={obj.role} dark-bg detected → background removed + tight-cropped",
             )
 
+        # ── 알파 채널 정제 ─────────────────────────────────────────────────────
+        # title_group: Otsu 이진화로 텍스트 전경/배경 분리
+        # product: flood fill 기반 배경 픽셀 투명화
+        if obj.role == "title_group":
+            cropped_rgba = _refine_alpha_otsu(cropped_rgba)
+            logger.artifact_written(STAGE.value, "(alpha-otsu)", f"id={obj.id} Otsu alpha refinement")
+        elif obj.role == "product":
+            cropped_rgba = _refine_alpha_floodfill(cropped_rgba)
+            logger.artifact_written(STAGE.value, "(alpha-flood)", f"id={obj.id} flood fill alpha refinement")
+
         # Save artefacts
         rgba_path = obj_dir / f"{obj.id}.rgba.png"
         mask_path = obj_dir / f"{obj.id}.mask.png"
@@ -240,6 +256,57 @@ def extract(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _refine_alpha_otsu(rgba: Image.Image) -> Image.Image:
+    """title_group: Otsu 이진화로 알파 채널 정제.
+
+    그레이스케일 명도 기반 Otsu 임계값으로 전경/배경 분리.
+    cv2 없으면 원본 반환 (graceful degradation).
+    """
+    try:
+        import cv2
+        gray = np.array(rgba.convert("L"))
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        r, g, b, _ = rgba.split()
+        return Image.merge("RGBA", (r, g, b, Image.fromarray(binary, "L")))
+    except Exception:
+        return rgba
+
+
+def _refine_alpha_floodfill(rgba: Image.Image) -> Image.Image:
+    """product: 4-corner flood fill로 배경 픽셀 투명화.
+
+    RGBA crop의 4 모서리에서 flood fill → 배경 영역 감지 → alpha=0.
+    cv2 없으면 원본 반환 (graceful degradation).
+    """
+    try:
+        import cv2
+        arr = np.array(rgba.convert("RGBA"))
+        gray = cv2.cvtColor(arr[:, :, :3], cv2.COLOR_RGB2GRAY)
+        h, w = gray.shape
+
+        bg_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        flood_input = gray.copy()
+
+        for cy, cx in _FLOOD_FILL_SEEDS:
+            ry = h + cy if cy < 0 else cy
+            rx = w + cx if cx < 0 else cx
+            ry, rx = max(0, min(ry, h - 1)), max(0, min(rx, w - 1))
+            seed_color = int(flood_input[ry, rx])
+            lo, hi = 30, 30
+            tmp_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+            cv2.floodFill(flood_input, tmp_mask, (rx, ry), 128, lo, hi,
+                          cv2.FLOODFILL_MASK_ONLY | cv2.FLOODFILL_FIXED_RANGE)
+            bg_mask |= tmp_mask
+
+        bg_region = bg_mask[1:-1, 1:-1].astype(bool)
+        alpha = arr[:, :, 3].copy()
+        alpha[bg_region] = 0
+        arr[:, :, 3] = alpha
+        return Image.fromarray(arr, "RGBA")
+    except Exception:
+        return rgba
 
 
 def _fail(

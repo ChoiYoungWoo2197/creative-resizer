@@ -229,13 +229,14 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P2.5: INPAINTING_CLEANUP ──────────────────────────────────────────
-        # title_group/logo 오버레이 텍스트를 lama로 제거한 clean_canonical 생성.
+        # P2에서 생성한 inpaint_mask로 fal-ai/lama 인페인팅 → clean_canonical 생성.
         # FAL_KEY 없거나 실패 시 canonical_path 그대로 pass-through.
+        inpaint_mask_path = sr.artifacts.get("inpaint_mask", "")
         from clean_pipeline.inpainting.lama_cleaner import clean as lama_clean
 
         sr, clean_canonical_path = lama_clean(
             canonical_path=canonical.canonical_path,
-            manifest=manifest,
+            inpaint_mask_path=inpaint_mask_path,
             image_width=canonical.width,
             image_height=canonical.height,
             output_dir=request.output_directory,
@@ -247,18 +248,20 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P3: OBJECT_EXTRACTION ─────────────────────────────────────────────
+        # canonical_path: P1 원본 (title_group/logo RGBA 추출용)
+        # clean_canonical_path: P2.5 lama 결과 (product SAM2/RGBA 추출용)
         if PIPELINE_TYPE == "C":
             from clean_pipeline.extraction.object_extractor_typec import extract
         else:
             from clean_pipeline.extraction.object_extractor import extract
 
         sr, extraction = extract(
-            canonical_path=clean_canonical_path,
+            canonical_path=canonical.canonical_path,
             manifest=manifest,
             output_dir=request.output_directory,
             job_id=job_id,
             logger=logger,
-            original_canonical_path=canonical.canonical_path,
+            clean_canonical_path=clean_canonical_path,
         )
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:
@@ -280,10 +283,11 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             return _fail(job_id, sr, stage_results, logger)
 
         # ── P5: SCENE_GENERATION ──────────────────────────────────────────────
+        # clean_canonical_path: AI inpaint 입력 (환각 텍스트 방지)
         from clean_pipeline.scene.scene_plate_generator import generate as generate_scene
 
         sr, scene_plate = generate_scene(
-            canonical_path=clean_canonical_path,
+            canonical_path=canonical.canonical_path,
             removal_result=removal,
             target_width=spec.width,
             target_height=spec.height,
@@ -291,6 +295,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             output_dir=request.output_directory,
             job_id=job_id,
             logger=logger,
+            clean_canonical_path=clean_canonical_path,
         )
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:

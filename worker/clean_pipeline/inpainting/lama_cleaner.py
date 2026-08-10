@@ -1,9 +1,13 @@
-"""P2.5 INPAINTING_CLEANUP — title_group/logo 오버레이 텍스트를 lama로 제거.
+"""P2.5 INPAINTING_CLEANUP: fal-ai/lama API로 텍스트 오버레이 제거 → clean_canonical 생성.
 
-FAL_KEY 미설정 또는 lama API 실패 시 canonical_path 그대로 반환 (pass-through).
-마스크 규칙:
-  - title_group: bbox y2를 이미지 하단까지 확장 (bbox 아래 잔류 텍스트 방지)
-  - logo: bbox + MASK_PADDING 사방
+Input:  canonical.png  +  inpaint_mask.png (P2 SCENE_ANALYSIS에서 생성)
+Output: clean_canonical.png (canonical과 동일 크기)
+
+Fallback:
+  - FAL_KEY 미설정 → canonical.png pass-through
+  - inpaint_mask 없음 / all-black → pass-through
+  - API 호출 실패 → pass-through
+  - 결과 크기 불일치 → LANCZOS resize로 보정
 """
 from __future__ import annotations
 
@@ -16,37 +20,35 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+import numpy as np
+from PIL import Image
 
-from clean_pipeline.analysis.models import SceneManifest
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.INPAINTING_CLEANUP
 _OUTPUT_SUBDIR = Path("clean_v1") / "02.5_inpainting"
-_MASK_PADDING = 10
 _LAMA_ENDPOINT = "https://fal.run/fal-ai/lama"
-_INPAINT_ROLES = {"title_group", "logo"}
 _ssl_ctx = ssl.create_default_context()
 
 
 def clean(
     canonical_path: str,
-    manifest: SceneManifest,
+    inpaint_mask_path: str,
     image_width: int,
     image_height: int,
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
 ) -> tuple[StageResult, str]:
-    """title_group/logo bbox를 lama로 인페인트한 clean_canonical 경로 반환."""
+    """P2에서 생성된 inpaint_mask로 fal-ai/lama 인페인팅 → clean_canonical 경로 반환."""
     fal_key = os.environ.get("FAL_KEY", "")
     stage_dir = Path(output_dir) / job_id / _OUTPUT_SUBDIR
     stage_dir.mkdir(parents=True, exist_ok=True)
 
     logger.stage_start(
         STAGE.value,
-        f"canonical={canonical_path} fal_key={'set' if fal_key else 'missing'}",
+        f"endpoint=fal-ai/lama mask={inpaint_mask_path} fal_key={'set' if fal_key else 'missing'}",
         metrics={"hasFalKey": bool(fal_key)},
     )
 
@@ -54,11 +56,21 @@ def clean(
         logger.artifact_written(STAGE.value, "(skip)", "FAL_KEY not set — pass-through")
         return _pass_through(logger, canonical_path)
 
-    targets = [o for o in manifest.objects if o.role in _INPAINT_ROLES]
-    if not targets:
-        logger.artifact_written(STAGE.value, "(skip)", "no title_group/logo objects — pass-through")
+    # ── inpaint_mask 유효성 확인 ──────────────────────────────────────────────
+    if not inpaint_mask_path or not Path(inpaint_mask_path).exists():
+        logger.artifact_written(STAGE.value, "(skip)", "inpaint_mask not found — pass-through")
         return _pass_through(logger, canonical_path)
 
+    try:
+        mask = Image.open(inpaint_mask_path).convert("RGB")
+        if np.array(mask).max() == 0:
+            logger.artifact_written(STAGE.value, "(skip)", "inpaint_mask all-black — no targets")
+            return _pass_through(logger, canonical_path)
+    except Exception as exc:
+        logger.artifact_written(STAGE.value, "(skip)", f"mask load failed: {exc} — pass-through")
+        return _pass_through(logger, canonical_path)
+
+    # ── canonical 로드 + 규격 검증 ────────────────────────────────────────────
     try:
         img = Image.open(canonical_path).convert("RGB")
     except Exception as exc:
@@ -66,43 +78,32 @@ def clean(
         return _pass_through(logger, canonical_path)
 
     W, H = img.size
-    mask = Image.new("RGB", (W, H), (0, 0, 0))
-    draw = ImageDraw.Draw(mask)
+    assert (W, H) == (image_width, image_height), (
+        f"canonical size ({W},{H}) != declared ({image_width},{image_height})"
+    )
 
-    for obj in targets:
-        bx1 = max(0, obj.bbox.x - _MASK_PADDING)
-        by1 = max(0, obj.bbox.y - _MASK_PADDING)
-        bx2 = min(W, obj.bbox.x + obj.bbox.width + _MASK_PADDING)
-        by2 = min(H, obj.bbox.y + obj.bbox.height + _MASK_PADDING)
-        draw.rectangle([bx1, by1, bx2, by2], fill=(255, 255, 255))
-        logger.artifact_written(
-            STAGE.value, "(mask)",
-            f"id={obj.id} role={obj.role} rect=({bx1},{by1})→({bx2},{by2})",
-        )
-
+    # ── fal-ai/lama 호출 ──────────────────────────────────────────────────────
     try:
         result_img = _call_lama(img, mask, fal_key)
     except Exception as exc:
-        logger.artifact_written(STAGE.value, "(skip)", f"lama failed: {exc} — pass-through")
+        logger.artifact_written(STAGE.value, "(warn)", f"lama failed: {exc} — pass-through")
         return _pass_through(logger, canonical_path)
 
-    # lama API가 원본과 다른 크기를 반환하는 경우 원본 크기로 보정
+    # ── 크기 보정: 미세 오차 시 LANCZOS resize ────────────────────────────────
     if result_img.size != (W, H):
         logger.artifact_written(
             STAGE.value, "(resize)",
-            f"lama returned {result_img.size} != original ({W},{H}) — resizing to original",
+            f"lama returned {result_img.size} != original ({W},{H}) — LANCZOS resize",
         )
         result_img = result_img.resize((W, H), Image.LANCZOS)
 
+    assert result_img.size == (W, H), f"post-resize size mismatch: {result_img.size}"
+
     clean_path = str(stage_dir / "clean_canonical.png")
     result_img.save(clean_path)
-    logger.artifact_written(STAGE.value, clean_path, f"lama inpaint done ({len(targets)} regions)")
+    logger.artifact_written(STAGE.value, clean_path, "clean_canonical saved (fal-ai/lama)")
 
-    logger.stage_pass(
-        STAGE.value,
-        f"{len(targets)} regions inpainted",
-        metrics={"regionCount": len(targets)},
-    )
+    logger.stage_pass(STAGE.value, "lama inpainting done", metrics={"resultSize": f"{W}x{H}"})
     return StageResult(
         stage=STAGE,
         status=PipelineStatus.PASS,

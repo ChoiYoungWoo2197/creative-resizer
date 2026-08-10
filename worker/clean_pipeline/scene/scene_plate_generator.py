@@ -91,22 +91,39 @@ def generate(
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
+    clean_canonical_path: str = "",
 ) -> tuple[StageResult, ScenePlateResult | None]:
+    """scene_plate 생성.
 
+    clean_canonical_path 지정 시 AI inpainting 입력을 clean_canonical 사용
+    (lama로 텍스트 제거된 이미지 → 환각 텍스트 방지).
+    미지정 시 원본 canonical 사용.
+    """
     stage_dir = Path(output_dir) / job_id / _OUTPUT_SUBDIR
     stage_dir.mkdir(parents=True, exist_ok=True)
 
+    # AI 입력 이미지: clean_canonical 우선, 없으면 canonical
+    ai_input_path = clean_canonical_path if clean_canonical_path else canonical_path
+
     logger.stage_start(
         STAGE.value,
-        f"canonical={canonical_path} target={target_width}×{target_height}",
-        metrics={"targetWidth": target_width, "targetHeight": target_height},
+        f"input={ai_input_path} target={target_width}×{target_height} "
+        f"clean={'yes' if clean_canonical_path else 'no'}",
+        metrics={"targetWidth": target_width, "targetHeight": target_height,
+                 "useCleanCanonical": bool(clean_canonical_path)},
     )
 
     # ── Load canonical and masks ────────────────────────────────────────────
     try:
-        canonical = Image.open(canonical_path).convert("RGB")
+        canonical = Image.open(ai_input_path).convert("RGB")
     except Exception as exc:
-        return _fail(logger, "CANONICAL_LOAD_FAILED", f"Cannot open canonical: {exc}")
+        return _fail(logger, "CANONICAL_LOAD_FAILED", f"Cannot open input image: {exc}")
+
+    # 규격 검증 Assert
+    assert canonical.width == removal_result.image_width and canonical.height == removal_result.image_height, (
+        f"input image size ({canonical.width},{canonical.height}) != "
+        f"removal_mask size ({removal_result.image_width},{removal_result.image_height})"
+    )
 
     try:
         removal_mask = Image.open(removal_result.removal_mask_path).convert("L")
