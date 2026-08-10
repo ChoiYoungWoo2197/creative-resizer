@@ -87,6 +87,14 @@ def clean(
         logger.artifact_written(STAGE.value, "(skip)", f"lama failed: {exc} — pass-through")
         return _pass_through(logger, canonical_path)
 
+    # lama API가 원본과 다른 크기를 반환하는 경우 원본 크기로 보정
+    if result_img.size != (W, H):
+        logger.artifact_written(
+            STAGE.value, "(resize)",
+            f"lama returned {result_img.size} != original ({W},{H}) — resizing to original",
+        )
+        result_img = result_img.resize((W, H), Image.LANCZOS)
+
     clean_path = str(stage_dir / "clean_canonical.png")
     result_img.save(clean_path)
     logger.artifact_written(STAGE.value, clean_path, f"lama inpaint done ({len(targets)} regions)")
