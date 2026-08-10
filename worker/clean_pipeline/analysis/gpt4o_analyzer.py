@@ -33,13 +33,11 @@ _MAX_SIDE = 1600
 _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 
 # GPT role → (내부 role, required)
-# logo/badge는 title_group에 통합 — 별도 감지 없음
+# logo/badge는 매핑 없음 → 감지돼도 skip
 _ROLE_MAP: dict[str, tuple[str, bool]] = {
     "product":           ("product",          True),
     "sub_product":       ("product",          False),
     "title_group":       ("title_group",      True),
-    "logo":              ("title_group",      False),  # brand_logo → title_group 흡수
-    "badge":             ("title_group",      False),
     "person_zone":       ("protected_subject", False),
     "protected_subject": ("protected_subject", False),
     "decorative_panel":  ("decorative_ad",    False),
@@ -188,7 +186,14 @@ def analyze(
     objects: list[SceneObject] = []
 
     for i, elem in enumerate(parsed.detected_elements):
-        role, required = _ROLE_MAP.get(elem.role, ("decorative_ad", False))
+        if elem.role not in _ROLE_MAP:
+            logger.artifact_written(
+                STAGE.value, "(skip)",
+                f"obj_{i}: role='{elem.role}' not in _ROLE_MAP — skip",
+            )
+            continue
+
+        role, required = _ROLE_MAP[elem.role]
 
         if len(elem.bbox_2d) != 4:
             logger.artifact_written(
