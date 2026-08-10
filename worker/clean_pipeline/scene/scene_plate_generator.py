@@ -67,6 +67,14 @@ _TYPE_B_NO_MASK = True
 #   Set False to revert to TYPE A pixel-perfect restore.
 _SKIP_SUBJECT_RESTORE = True
 
+# fal-ai/gpt-image-2/inpainting: FAL_KEY 설정 시 TYPE B AI cleanup에 우선 사용.
+# 실패 시 기존 OpenAI gpt-image-1 방식으로 자동 fallback.
+_FAL_GPT_IMAGE2_ENDPOINT = "fal-ai/gpt-image-2/inpainting"
+
+import base64
+import io
+import os
+
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 from clean_pipeline.removal.models import RemovalMaskResult
@@ -256,21 +264,51 @@ def generate(
             f"TYPE B pre-filled input (bg={type_b_bg.tolist()} src={prefill_source})",
         )
 
-        removal_ai, fail_code, fail_reason = openai_cleanup.cleanup_no_mask(
-            original_image=type_b_input,
-            target_width=target_width,
-            target_height=target_height,
-            api_key=api_key,
-            prompt=CLEANUP_PROMPT_TYPE_B,
-        )
+        # ── AI cleanup: fal-ai/gpt-image-2 우선, 실패 시 OpenAI gpt-image-1 fallback ──
+        fal_key = os.environ.get("FAL_KEY", "")
+        removal_ai: Image.Image | None = None
+
+        if fal_key:
+            removal_ai, fal_msg = _fal_gpt_image2_inpaint(
+                image=type_b_input,
+                mask=Image.fromarray(proj_rem_arr, "L"),
+                target_width=target_width,
+                target_height=target_height,
+                fal_key=fal_key,
+                prompt=CLEANUP_PROMPT_TYPE_B,
+            )
+            if removal_ai is not None:
+                logger.artifact_written(
+                    STAGE.value, "(fal-gpt-image-2)", f"inpainting OK — {fal_msg}"
+                )
+            else:
+                logger.artifact_written(
+                    STAGE.value, "(fal-warn)",
+                    f"fal-ai/gpt-image-2 failed ({fal_msg}) — fallback to OpenAI gpt-image-1",
+                )
+        else:
+            logger.artifact_written(
+                STAGE.value, "(fal-skip)",
+                "FAL_KEY not set — using OpenAI gpt-image-1",
+            )
+
         if removal_ai is None:
-            return _fail(logger, fail_code, fail_reason)
+            removal_ai, fail_code, fail_reason = openai_cleanup.cleanup_no_mask(
+                original_image=type_b_input,
+                target_width=target_width,
+                target_height=target_height,
+                api_key=api_key,
+                prompt=CLEANUP_PROMPT_TYPE_B,
+            )
+            if removal_ai is None:
+                return _fail(logger, fail_code, fail_reason)
+
         source_cleanup_api_calls = 1
 
         removal_ai_path = stage_dir / "source_cleanup_ai.png"
         removal_ai.save(str(removal_ai_path))
         logger.artifact_written(STAGE.value, str(removal_ai_path),
-                                "TYPE B AI removal result (pre-filled, no mask)")
+                                "TYPE B AI removal result")
 
     elif bg_std < _UNIFORM_BG_STD_THRESHOLD and not force_ai:
         # ── TYPE A direct fill: uniform background, no API call ──────────────
@@ -502,3 +540,82 @@ def _fail(
         status=PipelineStatus.FAIL,
         reasons=[f"[{code}] {message}"],
     ), None
+
+
+def _fal_gpt_image2_inpaint(
+    image: Image.Image,
+    mask: Image.Image,
+    target_width: int,
+    target_height: int,
+    fal_key: str,
+    prompt: str,
+) -> tuple[Image.Image | None, str]:
+    """fal-ai/gpt-image-2/inpainting 호출.
+
+    Returns (result_image, message). result_image=None on failure.
+    FAL_KEY는 호출 전에 이미 검증된 상태로 전달됨.
+    """
+    try:
+        import ssl
+        import urllib.error
+        import urllib.request
+
+        img_uri = _to_data_uri(image.convert("RGB"))
+        mask_uri = _to_data_uri(mask.convert("L"))
+
+        payload = {
+            "image_url": img_uri,
+            "mask_url": mask_uri,
+            "prompt": prompt,
+        }
+
+        try:
+            import fal_client
+            os.environ["FAL_KEY"] = fal_key
+            result = fal_client.subscribe(_FAL_GPT_IMAGE2_ENDPOINT, arguments=payload)
+        except ImportError:
+            import json
+            import ssl as _ssl
+            body = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                f"https://fal.run/{_FAL_GPT_IMAGE2_ENDPOINT}",
+                data=body,
+                headers={
+                    "Authorization": f"Key {fal_key}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            ctx = _ssl.create_default_context()
+            try:
+                with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+                    result = json.loads(resp.read())
+            except urllib.error.HTTPError as exc:
+                return None, f"HTTP {exc.code}: {exc.read().decode('utf-8', errors='replace')[:200]}"
+
+        # fal-ai 응답: images[0].url 또는 image.url
+        images = result.get("images") or []
+        img_info = images[0] if images else result.get("image") or {}
+        url = img_info.get("url", "")
+        if not url:
+            return None, f"no URL in response: {str(result)[:200]}"
+
+        import ssl as _ssl2
+        ctx2 = _ssl2.create_default_context()
+        with urllib.request.urlopen(url, timeout=60, context=ctx2) as resp:
+            raw = resp.read()
+
+        result_img = Image.open(io.BytesIO(raw)).convert("RGB")
+        if result_img.size != (target_width, target_height):
+            result_img = result_img.resize((target_width, target_height), Image.LANCZOS)
+
+        return result_img, f"{target_width}x{target_height}"
+
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _to_data_uri(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
