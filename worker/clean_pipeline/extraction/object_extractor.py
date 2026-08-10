@@ -43,6 +43,7 @@ def extract(
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
+    original_canonical_path: str = "",
 ) -> tuple[StageResult, ExtractionResult | None]:
 
     stage_dir = Path(output_dir) / job_id / _OUTPUT_SUBDIR
@@ -61,6 +62,13 @@ def extract(
         canonical = Image.open(canonical_path).convert("RGBA")
     except Exception as exc:
         return _fail(logger, "CANONICAL_LOAD_FAILED", f"Cannot open canonical: {exc}")
+
+    # title_group/logo는 lama 처리 전 원본에서 RGBA 추출 (clean_canonical에서 추출하면 글자가 없음)
+    _orig_path = original_canonical_path or canonical_path
+    try:
+        original_canonical = Image.open(_orig_path).convert("RGBA")
+    except Exception as exc:
+        return _fail(logger, "CANONICAL_LOAD_FAILED", f"Cannot open original canonical: {exc}")
 
     w, h = canonical.width, canonical.height
     extracted: list[ExtractedObject] = []
@@ -81,9 +89,8 @@ def extract(
         if not (obj.movable and obj.removable_from_scene):
             continue
 
-        # decorative_ad / title_group: RGBA 추출 없이 mask만 생성 → P4 removal_mask union에 포함
-        # title_group은 P2.5 lama로 이미 제거됨 — P7/P8 재배치하면 lama 잔재가 scene 위에 합성됨
-        if obj.role in {"decorative_ad", "title_group"}:
+        # decorative_ad: RGBA 추출 없이 mask만 생성 → P4 removal_mask union에 포함
+        if obj.role == "decorative_ad":
             dec_mask = rasterize_polygon(obj.polygon, w, h)
             dec_bbox = bounding_rect(dec_mask)
             if dec_bbox is not None:
@@ -148,8 +155,9 @@ def extract(
 
         x1, y1, x2, y2 = bbox
 
-        # Merge R,G,B from canonical + mask as alpha (full size)
-        r, g, b, _ = canonical.split()
+        # title_group/logo는 lama 처리 전 원본 canonical에서 픽셀을 가져옴
+        source_img = original_canonical if obj.role in {"title_group", "logo"} else canonical
+        r, g, b, _ = source_img.split()
         full_rgba = Image.merge("RGBA", (r, g, b, mask))
 
         # Crop both to min bounding rect

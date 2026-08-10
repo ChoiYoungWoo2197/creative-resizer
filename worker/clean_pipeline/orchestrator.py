@@ -258,6 +258,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
             output_dir=request.output_directory,
             job_id=job_id,
             logger=logger,
+            original_canonical_path=canonical.canonical_path,
         )
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:
