@@ -142,7 +142,8 @@ def extract(
                     # FAL_KEY 미설정 — 기존 polygon 방식으로 처리
                     mask = rasterize_polygon(obj.polygon, w, h)
             except SAM2Error as exc:
-                return _fail(logger, "SAM2_FAILED", str(exc))
+                logger.artifact_written(STAGE.value, "(sam2-warn)", f"{exc} — polygon fallback")
+                mask = rasterize_polygon(obj.polygon, w, h)
         else:
             mask = rasterize_polygon(obj.polygon, w, h)
 
