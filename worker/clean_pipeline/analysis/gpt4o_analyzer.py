@@ -36,7 +36,7 @@ _OUTPUT_SUBDIR = Path("clean_v1") / "02_analysis"
 _ROLE_MAP: dict[str, tuple[str, bool]] = {
     "product":           ("product",          True),
     "sub_product":       ("product",          False),
-    "title_group":       ("title_group",      True),
+    "title_group":       ("title_group",      False),
     "logo":              ("logo",             False),
     "badge":             ("logo",             False),
     "person_zone":       ("protected_subject", False),
