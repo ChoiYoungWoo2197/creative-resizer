@@ -19,7 +19,7 @@ import os
 from typing import Optional
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 _FAL_KEY = os.environ.get("FAL_KEY", "")
 _ENDPOINT = "fal-ai/sam2/image"
@@ -110,7 +110,9 @@ def extract_sam2_mask(
         resp.raise_for_status()
         raw = Image.open(io.BytesIO(resp.content))
         # crop 크기로 리사이즈 (이진 마스크이므로 NEAREST)
-        crop_mask = raw.convert("L").resize((crop_w, crop_h), Image.NEAREST)
+        # fal-ai/sam2/image는 세그먼트된 객체=검정(0), 배경=흰색(255) 규칙을 사용.
+        # 우리 시스템은 흰색=전경이므로 invert 필수.
+        crop_mask = ImageOps.invert(raw.convert("L")).resize((crop_w, crop_h), Image.NEAREST)
     except SAM2Error:
         raise
     except Exception as exc:
