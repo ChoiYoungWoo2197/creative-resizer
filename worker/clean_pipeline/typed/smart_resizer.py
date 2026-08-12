@@ -161,7 +161,17 @@ def _call_fal_smart_resize(
         "num_images_per_size": 1,
     }
 
-    result = fal_client.subscribe(_FAL_ENDPOINT, arguments=arguments)
+    def on_queue_update(update):
+        if isinstance(update, fal_client.InProgress):
+            for log in update.logs:
+                print(log["message"])
+
+    result = fal_client.subscribe(
+        _FAL_ENDPOINT,
+        arguments=arguments,
+        with_logs=True,
+        on_queue_update=on_queue_update,
+    )
     url = _extract_url(result)
 
     if not url:
