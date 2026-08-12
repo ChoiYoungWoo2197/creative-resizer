@@ -13,6 +13,7 @@ import io
 import json
 import os
 import ssl
+import time
 import urllib.request
 from pathlib import Path
 
@@ -66,13 +67,15 @@ def resize(
     is_smart_resized = False
 
     # ── fal-ai/smart-resize 시도 ──────────────────────────────────────────────
+    fal_meta: dict | None = None
     if fal_key:
         try:
-            resized_img = _call_fal_smart_resize(canonical, target_width, target_height, fal_key)
+            resized_img, fal_meta = _call_fal_smart_resize(canonical, target_width, target_height, fal_key)
             is_smart_resized = True
             logger.artifact_written(
                 STAGE.value, "(fal-ok)",
-                f"fal-ai/smart-resize OK {src_w}×{src_h} → {target_width}×{target_height}",
+                f"fal-ai/smart-resize OK {src_w}×{src_h} → {target_width}×{target_height} "
+                f"({fal_meta['durationSec']}s requestId={fal_meta.get('requestId', 'n/a')})",
             )
         except Exception as exc:
             logger.artifact_written(
@@ -99,23 +102,27 @@ def resize(
         f"{'fal-ai smart-resize' if is_smart_resized else 'PIL center crop'} 결과",
     )
 
+    stage_metrics = {
+        "isSmartResized": is_smart_resized,
+        "cropRatio": round(crop_ratio, 3),
+        "srcWidth": src_w,
+        "srcHeight": src_h,
+        "targetWidth": target_width,
+        "targetHeight": target_height,
+    }
+    if fal_meta:
+        stage_metrics["fal"] = fal_meta
+
     logger.stage_pass(
         STAGE.value,
         f"PASS {'(fal-ai)' if is_smart_resized else f'(PIL fallback crop_ratio={crop_ratio:.1%})'}",
-        metrics={
-            "isSmartResized": is_smart_resized,
-            "cropRatio": round(crop_ratio, 3),
-            "srcWidth": src_w,
-            "srcHeight": src_h,
-            "targetWidth": target_width,
-            "targetHeight": target_height,
-        },
+        metrics=stage_metrics,
     )
 
     return StageResult(
         stage=STAGE,
         status=PipelineStatus.PASS,
-        metrics={"isSmartResized": is_smart_resized, "cropRatio": round(crop_ratio, 3)},
+        metrics=stage_metrics,
         artifacts={"resized": resized_path},
     ), {
         "resized_path": resized_path,
@@ -123,6 +130,7 @@ def resize(
         "target_width": target_width,
         "target_height": target_height,
         "crop_ratio": crop_ratio,
+        "fal_meta": fal_meta,
     }
 
 
@@ -134,12 +142,12 @@ def _call_fal_smart_resize(
     target_width: int,
     target_height: int,
     fal_key: str,
-) -> Image.Image:
-    """fal-ai/smart-resize REST 호출. 결과 이미지를 PIL Image로 반환.
+) -> tuple[Image.Image, dict]:
+    """fal-ai/smart-resize REST 호출. (PIL Image, fal_meta dict) 반환.
 
-    JS fal.subscribe()와 동일하게:
-      fal_client.upload() → HTTPS URL 획득 → image_url에 URL 전달.
-    base64 data URI 사용 시 API 처리 방식이 달라질 수 있어 URL 방식을 강제.
+    fal_meta 구조 (프론트 연동용):
+      endpoint, requestId, status, durationSec, timings,
+      outputUrl, outputWidth, outputHeight, targetSize
     """
     import fal_client
     os.environ.setdefault("FAL_KEY", fal_key)
@@ -148,34 +156,51 @@ def _call_fal_smart_resize(
     img.save(buf, format="PNG")
     buf.seek(0)
 
-    # fal storage에 업로드 → HTTPS URL 획득 (JS image_url과 동일한 방식)
+    # fal storage에 업로드 → HTTPS URL 획득
     image_url = fal_client.upload(buf.read(), content_type="image/png")
 
-    arguments = {
-        "prompt": "",
-        "image_url": image_url,
-        "resolution": "1K",
-        "target_sizes": [f"{target_width}x{target_height}"],
-        "output_format": "png",
-        "safety_tolerance": "4",
-        "num_images_per_size": 1,
-    }
+    request_id_holder: dict = {}
 
     def on_queue_update(update):
         if isinstance(update, fal_client.InProgress):
+            if hasattr(update, "request_id") and update.request_id:
+                request_id_holder["id"] = update.request_id
             for log in update.logs:
                 print(log["message"])
 
+    t0 = time.time()
     result = fal_client.subscribe(
         _FAL_ENDPOINT,
-        arguments=arguments,
+        arguments={
+            "prompt": "",
+            "image_url": image_url,
+            "resolution": "1K",
+            "target_sizes": [f"{target_width}x{target_height}"],
+            "output_format": "png",
+            "safety_tolerance": "4",
+            "num_images_per_size": 1,
+        },
         with_logs=True,
         on_queue_update=on_queue_update,
     )
-    url = _extract_url(result)
+    elapsed = round(time.time() - t0, 2)
 
+    url = _extract_url(result)
     if not url:
         raise RuntimeError("fal-ai/smart-resize: 응답에 URL 없음")
+
+    images_meta = result.get("images") or []
+    fal_meta = {
+        "endpoint": _FAL_ENDPOINT,
+        "requestId": request_id_holder.get("id"),
+        "status": 200,
+        "durationSec": elapsed,
+        "timings": result.get("timings"),
+        "outputUrl": url,
+        "outputWidth": images_meta[0].get("width") if images_meta else target_width,
+        "outputHeight": images_meta[0].get("height") if images_meta else target_height,
+        "targetSize": f"{target_width}x{target_height}",
+    }
 
     ctx = ssl.create_default_context()
     with urllib.request.urlopen(url, timeout=60, context=ctx) as resp:
@@ -184,7 +209,7 @@ def _call_fal_smart_resize(
     result_img = Image.open(io.BytesIO(raw)).convert("RGB")
     if result_img.size != (target_width, target_height):
         result_img = result_img.resize((target_width, target_height), Image.LANCZOS)
-    return result_img
+    return result_img, fal_meta
 
 
 def _extract_url(result: dict) -> str:
