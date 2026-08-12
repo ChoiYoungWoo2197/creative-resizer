@@ -1,4 +1,4 @@
-"""TYPE E — 간소화 파이프라인: P1 → P5.5(smart_resize) → P7(safe_zone) → P8.
+"""TYPE E — 간소화 파이프라인: P1 → P5.5(smart_resize) → P8.
 
 기존 TYPE B 파이프라인(P1~P8) 및 관련 모듈은 수정하지 않는다.
 TYPE E만 이 파일에서 처리.
@@ -6,11 +6,10 @@ TYPE E만 이 파일에서 처리.
 Flow:
   P1   SOURCE_PREPARATION  (orchestrator 담당, canonical 전달)
   P5.5 SMART_RESIZE        fal-ai/smart-resize → PIL center crop fallback
-  P7   LAYOUT              safe zone 10% 여백 검증; 위반 시 letterbox 보정
   P8   FINAL_VALIDATION    08_final/result.png 저장 → render_validator
 
 Fail codes:
-  SMART_RESIZE_FAILED, SAFE_ZONE_UNCORRECTABLE, FINAL_SAVE_FAILED
+  CANONICAL_LOAD_FAILED, FINAL_SAVE_FAILED
 """
 from __future__ import annotations
 
@@ -58,28 +57,6 @@ def run(
         return _fail(job_id, sr, stage_results, logger)
 
     resized_path: str = resize_info["resized_path"]
-    crop_ratio: float = resize_info["crop_ratio"]
-
-    # ── P7: LAYOUT — safe zone 10% 여백 검증 ─────────────────────────────────
-    safe_margin_x = round(spec.width * 0.10)
-    safe_margin_y = round(spec.height * 0.10)
-
-    layout_sr, corrected_path = _safe_zone_check(
-        resized_path=resized_path,
-        target_width=spec.width,
-        target_height=spec.height,
-        safe_margin_x=safe_margin_x,
-        safe_margin_y=safe_margin_y,
-        crop_ratio=crop_ratio,
-        output_dir=request.output_directory,
-        job_id=job_id,
-        logger=logger,
-    )
-    stage_results.append(layout_sr)
-    if layout_sr.status == PipelineStatus.FAIL:
-        return _fail(job_id, layout_sr, stage_results, logger)
-
-    final_input_path = corrected_path or resized_path
 
     # ── P8: FINAL_VALIDATION — 08_final/result.png 저장 + render_validator ────
     result_dir = Path(request.output_directory) / job_id / "clean_v1" / "08_final"
@@ -87,7 +64,7 @@ def run(
     result_path = str(result_dir / "result.png")
 
     try:
-        shutil.copy2(final_input_path, result_path)
+        shutil.copy2(resized_path, result_path)
     except Exception as exc:
         fail_sr = StageResult(
             stage=StageName.FINAL_VALIDATION,
@@ -135,7 +112,7 @@ def run(
     )
 
 
-# ── P7 safe zone 검증 + letterbox 보정 ────────────────────────────────────────
+# ── P7 safe zone 헬퍼 (TYPE B 전용; TYPE E run()에서는 호출하지 않음) ──────────
 
 
 def _safe_zone_check(
@@ -165,7 +142,6 @@ def _safe_zone_check(
         },
     )
 
-    # crop_ratio 1.0 = 원본 전체 사용(fal-ai 경로 포함), < 0.80 = 넓은 영역 잘림
     needs_letterbox = (crop_ratio < 0.80)
 
     if not needs_letterbox:
@@ -181,7 +157,6 @@ def _safe_zone_check(
             artifacts={"resized": resized_path},
         ), None
 
-    # letterbox 적용: contain-scale + 4코너 엣지 색상 샘플링 배경
     stage_dir = Path(output_dir) / job_id / "clean_v1" / "07_layout"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
