@@ -9,7 +9,6 @@ Outputs under output/{jobId}/clean_v1/05.5_smart_resize/:
 """
 from __future__ import annotations
 
-import base64
 import io
 import json
 import os
@@ -136,14 +135,25 @@ def _call_fal_smart_resize(
     target_height: int,
     fal_key: str,
 ) -> Image.Image:
-    """fal-ai/smart-resize REST 호출. 결과 이미지를 PIL Image로 반환."""
+    """fal-ai/smart-resize REST 호출. 결과 이미지를 PIL Image로 반환.
+
+    JS fal.subscribe()와 동일하게:
+      fal_client.upload() → HTTPS URL 획득 → image_url에 URL 전달.
+    base64 data URI 사용 시 API 처리 방식이 달라질 수 있어 URL 방식을 강제.
+    """
+    import fal_client
+    os.environ.setdefault("FAL_KEY", fal_key)
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    image_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    buf.seek(0)
+
+    # fal storage에 업로드 → HTTPS URL 획득 (JS image_url과 동일한 방식)
+    image_url = fal_client.upload(buf.read(), content_type="image/png")
 
     arguments = {
         "prompt": "",
-        "image_url": image_uri,
+        "image_url": image_url,
         "resolution": "1K",
         "target_sizes": [f"{target_width}x{target_height}"],
         "output_format": "png",
@@ -151,14 +161,8 @@ def _call_fal_smart_resize(
         "num_images_per_size": 1,
     }
 
-    url = ""
-    try:
-        import fal_client
-        os.environ.setdefault("FAL_KEY", fal_key)
-        result = fal_client.subscribe(_FAL_ENDPOINT, arguments=arguments)
-        url = _extract_url(result)
-    except ImportError:
-        url = _call_via_urllib(_FAL_ENDPOINT, arguments, fal_key)
+    result = fal_client.subscribe(_FAL_ENDPOINT, arguments=arguments)
+    url = _extract_url(result)
 
     if not url:
         raise RuntimeError("fal-ai/smart-resize: 응답에 URL 없음")
