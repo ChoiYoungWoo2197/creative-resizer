@@ -26,6 +26,7 @@ class StageName(str, Enum):
     SCENE_VALIDATION = "SCENE_VALIDATION"
     LAYOUT = "LAYOUT"
     FINAL_VALIDATION = "FINAL_VALIDATION"
+    SMART_RESIZE = "SMART_RESIZE"          # TYPE E P5.5
 
 
 @dataclass

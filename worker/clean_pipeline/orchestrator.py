@@ -78,7 +78,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
 
         # ── Pipeline type routing (after P1, before any analysis) ─────────────
         from clean_pipeline import pipeline_type_selector
-        _VALID = ("A", "B", "D")
+        _VALID = ("A", "B", "D", "E")
         if request.pipeline_type in _VALID:
             pipeline_type = request.pipeline_type
             logger.artifact_written(
@@ -136,6 +136,20 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
                 status=PipelineStatus.PASS,
                 stage_results=stage_results,
                 output_paths=output_paths,
+            )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TYPE E: P1 → P5.5(smart_resize) → P7(safe_zone) → P8
+        # ─────────────────────────────────────────────────────────────────────
+        if pipeline_type == "E":
+            from clean_pipeline.typed.type_e_pipeline import run as run_type_e
+
+            return run_type_e(
+                request=request,
+                spec=spec,
+                canonical=canonical,
+                stage_results=stage_results,
+                logger=logger,
             )
 
         # ─────────────────────────────────────────────────────────────────────
