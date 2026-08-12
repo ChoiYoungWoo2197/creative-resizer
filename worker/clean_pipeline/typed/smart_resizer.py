@@ -138,13 +138,17 @@ def _call_fal_smart_resize(
 ) -> Image.Image:
     """fal-ai/smart-resize REST 호출. 결과 이미지를 PIL Image로 반환."""
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=90)
-    image_uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    img.save(buf, format="PNG")
+    image_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
     arguments = {
+        "prompt": "",
         "image_url": image_uri,
-        "target_width": target_width,
-        "target_height": target_height,
+        "resolution": "1K",
+        "target_sizes": [f"{target_width}x{target_height}"],
+        "output_format": "png",
+        "safety_tolerance": "4",
+        "num_images_per_size": 1,
     }
 
     url = ""
@@ -170,10 +174,15 @@ def _call_fal_smart_resize(
 
 
 def _extract_url(result: dict) -> str:
-    """fal-ai 응답에서 이미지 URL 추출."""
+    """fal-ai/smart-resize 응답에서 이미지 URL 추출.
+
+    응답 구조: { images: [ { url, width, height, content_type } ] }
+    images는 target_sizes 개수만큼 존재하므로 첫 번째 사용.
+    """
     images = result.get("images") or []
-    img_info = images[0] if images else result.get("image") or {}
-    return img_info.get("url", "") or result.get("url", "")
+    if images:
+        return images[0].get("url", "")
+    return result.get("url", "")
 
 
 def _call_via_urllib(endpoint: str, payload: dict, fal_key: str) -> str:
