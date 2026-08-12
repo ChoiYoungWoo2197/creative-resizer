@@ -1,4 +1,4 @@
-"""TYPE E — 간소화 파이프라인: P1 → P5.5(smart_resize) → P8.
+"""TYPE E — 간소화 파이프라인: P1 → P5.5(smart_resize) → P7(safe_zone) → P8.
 
 기존 TYPE B 파이프라인(P1~P8) 및 관련 모듈은 수정하지 않는다.
 TYPE E만 이 파일에서 처리.
@@ -6,6 +6,7 @@ TYPE E만 이 파일에서 처리.
 Flow:
   P1   SOURCE_PREPARATION  (orchestrator 담당, canonical 전달)
   P5.5 SMART_RESIZE        fal-ai/smart-resize → PIL center crop fallback
+  P7   LAYOUT              safe zone 정보 기록 (MongoDB slug 기반, spec에서 읽음)
   P8   FINAL_VALIDATION    08_final/result.png 저장 → render_validator
 
 Fail codes:
@@ -15,9 +16,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-
-import numpy as np
-from PIL import Image
 
 from clean_pipeline.contracts import (
     CleanPipelineRequest,
@@ -57,6 +55,25 @@ def run(
         return _fail(job_id, sr, stage_results, logger)
 
     resized_path: str = resize_info["resized_path"]
+
+    # ── P7: LAYOUT — MongoDB slug 기반 safe zone 정보 기록 ────────────────────
+    sr, corrected_path = _safe_zone_check(
+        resized_path=resized_path,
+        target_width=spec.width,
+        target_height=spec.height,
+        safe_left=spec.safe_left,
+        safe_top=spec.safe_top,
+        safe_right=spec.safe_right,
+        safe_bottom=spec.safe_bottom,
+        output_dir=request.output_directory,
+        job_id=job_id,
+        logger=logger,
+    )
+    stage_results.append(sr)
+    if sr.status == PipelineStatus.FAIL:
+        return _fail(job_id, sr, stage_results, logger)
+    if corrected_path:
+        resized_path = corrected_path
 
     # ── P8: FINAL_VALIDATION — 08_final/result.png 저장 + render_validator ────
     result_dir = Path(request.output_directory) / job_id / "clean_v1" / "08_final"
@@ -112,112 +129,53 @@ def run(
     )
 
 
-# ── P7 safe zone 헬퍼 (TYPE B 전용; TYPE E run()에서는 호출하지 않음) ──────────
+# ── P7 safe zone 헬퍼 ────────────────────────────────────────────────────────
 
 
 def _safe_zone_check(
     resized_path: str,
     target_width: int,
     target_height: int,
-    safe_margin_x: int,
-    safe_margin_y: int,
-    crop_ratio: float,
+    safe_left: int,
+    safe_top: int,
+    safe_right: int,
+    safe_bottom: int,
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
 ) -> tuple[StageResult, str | None]:
-    """Safe zone 10% 여백 검증.
+    """MongoDB slug 기반 safe zone 정보를 기록한다.
 
-    crop_ratio < 0.80 (넓은 영역 잘림) → letterbox 적용.
-    그 외 → PASS 그대로.
-    Returns (StageResult, corrected_path | None)
+    spec.safe_left/top/right/bottom은 request_adapter가 banner_spec_lookup을 통해
+    MongoDB에서 조회한 값이다. TYPE E는 이미지를 수정하지 않고 메타데이터만 기록한다.
+    Returns (StageResult, None) — 이미지 경로 변경 없음.
     """
+    has_safe_zone = (safe_left + safe_top + safe_right + safe_bottom) > 0
+    safe_metrics = {
+        "safeLeft": safe_left,
+        "safeTop": safe_top,
+        "safeRight": safe_right,
+        "safeBottom": safe_bottom,
+        "hasSafeZone": has_safe_zone,
+    }
+
     logger.stage_start(
         StageName.LAYOUT.value,
-        f"safe_zone margin x={safe_margin_x}px y={safe_margin_y}px crop_ratio={crop_ratio:.1%}",
-        metrics={
-            "safeMarginX": safe_margin_x,
-            "safeMarginY": safe_margin_y,
-            "cropRatio": round(crop_ratio, 3),
-        },
+        f"safe_zone left={safe_left} top={safe_top} right={safe_right} bottom={safe_bottom}",
+        metrics=safe_metrics,
     )
-
-    needs_letterbox = (crop_ratio < 0.80)
-
-    if not needs_letterbox:
-        logger.stage_pass(
-            StageName.LAYOUT.value,
-            f"PASS — crop_ratio={crop_ratio:.1%} ≥ 80%, no letterbox needed",
-            metrics={"letterboxApplied": False},
-        )
-        return StageResult(
-            stage=StageName.LAYOUT,
-            status=PipelineStatus.PASS,
-            metrics={"letterboxApplied": False, "cropRatio": round(crop_ratio, 3)},
-            artifacts={"resized": resized_path},
-        ), None
-
-    stage_dir = Path(output_dir) / job_id / "clean_v1" / "07_layout"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        img = Image.open(resized_path).convert("RGB")
-        letterboxed = _apply_letterbox(img, target_width, target_height)
-        lb_path = str(stage_dir / "safe_zone_letterbox.png")
-        letterboxed.save(lb_path)
-        logger.artifact_written(StageName.LAYOUT.value, lb_path, "letterbox 보정 결과")
-    except Exception as exc:
-        fail_sr = StageResult(
-            stage=StageName.LAYOUT,
-            status=PipelineStatus.FAIL,
-            reasons=[f"[SAFE_ZONE_UNCORRECTABLE] letterbox 실패: {exc}"],
-        )
-        logger.stage_fail(StageName.LAYOUT.value, "SAFE_ZONE_UNCORRECTABLE", str(exc))
-        return fail_sr, None
 
     logger.stage_pass(
         StageName.LAYOUT.value,
-        f"PASS — letterbox 적용 (crop_ratio={crop_ratio:.1%} < 80%)",
-        metrics={"letterboxApplied": True, "cropRatio": round(crop_ratio, 3)},
+        f"PASS — safe zone {'recorded' if has_safe_zone else 'not configured for this spec'}",
+        metrics=safe_metrics,
     )
     return StageResult(
         stage=StageName.LAYOUT,
         status=PipelineStatus.PASS,
-        metrics={"letterboxApplied": True, "cropRatio": round(crop_ratio, 3)},
-        artifacts={"letterbox": lb_path},
-    ), lb_path
-
-
-def _apply_letterbox(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """contain-scale + 4코너 엣지 색상 샘플링으로 배경 채움."""
-    src_w, src_h = img.size
-    scale = min(target_w / src_w, target_h / src_h)
-    new_w = round(src_w * scale)
-    new_h = round(src_h * scale)
-    scaled = img.resize((new_w, new_h), Image.LANCZOS)
-
-    bg_color = _sample_edge_color(img)
-    canvas = Image.new("RGB", (target_w, target_h), bg_color)
-    paste_x = (target_w - new_w) // 2
-    paste_y = (target_h - new_h) // 2
-    canvas.paste(scaled, (paste_x, paste_y))
-    return canvas
-
-
-def _sample_edge_color(img: Image.Image) -> tuple[int, int, int]:
-    """이미지 4코너 8×8 픽셀의 중앙값으로 배경색 추정."""
-    arr = np.array(img.convert("RGB"), dtype=np.uint8)
-    h, w = arr.shape[:2]
-    size = min(8, h // 4, w // 4) or 1
-    corners = [
-        arr[:size, :size],
-        arr[:size, w - size:],
-        arr[h - size:, :size],
-        arr[h - size:, w - size:],
-    ]
-    samples = np.concatenate([c.reshape(-1, 3) for c in corners], axis=0)
-    median = tuple(int(v) for v in np.median(samples, axis=0).astype(int))
-    return median  # type: ignore[return-value]
+        metrics=safe_metrics,
+        artifacts={"resized": resized_path},
+    ), None
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
