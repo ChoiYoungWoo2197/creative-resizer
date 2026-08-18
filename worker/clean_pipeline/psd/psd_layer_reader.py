@@ -50,22 +50,24 @@ def _parse_role(layer_name: str) -> str:
 
 
 def _layer_kind(layer: Any) -> str:
+    # psd-tools: layer.kind은 이미 string ('pixel', 'group', 'type', 'smartobject' 등)
     try:
-        return layer.kind.name.lower()
-    except AttributeError:
+        return str(layer.kind)
+    except Exception:
         return "unknown"
 
 
 def _traverse(layer: Any, depth: int, result: list[LayerInfo]) -> None:
     kind = _layer_kind(layer)
-    bbox = layer.bbox  # plain tuple (top, left, bottom, right) in psd-tools
-    children = list(layer) if kind == "group" else []
+    bbox = layer.bbox  # psd-tools: plain tuple (left, top, right, bottom)
+    is_group = layer.is_group()
+    children = list(layer) if is_group else []
     result.append(LayerInfo(
         name=layer.name,
         kind=kind,
         role=_parse_role(layer.name),
         depth=depth,
-        bbox={"top": bbox[0], "left": bbox[1], "bottom": bbox[2], "right": bbox[3]},
+        bbox={"left": bbox[0], "top": bbox[1], "right": bbox[2], "bottom": bbox[3]},
         visible=layer.is_visible(),
         children_count=len(children),
     ))
