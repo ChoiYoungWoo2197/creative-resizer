@@ -33,10 +33,10 @@ _PREFIX_ROLE: dict[str, str] = {
 @dataclass
 class LayerInfo:
     name: str
-    kind: str          # 'group' | 'type' | 'pixel' | 'smartobject' | 'shape' | 'unknown'
-    role: str          # prefix 기반 역할, 매핑 없으면 'unknown'
-    depth: int         # 트리 깊이 (루트=0)
-    bbox: dict[str, int]  # top/left/right/bottom
+    kind: str                        # 'group' | 'type' | 'pixel' | 'smartobject' | 'shape' | 'unknown'
+    role: str                        # prefix 기반 역할, 매핑 없으면 'unknown'
+    depth: int                       # 트리 깊이 (루트=0)
+    bbox: dict[str, int] | None      # group이면 None (폴더라 bbox 불필요)
     visible: bool
     children_count: int
 
@@ -59,15 +59,19 @@ def _layer_kind(layer: Any) -> str:
 
 def _traverse(layer: Any, depth: int, result: list[LayerInfo]) -> None:
     kind = _layer_kind(layer)
-    bbox = layer.bbox  # psd-tools: plain tuple (left, top, right, bottom)
     is_group = layer.is_group()
     children = list(layer) if is_group else []
+    if is_group:
+        bbox = None
+    else:
+        b = layer.bbox  # psd-tools: plain tuple (left, top, right, bottom)
+        bbox = {"left": b[0], "top": b[1], "right": b[2], "bottom": b[3]}
     result.append(LayerInfo(
         name=layer.name,
         kind=kind,
         role=_parse_role(layer.name),
         depth=depth,
-        bbox={"left": bbox[0], "top": bbox[1], "right": bbox[2], "bottom": bbox[3]},
+        bbox=bbox,
         visible=layer.is_visible(),
         children_count=len(children),
     ))
