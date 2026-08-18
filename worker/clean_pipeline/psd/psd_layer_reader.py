@@ -43,8 +43,14 @@ class LayerInfo:
 
 def _parse_role(layer_name: str) -> str:
     lower = layer_name.lower()
+    # [prefix] 형식 우선 체크
     for prefix, role in _PREFIX_ROLE.items():
         if lower.startswith(prefix):
+            return role
+    # 대괄호 없는 형식도 체크 (e.g. "title", "bg", "product-group")
+    for prefix, role in _PREFIX_ROLE.items():
+        bare = prefix.strip("[]")
+        if lower == bare or lower.startswith(bare + " "):
             return role
     return "unknown"
 
