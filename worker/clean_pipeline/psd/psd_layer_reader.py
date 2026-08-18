@@ -16,17 +16,17 @@ from clean_pipeline.pipeline_logger import PipelineLogger
 
 _STAGE = StageName.ELEMENT_ANALYSIS.value
 
-# 네이밍 컨벤션 prefix → role 매핑 (project_psd_layer_convention.md 기준)
+# 레이어명 prefix → role 매핑 (대괄호 없는 이름이 기본)
 _PREFIX_ROLE: dict[str, str] = {
-    "[title-group]": "title-group",
-    "[product-group]": "product-group",
-    "[title]": "title",
-    "[body]": "body",
-    "[badge]": "badge",
-    "[product]": "product",
-    "[person]": "person",
-    "[logo]": "logo",
-    "[bg]": "bg",
+    "title-group": "title-group",
+    "product-group": "product-group",
+    "title": "title",
+    "body": "body",
+    "badge": "badge",
+    "product": "product",
+    "person": "person",
+    "logo": "logo",
+    "bg": "bg",
 }
 
 
@@ -43,14 +43,8 @@ class LayerInfo:
 
 def _parse_role(layer_name: str) -> str:
     lower = layer_name.lower()
-    # [prefix] 형식 우선 체크
     for prefix, role in _PREFIX_ROLE.items():
         if lower.startswith(prefix):
-            return role
-    # 대괄호 없는 형식도 체크 (e.g. "title", "bg", "product-group")
-    for prefix, role in _PREFIX_ROLE.items():
-        bare = prefix.strip("[]")
-        if lower == bare or lower.startswith(bare + " "):
             return role
     return "unknown"
 
