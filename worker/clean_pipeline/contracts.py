@@ -32,7 +32,7 @@ class StageName(str, Enum):
     COMPOSITE_SAFEZONE = "COMPOSITE_SAFEZONE"        # TYPE F P5 PIL composite
     ELEMENT_ANALYSIS = "ELEMENT_ANALYSIS"            # TYPE G P2 트랙별 분석
     BG_EXTRACTION = "BG_EXTRACTION"                  # TYPE G P3 bg 레이어 추출 + 확장
-    ELEMENT_COMPOSITE = "ELEMENT_COMPOSITE"          # TYPE G P4 요소 레이어 → 배경 합성
+    ELEMENT_COMPOSITE = "ELEMENT_COMPOSITE"          # TYPE G P4 비율 유지 투영 → 배경 합성
 
 
 @dataclass

@@ -1,4 +1,4 @@
-"""TYPE G P4 — 비-bg 레이어 추출 + letterbox 변환 → 배경 위 합성.
+"""TYPE G P4 — 비율 유지 투영 → 배경 위 합성.
 
 Gemini 공식 (원본 구도 보존 스케일 투영):
   S  = min(W_target/W_source, H_target/H_source)

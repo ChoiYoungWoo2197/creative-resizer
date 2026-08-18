@@ -9,7 +9,7 @@ Flow:
   P3  BG_EXTRACTION       bg 레이어 composite 추출
                           + fal-ai/smart-resize로 타겟 규격 확장
                           → 03_bg_extraction/bg.png + smart_resized.png
-  P4  ELEMENT_COMPOSITE   비-bg 레이어 letterbox 변환 → 배경 위 합성
+  P4  ELEMENT_COMPOSITE   비율 유지 투영 → 배경 위 합성
                           → 04_composite/result.png
 
 산출물:
@@ -73,7 +73,7 @@ def run(
     if sr_bg.status == PipelineStatus.FAIL:
         return _fail(job_id, sr_bg, stage_results, logger)
 
-    # ── P4: ELEMENT_COMPOSITE — 비-bg 레이어 letterbox 변환 → 배경 합성 ────────
+    # ── P4: ELEMENT_COMPOSITE — 비율 유지 투영 → 배경 합성 ──────────────────────
     from clean_pipeline.psd import element_compositor
 
     sr_comp, comp_result = element_compositor.composite_elements(
