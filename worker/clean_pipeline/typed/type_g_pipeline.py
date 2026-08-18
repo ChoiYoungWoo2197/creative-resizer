@@ -1,4 +1,4 @@
-"""TYPE G — PSD 레이어 기반 분석 파이프라인: P1 → P2 → P3.
+"""TYPE G — PSD 레이어 기반 분석 파이프라인: P1 → P2 → P3 → P4.
 
 기존 TYPE B 파이프라인은 수정하지 않는다.
 
@@ -9,11 +9,14 @@ Flow:
   P3  BG_EXTRACTION       bg 레이어 composite 추출
                           + fal-ai/smart-resize로 타겟 규격 확장
                           → 03_bg_extraction/bg.png + smart_resized.png
+  P4  ELEMENT_COMPOSITE   비-bg 레이어 letterbox 변환 → 배경 위 합성
+                          → 04_composite/result.png
 
 산출물:
   02_psd_layers/layers.json
   03_bg_extraction/bg.png
   05.5_smart_resize/smart_resized.png
+  04_composite/result.png
 """
 from __future__ import annotations
 
@@ -70,12 +73,30 @@ def run(
     if sr_bg.status == PipelineStatus.FAIL:
         return _fail(job_id, sr_bg, stage_results, logger)
 
+    # ── P4: ELEMENT_COMPOSITE — 비-bg 레이어 letterbox 변환 → 배경 합성 ────────
+    from clean_pipeline.psd import element_compositor
+
+    sr_comp, comp_result = element_compositor.composite_elements(
+        psd_path=request.source_path,
+        layers=result["layers"],
+        bg_path=bg_result["resized_path"],
+        source_w=canonical.width,
+        source_h=canonical.height,
+        target_w=spec.width,
+        target_h=spec.height,
+        output_dir=out_dir,
+        job_id=job_id,
+        logger=logger,
+    )
+    stage_results.append(sr_comp)
+    if sr_comp.status == PipelineStatus.FAIL:
+        return _fail(job_id, sr_comp, stage_results, logger)
+
     logger.job_pass(
-        f"TYPE G P1→P3 complete — layers={result['layer_count']} resized={bg_result['resized_path']}",
+        f"TYPE G P1→P4 complete — layers={result['layer_count']} result={comp_result['result_path']}",
         metrics={
             "layerCount": result["layer_count"],
-            "bgPath": bg_result["bg_path"],
-            "resizedPath": bg_result["resized_path"],
+            "resultPath": comp_result["result_path"],
             "isSmartResized": bg_result["is_smart_resized"],
         },
     )
@@ -84,7 +105,7 @@ def run(
         job_id=job_id,
         status=PipelineStatus.PASS,
         stage_results=stage_results,
-        output_paths=[result["layers_json_path"], bg_result["resized_path"]],
+        output_paths=[comp_result["result_path"]],
     )
 
 
