@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 
 _STAGE = StageName.ELEMENT_ANALYSIS.value
+_OUTPUT_SUBDIR = Path("clean_v1") / "02_psd_layers"
 
 # 레이어명 prefix → role 매핑 (대괄호 없는 이름이 기본)
 _PREFIX_ROLE: dict[str, str] = {
@@ -96,27 +98,15 @@ def read_layers(
     try:
         from psd_tools import PSDImage
     except ImportError:
-        return StageResult(
-            stage=StageName.ELEMENT_ANALYSIS,
-            status=PipelineStatus.FAIL,
-            reasons=["PSD_TOOLS_NOT_INSTALLED"],
-        ), None
+        return _fail(logger, "PSD_TOOLS_NOT_INSTALLED", "psd-tools 라이브러리 미설치")
 
     if not os.path.isfile(psd_path):
-        return StageResult(
-            stage=StageName.ELEMENT_ANALYSIS,
-            status=PipelineStatus.FAIL,
-            reasons=[f"PSD_FILE_NOT_FOUND: {psd_path}"],
-        ), None
+        return _fail(logger, "PSD_FILE_NOT_FOUND", f"PSD 파일 없음: {psd_path}")
 
     try:
         psd = PSDImage.open(psd_path)
     except Exception as exc:
-        return StageResult(
-            stage=StageName.ELEMENT_ANALYSIS,
-            status=PipelineStatus.FAIL,
-            reasons=[f"PSD_OPEN_FAILED: {exc}"],
-        ), None
+        return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
 
     layers: list[LayerInfo] = []
     for top_layer in psd:
@@ -142,7 +132,7 @@ def read_layers(
         )
 
     # 레이어 목록 JSON 저장
-    out_path = os.path.join(output_dir, "02_psd_layers", "layers.json")
+    out_path = str(Path(output_dir) / job_id / _OUTPUT_SUBDIR / "layers.json")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(
@@ -180,3 +170,16 @@ def read_layers(
         "layer_count": len(layers),
         "layers": layers,
     }
+
+
+def _fail(
+    logger: PipelineLogger,
+    code: str,
+    message: str,
+) -> tuple[StageResult, None]:
+    logger.stage_fail(_STAGE, code, message)
+    return StageResult(
+        stage=StageName.ELEMENT_ANALYSIS,
+        status=PipelineStatus.FAIL,
+        reasons=[f"[{code}] {message}"],
+    ), None
