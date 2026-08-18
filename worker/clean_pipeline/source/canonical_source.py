@@ -94,6 +94,62 @@ def prepare(
     ), meta
 
 
+def prepare_psd_passthrough(
+    source_path: str,
+    output_dir: str,
+    job_id: str,
+    logger: PipelineLogger,
+) -> tuple[StageResult, CanonicalSource | None]:
+    """TYPE G용 P1 — composite 없이 PSD 경로 그대로 canonical로 전달."""
+    stage_dir = Path(output_dir) / job_id / _OUTPUT_SUBDIR
+    stage_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.stage_start(STAGE.value, f"source={source_path} [PSD passthrough]")
+
+    src = Path(source_path)
+    if not src.exists():
+        return _fail(logger, "SOURCE_NOT_FOUND", f"File not found: {source_path}")
+
+    ext = src.suffix.lower()
+    if ext not in _SUPPORTED_PSD:
+        return _fail(logger, "NOT_PSD", f"TYPE G requires PSD input, got {ext!r}")
+
+    try:
+        from psd_tools import PSDImage
+        psd = PSDImage.open(source_path)
+        width, height = psd.width, psd.height
+    except Exception as exc:
+        return _fail(logger, "PSD_OPEN_FAILED", f"Failed to open PSD: {exc}")
+
+    sha = hashlib.sha256(src.read_bytes()).hexdigest()[:16]
+
+    meta = CanonicalSource(
+        source_type="psd",
+        width=width,
+        height=height,
+        mode="RGBA",
+        sha256=sha,
+        canonical_path=source_path,  # composite 없이 PSD 경로 그대로
+    )
+
+    json_path = stage_dir / "source.json"
+    json_path.write_text(meta.to_json(), encoding="utf-8")
+
+    logger.artifact_written(STAGE.value, str(json_path), "source metadata (PSD passthrough)")
+    logger.stage_pass(
+        STAGE.value,
+        f"PSD passthrough {width}x{height} sha={sha}",
+        metrics={"width": width, "height": height, "mode": "RGBA", "sha256": sha},
+    )
+
+    return StageResult(
+        stage=STAGE,
+        status=PipelineStatus.PASS,
+        metrics={"width": width, "height": height, "mode": "RGBA", "sha256": sha},
+        artifacts={"source_json": str(json_path)},
+    ), meta
+
+
 # ── Loaders ───────────────────────────────────────────────────────────────────
 
 

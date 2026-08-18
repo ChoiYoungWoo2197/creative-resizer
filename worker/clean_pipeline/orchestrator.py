@@ -65,9 +65,15 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
         )
 
         # ── P1: SOURCE_PREPARATION ────────────────────────────────────────────
-        from clean_pipeline.source.canonical_source import prepare
-
-        sr, canonical = prepare(request.source_path, request.output_directory, job_id, logger)
+        # TYPE G: PSD composite 없이 passthrough
+        if request.pipeline_type == "G":
+            from clean_pipeline.source.canonical_source import prepare_psd_passthrough
+            sr, canonical = prepare_psd_passthrough(
+                request.source_path, request.output_directory, job_id, logger
+            )
+        else:
+            from clean_pipeline.source.canonical_source import prepare
+            sr, canonical = prepare(request.source_path, request.output_directory, job_id, logger)
         stage_results.append(sr)
         if sr.status == PipelineStatus.FAIL:
             return _fail(job_id, sr, stage_results, logger)
