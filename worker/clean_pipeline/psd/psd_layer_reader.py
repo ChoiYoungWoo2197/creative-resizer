@@ -131,12 +131,13 @@ def read_layers(
     )
     for info in layers:
         indent = "  " * info.depth
-        b = info.bbox
+        bounds = (
+            f"({info.bbox['left']},{info.bbox['top']},{info.bbox['right']},{info.bbox['bottom']})"
+            if info.bbox else "-"
+        )
         print(
             f"[{_STAGE}][PSD_LAYER] {indent}[{info.kind}] {info.name!r} "
-            f"role={info.role} "
-            f"bounds=({b['left']},{b['top']},{b['right']},{b['bottom']}) "
-            f"visible={info.visible}",
+            f"role={info.role} bounds={bounds} visible={info.visible}",
             flush=True,
         )
 
