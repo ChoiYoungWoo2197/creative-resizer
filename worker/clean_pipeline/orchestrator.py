@@ -78,7 +78,7 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
 
         # ── Pipeline type routing (after P1, before any analysis) ─────────────
         from clean_pipeline import pipeline_type_selector
-        _VALID = ("A", "B", "D", "E")
+        _VALID = ("A", "B", "D", "E", "F", "G")
         if request.pipeline_type in _VALID:
             pipeline_type = request.pipeline_type
             logger.artifact_written(
@@ -136,6 +136,35 @@ def run(request: CleanPipelineRequest, api_key: str = "") -> CleanPipelineResult
                 status=PipelineStatus.PASS,
                 stage_results=stage_results,
                 output_paths=output_paths,
+            )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TYPE G: P1 → P2(트랙별 GPT-4o + birefnet) — P1~P2까지만
+        # ─────────────────────────────────────────────────────────────────────
+        if pipeline_type == "G":
+            from clean_pipeline.typed.type_g_pipeline import run as run_type_g
+
+            return run_type_g(
+                request=request,
+                spec=spec,
+                canonical=canonical,
+                stage_results=stage_results,
+                logger=logger,
+                api_key=resolved_key,
+            )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # TYPE F: P1 → P2(birefnet) → P3(object-removal) → P4(smart-resize) → P5(composite)
+        # ─────────────────────────────────────────────────────────────────────
+        if pipeline_type == "F":
+            from clean_pipeline.typed.type_f_pipeline import run as run_type_f
+
+            return run_type_f(
+                request=request,
+                spec=spec,
+                canonical=canonical,
+                stage_results=stage_results,
+                logger=logger,
             )
 
         # ─────────────────────────────────────────────────────────────────────
