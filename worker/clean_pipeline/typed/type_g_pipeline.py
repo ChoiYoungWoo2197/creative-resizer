@@ -1,15 +1,19 @@
-"""TYPE G — PSD 레이어 기반 분석 파이프라인: P1 → P2.
+"""TYPE G — PSD 레이어 기반 분석 파이프라인: P1 → P2 → P3.
 
 기존 TYPE B 파이프라인은 수정하지 않는다.
-TYPE G P1→P2까지만 구현 (P3 이후는 별도 구현 예정).
 
 Flow:
-  P1  SOURCE_PREPARATION  orchestrator 담당, canonical 전달
+  P1  SOURCE_PREPARATION  orchestrator 담당, PSD passthrough
   P2  ELEMENT_ANALYSIS    psd-tools 레이어 트리 읽기
                           → 02_psd_layers/layers.json
+  P3  BG_EXTRACTION       bg 레이어 composite 추출
+                          + fal-ai/smart-resize로 타겟 규격 확장
+                          → 03_bg_extraction/bg.png + smart_resized.png
 
 산출물:
   02_psd_layers/layers.json
+  03_bg_extraction/bg.png
+  05.5_smart_resize/smart_resized.png
 """
 from __future__ import annotations
 
@@ -50,11 +54,29 @@ def run(
     if sr.status == PipelineStatus.FAIL:
         return _fail(job_id, sr, stage_results, logger)
 
+    # ── P3: BG_EXTRACTION — bg 레이어 추출 + smart-resize ────────────────────
+    from clean_pipeline.psd import bg_extractor
+
+    sr_bg, bg_result = bg_extractor.extract_and_resize(
+        psd_path=request.source_path,
+        layers=result["layers"],
+        target_width=spec.width,
+        target_height=spec.height,
+        output_dir=out_dir,
+        job_id=job_id,
+        logger=logger,
+    )
+    stage_results.append(sr_bg)
+    if sr_bg.status == PipelineStatus.FAIL:
+        return _fail(job_id, sr_bg, stage_results, logger)
+
     logger.job_pass(
-        f"TYPE G P1→P2 complete — layers={result['layer_count']} layers_json={result['layers_json_path']}",
+        f"TYPE G P1→P3 complete — layers={result['layer_count']} resized={bg_result['resized_path']}",
         metrics={
             "layerCount": result["layer_count"],
-            "layersJsonPath": result["layers_json_path"],
+            "bgPath": bg_result["bg_path"],
+            "resizedPath": bg_result["resized_path"],
+            "isSmartResized": bg_result["is_smart_resized"],
         },
     )
 
@@ -62,7 +84,7 @@ def run(
         job_id=job_id,
         status=PipelineStatus.PASS,
         stage_results=stage_results,
-        output_paths=[result["layers_json_path"]],
+        output_paths=[result["layers_json_path"], bg_result["resized_path"]],
     )
 
 

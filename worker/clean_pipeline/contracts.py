@@ -31,6 +31,7 @@ class StageName(str, Enum):
     BACKGROUND_CLEANUP = "BACKGROUND_CLEANUP"        # TYPE F P3 object-removal
     COMPOSITE_SAFEZONE = "COMPOSITE_SAFEZONE"        # TYPE F P5 PIL composite
     ELEMENT_ANALYSIS = "ELEMENT_ANALYSIS"            # TYPE G P2 트랙별 분석
+    BG_EXTRACTION = "BG_EXTRACTION"                  # TYPE G P3 bg 레이어 추출 + 확장
 
 
 @dataclass
