@@ -29,6 +29,7 @@ _PREFIX_ROLE: dict[str, str] = {
     "person": "person",
     "logo": "logo",
     "bg": "bg",
+    "배경": "bg",   # 한국어 배경 레이어명 → role='bg' 처리
 }
 
 

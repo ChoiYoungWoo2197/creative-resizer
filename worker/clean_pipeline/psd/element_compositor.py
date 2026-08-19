@@ -7,7 +7,7 @@ Gemini 공식 (원본 구도 보존 스케일 투영):
   x' = x * S + Ox,  y' = y * S + Oy
   w' = w * S,       h' = h * S
 
-대상: depth=0, role != "bg", visible=True 인 최상위 레이어만.
+대상: depth=0, role != "bg", name not in {"배경","background"}, visible=True 인 최상위 레이어만.
 (그룹이면 composite()가 하위 레이어 전체를 렌더링하므로 이중 합성 없음)
 """
 from __future__ import annotations
@@ -77,11 +77,14 @@ def composite_elements(
         return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
 
     # ── 4-5. 레이아웃 모드에 따른 레이어 합성 ──────────────────────────────────
+    # 배경 레이어명 집합 (role 매핑과 독립적인 이름 기반 방어)
+    _BG_NAMES = frozenset({"배경", "background"})
+
     if mode == "AP_LAYOUT":
-        # 기존 depth=0 기반 letterbox 합성 — 변경 없음
         top_layers = [
             l for l in layers
-            if l.depth == 0 and l.role != "bg" and l.visible
+            if l.depth == 0 and l.role != "bg"
+            and l.name not in _BG_NAMES and l.visible
         ]
         placed_count = 0
         for layer_info in top_layers:
