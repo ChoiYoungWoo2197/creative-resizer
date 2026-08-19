@@ -29,7 +29,6 @@ _PREFIX_ROLE: dict[str, str] = {
     "person": "person",
     "logo": "logo",
     "bg": "bg",
-    "배경": "bg",   # 한국어 bg 레이어명 → role='bg' (영문 "bg" prefix 미매핑 보완)
 }
 
 

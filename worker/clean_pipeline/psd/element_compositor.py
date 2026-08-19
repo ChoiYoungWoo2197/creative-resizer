@@ -83,7 +83,8 @@ def composite_elements(
     if mode == "AP_LAYOUT":
         top_layers = [
             l for l in layers
-            if l.depth == 0 and l.role != "bg" and l.visible
+            if l.depth == 0 and l.role != "bg"
+            and l.name not in _BG_SUBLAYER_NAMES and l.visible
         ]
         placed_count = 0
         for layer_info in top_layers:
