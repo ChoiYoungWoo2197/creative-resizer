@@ -8,7 +8,7 @@ Gemini 공식 (원본 구도 보존 스케일 투영):
   w' = w * S,       h' = h * S
 
 대상: depth=0, role != "bg", visible=True 인 최상위 레이어만.
-(그룹이면 composite()가 하위 레이어 전체를 렌더링하므로 이중 합성 없음)
+(그룹이면 bg 서브레이어를 제외한 자식을 개별 합성)
 """
 from __future__ import annotations
 
@@ -77,8 +77,10 @@ def composite_elements(
         return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
 
     # ── 4-5. 레이아웃 모드에 따른 레이어 합성 ──────────────────────────────────
+    # bg 계열 서브레이어 이름 집합 — AP_LAYOUT 그룹 합성 시 제외
+    _BG_SUBLAYER_NAMES = frozenset({"bg", "배경", "background"})
+
     if mode == "AP_LAYOUT":
-        # 기존 depth=0 기반 letterbox 합성 — 변경 없음
         top_layers = [
             l for l in layers
             if l.depth == 0 and l.role != "bg" and l.visible
@@ -90,43 +92,18 @@ def composite_elements(
                 print(f"[{STAGE.value}][LAYER_NOT_FOUND] name={layer_info.name!r}", flush=True)
                 continue
 
-            try:
-                img = layer.composite()
-            except Exception as exc:
-                print(f"[{STAGE.value}][COMPOSITE_SKIP] name={layer_info.name!r} err={exc}", flush=True)
-                continue
-
-            if img is None:
-                continue
-
-            img = img.convert("RGBA")
-
-            # bbox: psd-tools plain tuple (left, top, right, bottom)
-            b = layer.bbox
-            lw, lh = b[2] - b[0], b[3] - b[1]
-            if lw <= 0 or lh <= 0:
-                continue
-
-            # composite()가 full-canvas 크기를 반환하면 레이어 영역만 크롭
-            if img.size == (psd.width, psd.height):
-                cropped = img.crop((b[0], b[1], b[2], b[3]))
+            if layer.is_group():
+                # 그룹이면 bg 서브레이어 제외하고 자식 개별 합성
+                for child in layer:
+                    if child.name.lower() in _BG_SUBLAYER_NAMES:
+                        print(f"[{STAGE.value}][BG_SUBLAYER_SKIP] name={child.name!r}", flush=True)
+                        continue
+                    if _place_layer(child, canvas, psd, S, Ox, Oy, STAGE.value):
+                        placed_count += 1
             else:
-                cropped = img
+                if _place_layer(layer, canvas, psd, S, Ox, Oy, STAGE.value):
+                    placed_count += 1
 
-            new_w = max(1, int(lw * S))
-            new_h = max(1, int(lh * S))
-            scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
-
-            new_x = int(b[0] * S + Ox)
-            new_y = int(b[1] * S + Oy)
-
-            canvas.paste(scaled, (new_x, new_y), scaled)
-            placed_count += 1
-            print(
-                f"[{STAGE.value}][LAYER_PLACED] name={layer_info.name!r} role={layer_info.role} "
-                f"pos=({new_x},{new_y}) size={new_w}x{new_h}",
-                flush=True,
-            )
         total_count = len(top_layers)
     else:
         # SmartLayoutEngine 기반 leaf-layer 합성 (EDGE_ANCHORING / VERTICAL_STACKING)
@@ -170,6 +147,44 @@ def composite_elements(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _place_layer(layer, canvas: Image.Image, psd, S: float, Ox: float, Oy: float, stage_name: str) -> bool:
+    """단일 psd-tools 레이어를 letterbox 좌표로 canvas에 합성. 성공 시 True."""
+    try:
+        img = layer.composite()
+    except Exception as exc:
+        print(f"[{stage_name}][COMPOSITE_SKIP] name={layer.name!r} err={exc}", flush=True)
+        return False
+
+    if img is None:
+        return False
+
+    img = img.convert("RGBA")
+    b = layer.bbox
+    lw, lh = b[2] - b[0], b[3] - b[1]
+    if lw <= 0 or lh <= 0:
+        return False
+
+    if img.size == (psd.width, psd.height):
+        cropped = img.crop((b[0], b[1], b[2], b[3]))
+    else:
+        cropped = img
+
+    new_w = max(1, int(lw * S))
+    new_h = max(1, int(lh * S))
+    scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
+
+    new_x = int(b[0] * S + Ox)
+    new_y = int(b[1] * S + Oy)
+
+    canvas.paste(scaled, (new_x, new_y), scaled)
+    print(
+        f"[{stage_name}][LAYER_PLACED] name={layer.name!r} "
+        f"pos=({new_x},{new_y}) size={new_w}x{new_h}",
+        flush=True,
+    )
+    return True
 
 
 def _find_layer(parent, name: str):
