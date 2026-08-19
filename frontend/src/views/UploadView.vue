@@ -8,7 +8,7 @@
         <!-- Upload -->
         <div class="sec">
           <div class="sec-head" @click="uploadOpen = !uploadOpen">
-            <span class="sec-title">배너 업로드 <span class="sec-hint">(이미지)</span></span>
+            <span class="sec-title">배너 업로드 <span class="sec-hint">(PSD)</span></span>
             <span class="chevron" :class="{ up: uploadOpen }">›</span>
           </div>
           <div v-show="uploadOpen" class="sec-body">
@@ -19,7 +19,7 @@
               @dragleave.prevent="dragover = false"
               @drop.prevent="onDrop"
             >
-              <input ref="fileInput" type="file" accept=".psd,.png,.jpg,.jpeg,.webp,.gif,.tiff,.bmp" style="display:none" @change="onInputChange" />
+              <input ref="fileInput" type="file" accept=".psd" style="display:none" @change="onInputChange" />
               <div class="drop-ico-wrap">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="drop-svg">
                   <path d="M12 15V5M12 5L8.5 8.5M12 5L15.5 8.5" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -27,7 +27,7 @@
                 </svg>
               </div>
               <div class="drop-label">클릭 또는 드래그</div>
-              <div class="drop-hint">PSD · PNG · JPG · WebP · GIF</div>
+              <div class="drop-hint">PSD 파일만 지원됩니다</div>
             </div>
             <div v-else class="preview-block">
               <div class="preview-img-wrap">
@@ -763,7 +763,7 @@ const aiFeatures = [
   { id: 4, icon: '✦', title: '품질 향상',          desc: '선명도 및 색감 최적화' },
 ]
 
-const ALLOWED_EXTS = ['psd', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'tiff', 'bmp']
+const ALLOWED_EXTS = ['psd']
 const fileExt = computed(() => form.psdFile?.name.split('.').pop().toUpperCase() ?? '')
 
 const currentMaterialHint = computed(() => {
@@ -1351,7 +1351,7 @@ function onDrop(e) {
   if (!f) return
   const ext = f.name.split('.').pop().toLowerCase()
   if (ALLOWED_EXTS.includes(ext)) { form.psdFile = f; loadPreview(f); runPsdLayerAnalyze(f) }
-  else ElMessage.warning('지원하지 않는 파일 형식입니다. (PSD, PNG, JPG, WebP, GIF 등)')
+  else ElMessage.warning('PSD 파일만 업로드할 수 있습니다.')
 }
 
 async function submit() {
@@ -1369,6 +1369,7 @@ async function submit() {
   fd.append('smartFitStrength', 'balanced')
   fd.append('focalPosition', 'center')
   fd.append('outputFormat', form.outputFormat)
+  fd.append('pipelineType', 'G')
   if (isPsdFile.value) {
     fd.append('psdMode', 'artboard-first')
   }
