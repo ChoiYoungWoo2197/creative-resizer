@@ -31,4 +31,7 @@ public class BannerMessage {
 
     // 신규 파이프라인 라우팅 (예: "clean_v1")
     private String pipelineVersion;
+
+    // 파이프라인 타입 (예: "G") — Worker pipeline_type_selector에 전달
+    private String pipelineType;
 }

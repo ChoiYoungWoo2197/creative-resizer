@@ -47,7 +47,7 @@ public class BannerService {
                             String aiRecommendedFocalPosition,
                             String psdMode, List<String> selectedArtboardIds,
                             String objectAnalysisId, Boolean objectReflowEnabled,
-                            String pipelineVersion) throws IOException {
+                            String pipelineVersion, String pipelineType) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
         if (psdMode == null || psdMode.isBlank()) psdMode = "artboard-first";
@@ -134,6 +134,7 @@ public class BannerService {
                 .objectAnalysisId(job.getObjectAnalysisId())
                 .objectReflowEnabled(job.getObjectReflowEnabled())
                 .pipelineVersion(pipelineVersion)
+                .pipelineType(pipelineType)
                 .build();
 
         bannerProducer.publish(message);
@@ -223,6 +224,7 @@ public class BannerService {
                 .specs(specItems)
                 .outputFormat(message.getOutputFormat())
                 .pipelineVersion(resolvedPipelineVersion)
+                .pipelineType(message.getPipelineType())
                 .build();
 
         WorkerResponse response = workerClient.generate(request);

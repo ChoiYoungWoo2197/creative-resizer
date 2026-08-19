@@ -14,6 +14,7 @@ public class WorkerRequest {
     private List<SpecItem> specs;
     private String outputFormat;
     private String pipelineVersion;   // "clean_v1" (기본값, 생략 시 Worker가 동일하게 처리)
+    private String pipelineType;      // "G" 등 — 생략 시 Worker 기본 라우팅
 
     @Data
     @Builder
