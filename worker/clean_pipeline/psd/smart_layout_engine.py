@@ -133,58 +133,65 @@ class SmartLayoutEngine:
             if (l.role in ("title", "body") and l.kind != "group") or l.role == "badge"
         ]
 
-        left_anchor_max = self.margin
-        current_left_y = self.margin
-
-        # [좌측 앵커] Logo
-        if logo_layer:
-            x1, y1, x2, y2 = _unpack(logo_layer.bbox)
-            w, h = (x2 - x1) * S, (y2 - y1) * S
-            nx1 = self.margin
-            ny1 = current_left_y
-            nx2 = int(round(nx1 + w))
-            ny2 = min(int(round(ny1 + h)), self.tgt_h)
-            results[(logo_layer.name, logo_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S)
-            left_anchor_max = max(left_anchor_max, nx2)
-            current_left_y = ny2 + self.margin
-
-        # [좌측 앵커] Product (Logo 아래)
-        if prod_layer:
-            x1, y1, x2, y2 = _unpack(prod_layer.bbox)
-            w, h = (x2 - x1) * S, (y2 - y1) * S
-            nx1 = self.margin
-            ny1 = current_left_y
-            nx2 = int(round(nx1 + w))
-            ny2 = min(int(round(ny1 + h)), self.tgt_h)
-            results[(prod_layer.name, prod_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S)
-            left_anchor_max = max(left_anchor_max, nx2)
-
-        # [우측 앵커] Model
+        # [우측] Model — 캔버스 우측 끝까지
         model_left_limit = self.tgt_w - self.margin
         if model_layer:
             x1, y1, x2, y2 = _unpack(model_layer.bbox)
             w = (x2 - x1) * S
-            nx2 = self.tgt_w - self.margin
+            nx2 = self.tgt_w
             nx1 = int(round(nx2 - w))
             ny1 = int(round(y1 * S + Oy))
             ny2 = int(round(ny1 + (y2 - y1) * S))
             results[(model_layer.name, model_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S)
             model_left_limit = nx1
 
-        # [중앙] Text Group — union bbox 기준 중앙 배치 후 상대 오프셋 복원
-        if text_layers:
-            ux1 = min(_unpack(l.bbox)[0] for l in text_layers)
-            ux2 = max(_unpack(l.bbox)[2] for l in text_layers)
+        # [좌측] Product — 세로 중앙
+        left_anchor_max = self.margin
+        if prod_layer:
+            x1, y1, x2, y2 = _unpack(prod_layer.bbox)
+            w, h = (x2 - x1) * S, (y2 - y1) * S
+            nx1 = self.margin
+            ny1 = int(round((self.tgt_h - h) / 2.0))
+            nx2 = int(round(nx1 + w))
+            ny2 = int(round(ny1 + h))
+            results[(prod_layer.name, prod_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S)
+            left_anchor_max = nx2 + self.margin
+
+        # [중앙] Logo + Text — union 블록으로 가로/세로 완전 중앙 정렬
+        # 원본 상대 Y 위치를 보존하면서 블록 전체를 중앙 배치
+        center_items: list[LayerInfo] = []
+        if logo_layer:
+            center_items.append(logo_layer)
+        center_items.extend(text_layers)
+
+        if center_items:
+            ux1 = min(_unpack(l.bbox)[0] for l in center_items)
+            uy1 = min(_unpack(l.bbox)[1] for l in center_items)
+            ux2 = max(_unpack(l.bbox)[2] for l in center_items)
+            uy2 = max(_unpack(l.bbox)[3] for l in center_items)
+
             union_w = (ux2 - ux1) * S
-            available_center = (left_anchor_max + model_left_limit) / 2.0
-            new_union_x1 = available_center - union_w / 2.0
-            for l in text_layers:
+            union_h = (uy2 - uy1) * S
+
+            avail_w = max(100, model_left_limit - left_anchor_max)
+
+            # 가용폭 초과 시 center_items만 추가 축소
+            text_scale = S
+            if union_w > avail_w:
+                text_scale = S * (avail_w / union_w)
+                union_w = (ux2 - ux1) * text_scale
+                union_h = (uy2 - uy1) * text_scale
+
+            new_union_x1 = left_anchor_max + (avail_w - union_w) / 2.0
+            new_union_y1 = (self.tgt_h - union_h) / 2.0
+
+            for l in center_items:
                 x1, y1, x2, y2 = _unpack(l.bbox)
-                nx1 = int(round(new_union_x1 + (x1 - ux1) * S))
-                ny1 = int(round(y1 * S + Oy))
-                nx2 = int(round(nx1 + (x2 - x1) * S))
-                ny2 = int(round(ny1 + (y2 - y1) * S))
-                results[(l.name, l.depth)] = _coords(nx1, ny1, nx2, ny2, S)
+                nx1 = int(round(new_union_x1 + (x1 - ux1) * text_scale))
+                ny1 = int(round(new_union_y1 + (y1 - uy1) * text_scale))
+                nx2 = int(round(nx1 + (x2 - x1) * text_scale))
+                ny2 = int(round(ny1 + (y2 - y1) * text_scale))
+                results[(l.name, l.depth)] = _coords(nx1, ny1, nx2, ny2, text_scale)
 
         return results
 
