@@ -201,8 +201,8 @@ class SmartLayoutEngine:
         self, layers: list[LayerInfo]
     ) -> dict[tuple[str, int], dict[str, Any]]:
         results: dict[tuple[str, int], dict[str, Any]] = {}
-        # 가로 폭 기준 피팅 스케일 (최대 1.0)
-        S_fit = min(1.0, (self.tgt_w - self.margin * 2) / self.src_w)
+        # 가독성 보장 최솟값(0.4) + 캔버스 폭 기준 피팅 스케일
+        S_base = max(0.4, min(1.0, (self.tgt_w - self.margin * 2) / self.src_w))
 
         logo_layer = next((l for l in layers if l.role == "logo"), None)
         prod_layer = next((l for l in layers if l.role == "product"), None)
@@ -221,23 +221,23 @@ class SmartLayoutEngine:
         # [상단] Product — 가로 중앙
         if prod_layer:
             x1, y1, x2, y2 = _unpack(prod_layer.bbox)
-            w, h = (x2 - x1) * S_fit, (y2 - y1) * S_fit
+            w, h = (x2 - x1) * S_base, (y2 - y1) * S_base
             nx1 = int(round((self.tgt_w - w) / 2.0))
             ny1 = top_offset
             nx2 = int(round(nx1 + w))
             ny2 = int(round(ny1 + h))
-            results[(prod_layer.name, prod_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S_fit)
-            top_offset = ny2 + self.margin
+            results[(prod_layer.name, prod_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S_base)
+            top_offset = ny2 + int(self.margin * 0.5)  # product-logo 간격은 margin 절반
 
         # [상단] Logo — Product 아래, 가로 중앙
         if logo_layer:
             x1, y1, x2, y2 = _unpack(logo_layer.bbox)
-            w, h = (x2 - x1) * S_fit, (y2 - y1) * S_fit
+            w, h = (x2 - x1) * S_base, (y2 - y1) * S_base
             nx1 = int(round((self.tgt_w - w) / 2.0))
             ny1 = top_offset
             nx2 = int(round(nx1 + w))
             ny2 = int(round(ny1 + h))
-            results[(logo_layer.name, logo_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S_fit)
+            results[(logo_layer.name, logo_layer.depth)] = _coords(nx1, ny1, nx2, ny2, S_base)
             top_offset = ny2 + self.margin
 
         # [하단] Text Group — union bbox 기준, 하단 앵커
@@ -247,28 +247,31 @@ class SmartLayoutEngine:
             uy1 = min(_unpack(l.bbox)[1] for l in text_layers)
             ux2 = max(_unpack(l.bbox)[2] for l in text_layers)
             uy2 = max(_unpack(l.bbox)[3] for l in text_layers)
-            union_w = (ux2 - ux1) * S_fit
-            union_h = (uy2 - uy1) * S_fit
+            # 텍스트가 캔버스 폭을 넘으면 text_scale로 별도 축소
+            text_scale = S_base
+            if (ux2 - ux1) * text_scale > (self.tgt_w - self.margin * 2):
+                text_scale = (self.tgt_w - self.margin * 2) / (ux2 - ux1)
+            union_w = (ux2 - ux1) * text_scale
+            union_h = (uy2 - uy1) * text_scale
             new_union_y1 = bottom_offset - union_h
             new_union_x1 = (self.tgt_w - union_w) / 2.0
             for l in text_layers:
                 x1, y1, x2, y2 = _unpack(l.bbox)
-                nx1 = int(round(new_union_x1 + (x1 - ux1) * S_fit))
-                ny1 = int(round(new_union_y1 + (y1 - uy1) * S_fit))
-                nx2 = int(round(nx1 + (x2 - x1) * S_fit))
-                ny2 = int(round(ny1 + (y2 - y1) * S_fit))
-                results[(l.name, l.depth)] = _coords(nx1, ny1, nx2, ny2, S_fit)
+                nx1 = int(round(new_union_x1 + (x1 - ux1) * text_scale))
+                ny1 = int(round(new_union_y1 + (y1 - uy1) * text_scale))
+                nx2 = int(round(nx1 + (x2 - x1) * text_scale))
+                ny2 = int(round(ny1 + (y2 - y1) * text_scale))
+                results[(l.name, l.depth)] = _coords(nx1, ny1, nx2, ny2, text_scale)
             bottom_offset = int(round(new_union_y1)) - self.margin
 
-        # [중앙] Model — 가용 높이 채움, 우측 밀착
+        # [중앙] Model — 가용 높이 꽉 채움, 가로 중앙 (너비 초과 시 compositor에서 균등 crop)
         if model_layer:
             x1, y1, x2, y2 = _unpack(model_layer.bbox)
             lw, lh = x2 - x1, y2 - y1
             available_h = max(100, bottom_offset - top_offset)
-            # 높이/폭 중 캔버스를 벗어나지 않는 상한 선택
-            S_fill = max(S_fit, min(available_h / lh, self.tgt_w / lw))
+            S_fill = available_h / lh  # 높이 우선 채움 (h == available_h 보장)
             w, h = lw * S_fill, lh * S_fill
-            nx1 = max(0, int(round(self.tgt_w - w)))
+            nx1 = int(round((self.tgt_w - w) / 2.0))  # 중앙 정렬, 음수 허용
             ny1 = top_offset
             nx2 = int(round(nx1 + w))
             ny2 = int(round(ny1 + h))

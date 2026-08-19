@@ -234,7 +234,7 @@ def _composite_with_layout(psd, canvas, layout_dict: dict, stage_name: str) -> i
         new_h = max(1, coords["new_y2"] - coords["new_y1"])
         scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
 
-        new_x = max(0, coords["new_x1"])
+        new_x = coords["new_x1"]   # 음수 허용 — Pillow 자동 clip (중앙/우측 정렬 overflow 처리)
         new_y = max(0, coords["new_y1"])
         canvas.paste(scaled, (new_x, new_y), scaled)
         placed_count += 1
