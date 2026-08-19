@@ -19,6 +19,7 @@ from PIL import Image
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
 from clean_pipeline.psd.psd_layer_reader import LayerInfo
+from clean_pipeline.psd.smart_layout_engine import SmartLayoutEngine
 
 STAGE = StageName.ELEMENT_COMPOSITE
 _OUTPUT_SUBDIR = Path("clean_v1") / "04_composite"
@@ -48,12 +49,17 @@ def composite_elements(
         f"element composite src={source_w}x{source_h} -> {target_w}x{target_h}",
     )
 
-    # ── 1. letterbox 변환 계수 ───────────────────────────────────────────────
+    # ── 1. 레이아웃 모드 결정 + AP_LAYOUT 기준 letterbox 계수 ────────────────
+    engine = SmartLayoutEngine(
+        source_size=(source_w, source_h),
+        target_size=(target_w, target_h),
+    )
+    mode = engine.determine_mode()
     S = min(target_w / source_w, target_h / source_h)
     Ox = (target_w - source_w * S) / 2
     Oy = (target_h - source_h * S) / 2
     print(
-        f"[{STAGE.value}][TRANSFORM] S={S:.4f} Ox={Ox:.1f} Oy={Oy:.1f}",
+        f"[{STAGE.value}][MODE] {mode} S={S:.4f} Ox={Ox:.1f} Oy={Oy:.1f}",
         flush=True,
     )
 
@@ -70,72 +76,79 @@ def composite_elements(
     except Exception as exc:
         return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
 
-    # ── 4. 대상 레이어 필터 — depth=0, role!=bg, visible ────────────────────
-    top_layers = [
-        l for l in layers
-        if l.depth == 0 and l.role != "bg" and l.visible
-    ]
+    # ── 4-5. 레이아웃 모드에 따른 레이어 합성 ──────────────────────────────────
+    if mode == "AP_LAYOUT":
+        # 기존 depth=0 기반 letterbox 합성 — 변경 없음
+        top_layers = [
+            l for l in layers
+            if l.depth == 0 and l.role != "bg" and l.visible
+        ]
+        placed_count = 0
+        for layer_info in top_layers:
+            layer = _find_layer(psd, layer_info.name)
+            if layer is None:
+                print(f"[{STAGE.value}][LAYER_NOT_FOUND] name={layer_info.name!r}", flush=True)
+                continue
 
-    # ── 5. 레이어별 composite → 변환 → 합성 ──────────────────────────────────
-    placed_count = 0
-    for layer_info in top_layers:
-        layer = _find_layer(psd, layer_info.name)
-        if layer is None:
-            print(f"[{STAGE.value}][LAYER_NOT_FOUND] name={layer_info.name!r}", flush=True)
-            continue
+            try:
+                img = layer.composite()
+            except Exception as exc:
+                print(f"[{STAGE.value}][COMPOSITE_SKIP] name={layer_info.name!r} err={exc}", flush=True)
+                continue
 
-        try:
-            img = layer.composite()
-        except Exception as exc:
-            print(f"[{STAGE.value}][COMPOSITE_SKIP] name={layer_info.name!r} err={exc}", flush=True)
-            continue
+            if img is None:
+                continue
 
-        if img is None:
-            continue
+            img = img.convert("RGBA")
 
-        img = img.convert("RGBA")
+            # bbox: psd-tools plain tuple (left, top, right, bottom)
+            b = layer.bbox
+            lw, lh = b[2] - b[0], b[3] - b[1]
+            if lw <= 0 or lh <= 0:
+                continue
 
-        # bbox: psd-tools plain tuple (left, top, right, bottom)
-        b = layer.bbox
-        lw, lh = b[2] - b[0], b[3] - b[1]
-        if lw <= 0 or lh <= 0:
-            continue
+            # composite()가 full-canvas 크기를 반환하면 레이어 영역만 크롭
+            if img.size == (psd.width, psd.height):
+                cropped = img.crop((b[0], b[1], b[2], b[3]))
+            else:
+                cropped = img
 
-        # composite()가 full-canvas 크기를 반환하면 레이어 영역만 크롭
-        if img.size == (psd.width, psd.height):
-            cropped = img.crop((b[0], b[1], b[2], b[3]))
-        else:
-            cropped = img
+            new_w = max(1, int(lw * S))
+            new_h = max(1, int(lh * S))
+            scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
 
-        new_w = max(1, int(lw * S))
-        new_h = max(1, int(lh * S))
-        scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
+            new_x = int(b[0] * S + Ox)
+            new_y = int(b[1] * S + Oy)
 
-        new_x = int(b[0] * S + Ox)
-        new_y = int(b[1] * S + Oy)
-
-        canvas.paste(scaled, (new_x, new_y), scaled)
-        placed_count += 1
-        print(
-            f"[{STAGE.value}][LAYER_PLACED] name={layer_info.name!r} role={layer_info.role} "
-            f"pos=({new_x},{new_y}) size={new_w}x{new_h}",
-            flush=True,
-        )
+            canvas.paste(scaled, (new_x, new_y), scaled)
+            placed_count += 1
+            print(
+                f"[{STAGE.value}][LAYER_PLACED] name={layer_info.name!r} role={layer_info.role} "
+                f"pos=({new_x},{new_y}) size={new_w}x{new_h}",
+                flush=True,
+            )
+        total_count = len(top_layers)
+    else:
+        # SmartLayoutEngine 기반 leaf-layer 합성 (EDGE_ANCHORING / VERTICAL_STACKING)
+        layout_dict = engine.calculate_layout(layers)
+        placed_count = _composite_with_layout(psd, canvas, layout_dict, STAGE.value)
+        total_count = len(layout_dict)
 
     # ── 6. 결과 저장 ─────────────────────────────────────────────────────────
     result_path = str(stage_dir / "result.png")
     canvas.convert("RGB").save(result_path)
     logger.artifact_written(
         STAGE.value, result_path,
-        f"{placed_count}/{len(top_layers)} 레이어 합성 완료",
+        f"{placed_count}/{total_count} 레이어 합성 완료",
     )
 
     logger.stage_pass(
         STAGE.value,
-        f"element composite PASS placed={placed_count}/{len(top_layers)}",
+        f"element composite PASS mode={mode} placed={placed_count}/{total_count}",
         metrics={
+            "mode": mode,
             "placedCount": placed_count,
-            "topLayerCount": len(top_layers),
+            "totalCount": total_count,
             "scale": round(S, 4),
             "offsetX": round(Ox, 1),
             "offsetY": round(Oy, 1),
@@ -146,6 +159,7 @@ def composite_elements(
         stage=STAGE,
         status=PipelineStatus.PASS,
         metrics={
+            "mode": mode,
             "placedCount": placed_count,
             "scale": round(S, 4),
             "offsetX": round(Ox, 1),
@@ -167,6 +181,69 @@ def _find_layer(parent, name: str):
             if found:
                 return found
     return None
+
+
+def _find_layer_at_depth(parent, name: str, target_depth: int, _depth: int = 0):
+    """(name, depth) 기준으로 PSD 트리에서 레이어를 찾는다."""
+    for layer in parent:
+        if _depth == target_depth and layer.name == name:
+            return layer
+        if layer.is_group() and _depth < target_depth:
+            found = _find_layer_at_depth(layer, name, target_depth, _depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _composite_with_layout(psd, canvas, layout_dict: dict, stage_name: str) -> int:
+    """SmartLayoutEngine layout_dict 좌표로 leaf 레이어를 배경에 합성."""
+    placed_count = 0
+    for (layer_name, layer_depth), coords in layout_dict.items():
+        layer = _find_layer_at_depth(psd, layer_name, layer_depth)
+        if layer is None:
+            print(
+                f"[{stage_name}][LAYER_NOT_FOUND] name={layer_name!r} depth={layer_depth}",
+                flush=True,
+            )
+            continue
+
+        try:
+            img = layer.composite()
+        except Exception as exc:
+            print(
+                f"[{stage_name}][COMPOSITE_SKIP] name={layer_name!r} err={exc}",
+                flush=True,
+            )
+            continue
+
+        if img is None:
+            continue
+
+        img = img.convert("RGBA")
+        b = layer.bbox
+        lw, lh = b[2] - b[0], b[3] - b[1]
+        if lw <= 0 or lh <= 0:
+            continue
+
+        if img.size == (psd.width, psd.height):
+            cropped = img.crop((b[0], b[1], b[2], b[3]))
+        else:
+            cropped = img
+
+        new_w = max(1, coords["new_x2"] - coords["new_x1"])
+        new_h = max(1, coords["new_y2"] - coords["new_y1"])
+        scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
+
+        new_x = max(0, coords["new_x1"])
+        new_y = max(0, coords["new_y1"])
+        canvas.paste(scaled, (new_x, new_y), scaled)
+        placed_count += 1
+        print(
+            f"[{stage_name}][LAYER_PLACED] name={layer_name!r} depth={layer_depth} "
+            f"pos=({new_x},{new_y}) size={new_w}x{new_h} scale={coords['scale_used']}",
+            flush=True,
+        )
+    return placed_count
 
 
 def _fail(
