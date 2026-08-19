@@ -128,7 +128,10 @@
             <span v-for="m in job.targetMedia" :key="m" class="media-tag" :class="m">{{ m }}</span>
           </span>
           <span class="c-status">
-            <span class="badge" :class="job.status">{{ statusLabel(job.status) }}</span>
+            <span class="badge" :class="job.status">
+              <span v-if="job.status === 'processing' || job.status === 'pending'" class="badge-spinner"></span>
+              {{ statusLabel(job.status) }}
+            </span>
           </span>
           <span class="c-date gray">{{ formatDate(job.createdAt) }}</span>
           <span class="c-dl" @click.stop>
@@ -187,7 +190,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listJobs, downloadZip } from '../api/banner.js'
@@ -341,14 +344,38 @@ function formatDate(d) {
   return `${m.toString().padStart(2,'0')}.${day.toString().padStart(2,'0')}. ${ampm} ${(h%12||12)}:${min}`
 }
 
+let pollTimer = null
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+function startPollingIfNeeded() {
+  const hasActive = jobs.value.some(j => j.status === 'processing' || j.status === 'pending')
+  if (hasActive && !pollTimer) {
+    pollTimer = setInterval(async () => {
+      try {
+        const { data } = await listJobs()
+        jobs.value = data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        if (!jobs.value.some(j => j.status === 'processing' || j.status === 'pending')) {
+          stopPolling()
+        }
+      } catch { /* 폴링 실패는 무시 */ }
+    }, 5000)
+  }
+}
+
 async function load() {
   loading.value = true
   try {
     const { data } = await listJobs()
     jobs.value = data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    startPollingIfNeeded()
   } catch { ElMessage.error('목록 로딩 실패') }
   finally { loading.value = false }
 }
+
+onUnmounted(stopPolling)
 
 async function download(row) {
   try {
@@ -477,13 +504,23 @@ onMounted(load)
 .media-tag         { background: #F2F4F6; color: #6B7684; }
 
 .badge {
-  display: inline-block; padding: 4px 10px; border-radius: 100px;
-  font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 100px; font-size: 12px; font-weight: 600;
 }
 .badge.done       { background: #D1FAE5; color: #059669; }
 .badge.fail       { background: #FEE2E2; color: #DC2626; }
 .badge.pending    { background: #F3F4F6; color: #6B7684; }
 .badge.processing { background: #FFF8E6; color: #D97706; }
+
+.badge-spinner {
+  display: inline-block;
+  width: 10px; height: 10px; flex-shrink: 0;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: badge-spin 0.75s linear infinite;
+}
+@keyframes badge-spin { to { transform: rotate(360deg); } }
 
 .dl-btn {
   padding: 5px 12px; border-radius: 7px; border: 1.5px solid #7C3AED;

@@ -1382,7 +1382,7 @@ async function submit() {
   loading.value = true
   try {
     const { data } = await uploadPsd(fd)
-    router.push(`/job/${data.id}`)
+    router.push('/jobs')
   } catch (e) {
     ElMessage.error('업로드 실패: ' + (e.response?.data?.message ?? e.message))
   } finally { loading.value = false }
