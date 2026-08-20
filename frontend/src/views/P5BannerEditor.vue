@@ -393,7 +393,8 @@ function onStageWheel(e) {
 }
 
 function onStagePan(e) {
-  // stage draggable=true 일 때 drag 위치를 상태에 동기화
+  // 노드 drag 이벤트가 stage로 버블링되는 경우 무시 — stage 자체 드래그만 처리
+  if (e.target !== e.target.getStage()) return
   stagePosX.value = e.target.x()
   stagePosY.value = e.target.y()
 }
