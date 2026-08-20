@@ -116,6 +116,8 @@
                 <div class="carousel-hover-overlay">
                   <button class="carousel-hover-btn" title="크게보기" @click.stop="openLightbox(idx)">🔍</button>
                   <button class="carousel-hover-btn" title="다운로드" @click.stop="handleSingleDownload(r)">⬇</button>
+                  <button class="carousel-hover-btn" title="P5 에디터로 편집"
+                    @click.stop="openEditor(r)">✎</button>
                 </div>
               </div>
               <div class="carousel-footer">
@@ -663,6 +665,10 @@ async function handleSingleDownload(r) {
     a.click()
     URL.revokeObjectURL(url)
   } catch { alert('다운로드에 실패했습니다.') }
+}
+
+function openEditor(r) {
+  router.push({ name: 'jobEdit', params: { id: route.params.id }, query: { fileName: r.fileName } })
 }
 
 function getSpecIdFromResult(r) {

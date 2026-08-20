@@ -155,6 +155,21 @@ public class WorkerClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> recomposite(java.util.Map<String, Object> payload) {
+        String url = workerUrl + "/recomposite";
+        log.info("[RECOMPOSITE_CALL] jobId={}", payload.get("jobId"));
+        try {
+            org.springframework.http.ResponseEntity<java.util.Map> resp =
+                    restTemplate.postForEntity(url, payload, java.util.Map.class);
+            if (resp.getBody() == null) throw new IllegalStateException("Worker returned empty response");
+            return resp.getBody();
+        } catch (Exception e) {
+            log.error("[RECOMPOSITE_FAIL] jobId={} error={}", payload.get("jobId"), e.getMessage());
+            return java.util.Map.of("error", e.getMessage());
+        }
+    }
+
     public boolean isHealthy() {
         try {
             restTemplate.getForEntity(workerUrl + "/health", String.class);

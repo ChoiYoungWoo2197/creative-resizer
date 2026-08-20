@@ -12,6 +12,8 @@ Gemini 공식 (원본 구도 보존 스케일 투영):
 """
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 from PIL import Image
@@ -80,7 +82,12 @@ def composite_elements(
     # bg 계열 서브레이어 이름 집합 — AP_LAYOUT 그룹 합성 시 제외
     _BG_SUBLAYER_NAMES = frozenset({"bg", "배경", "background"})
 
+    placed_layers: list[dict] = []  # P5 layout JSON용 레이어별 배치 정보
+
     if mode == "AP_LAYOUT":
+        layers_dir = stage_dir / "layers"
+        layers_dir.mkdir(exist_ok=True)
+
         top_layers = [
             l for l in layers
             if l.depth == 0 and l.role != "bg"
@@ -99,10 +106,26 @@ def composite_elements(
                     if child.name.lower() in _BG_SUBLAYER_NAMES:
                         print(f"[{STAGE.value}][BG_SUBLAYER_SKIP] name={child.name!r}", flush=True)
                         continue
-                    if _place_layer(child, canvas, psd, S, Ox, Oy, STAGE.value):
+                    safe = _safe_filename(f"{layer_info.name}__{child.name}")
+                    placement = _place_layer(
+                        child, canvas, psd, S, Ox, Oy, STAGE.value,
+                        layer_save_path=layers_dir / f"{safe}.png",
+                    )
+                    if placement:
+                        placement["role"] = layer_info.role
+                        placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
+                        placed_layers.append(placement)
                         placed_count += 1
             else:
-                if _place_layer(layer, canvas, psd, S, Ox, Oy, STAGE.value):
+                safe = _safe_filename(layer_info.name)
+                placement = _place_layer(
+                    layer, canvas, psd, S, Ox, Oy, STAGE.value,
+                    layer_save_path=layers_dir / f"{safe}.png",
+                )
+                if placement:
+                    placement["role"] = layer_info.role
+                    placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
+                    placed_layers.append(placement)
                     placed_count += 1
 
         total_count = len(top_layers)
@@ -120,6 +143,25 @@ def composite_elements(
         f"{placed_count}/{total_count} 레이어 합성 완료",
     )
 
+    # ── 7. P5 layout_result.json 저장 (AP_LAYOUT 시에만) ─────────────────────
+    layout_result_path: str | None = None
+    if mode == "AP_LAYOUT" and placed_layers:
+        layout_data = {
+            "source_w": source_w,
+            "source_h": source_h,
+            "target_w": target_w,
+            "target_h": target_h,
+            "scale": round(S, 6),
+            "offset_x": round(Ox, 2),
+            "offset_y": round(Oy, 2),
+            "bg_file": "clean_v1/03_bg_extraction/smart_resized.png",
+            "layers": placed_layers,
+        }
+        layout_result_path = str(stage_dir / "layout_result.json")
+        with open(layout_result_path, "w", encoding="utf-8") as f:
+            json.dump(layout_data, f, ensure_ascii=False, indent=2)
+        print(f"[{STAGE.value}][LAYOUT_RESULT_SAVED] path={layout_result_path}", flush=True)
+
     logger.stage_pass(
         STAGE.value,
         f"element composite PASS mode={mode} placed={placed_count}/{total_count}",
@@ -133,6 +175,9 @@ def composite_elements(
         },
     )
 
+    result: dict = {"result_path": result_path}
+    if layout_result_path:
+        result["layout_result_path"] = layout_result_path
     return StageResult(
         stage=STAGE,
         status=PipelineStatus.PASS,
@@ -144,28 +189,45 @@ def composite_elements(
             "offsetY": round(Oy, 1),
         },
         artifacts={"result": result_path},
-    ), {"result_path": result_path}
+    ), result
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _place_layer(layer, canvas: Image.Image, psd, S: float, Ox: float, Oy: float, stage_name: str) -> bool:
-    """단일 psd-tools 레이어를 letterbox 좌표로 canvas에 합성. 성공 시 True."""
+def _safe_filename(name: str) -> str:
+    """레이어명을 파일명으로 사용할 수 있게 특수문자를 언더스코어로 변환."""
+    return re.sub(r"[^\w-]", "_", name)
+
+
+def _place_layer(
+    layer,
+    canvas: Image.Image,
+    psd,
+    S: float,
+    Ox: float,
+    Oy: float,
+    stage_name: str,
+    layer_save_path: Path | None = None,
+) -> dict | None:
+    """단일 psd-tools 레이어를 letterbox 좌표로 canvas에 합성.
+
+    성공 시 배치 정보 dict 반환 (P5 layout JSON용). 실패 시 None.
+    """
     try:
         img = layer.composite()
     except Exception as exc:
         print(f"[{stage_name}][COMPOSITE_SKIP] name={layer.name!r} err={exc}", flush=True)
-        return False
+        return None
 
     if img is None:
-        return False
+        return None
 
     img = img.convert("RGBA")
     b = layer.bbox
     lw, lh = b[2] - b[0], b[3] - b[1]
     if lw <= 0 or lh <= 0:
-        return False
+        return None
 
     if img.size == (psd.width, psd.height):
         cropped = img.crop((b[0], b[1], b[2], b[3]))
@@ -180,12 +242,26 @@ def _place_layer(layer, canvas: Image.Image, psd, S: float, Ox: float, Oy: float
     new_y = int(b[1] * S + Oy)
 
     canvas.paste(scaled, (new_x, new_y), scaled)
+
+    if layer_save_path:
+        try:
+            scaled.save(str(layer_save_path))
+        except Exception as exc:
+            print(f"[{stage_name}][LAYER_SAVE_FAIL] name={layer.name!r} err={exc}", flush=True)
+
     print(
         f"[{stage_name}][LAYER_PLACED] name={layer.name!r} "
         f"pos=({new_x},{new_y}) size={new_w}x{new_h}",
         flush=True,
     )
-    return True
+    return {
+        "name": layer.name,
+        "render_x": new_x,
+        "render_y": new_y,
+        "render_w": new_w,
+        "render_h": new_h,
+        "scale": round(S, 6),
+    }
 
 
 def _find_layer(parent, name: str):

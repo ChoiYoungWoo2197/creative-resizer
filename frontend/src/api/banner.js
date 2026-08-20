@@ -59,3 +59,13 @@ export const analyzePsdObjects = (formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000,
   })
+
+// P5 에디터
+export const getLayoutResult = (jobId, fileName) =>
+  api.get(`/banner/job/${jobId}/layout-result`, { params: { fileName } })
+
+export const layerFileUrl = (jobId, rel) =>
+  `/api/banner/job/${jobId}/layer-file?rel=${encodeURIComponent(rel)}`
+
+export const recomposite = (jobId, fileName, layers) =>
+  api.post(`/banner/job/${jobId}/recomposite`, { fileName, layers }, { timeout: 60000 })

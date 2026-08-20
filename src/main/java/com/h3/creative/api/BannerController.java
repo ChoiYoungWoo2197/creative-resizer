@@ -39,6 +39,7 @@ public class BannerController {
     private final BannerAnalysisService bannerAnalysisService;
     private final BannerCompareService bannerCompareService;
     private final PsdObjectAnalysisService psdObjectAnalysisService;
+    private final com.h3.creative.worker.WorkerClient workerClient;
 
     @PostMapping("/analyze")
     public ResponseEntity<BannerAiAnalysis> analyze(@RequestParam MultipartFile file) throws IOException {
@@ -243,5 +244,92 @@ public class BannerController {
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
                 .body(new ByteArrayResource(baos.toByteArray()));
+    }
+
+    /** P5 에디터용: 특정 결과의 layout_result.json 반환 */
+    @GetMapping("/job/{id}/layout-result")
+    public ResponseEntity<Object> layoutResult(
+            @PathVariable String id,
+            @RequestParam String fileName) throws IOException {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || job.getResults() == null) return ResponseEntity.notFound().build();
+
+        BannerJob.BannerResult result = job.getResults().stream()
+                .filter(r -> fileName.equals(r.getFileName()))
+                .findFirst().orElse(null);
+        if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
+
+        // layout_result.json 은 result.png 와 같은 디렉토리에 위치
+        File layoutFile = new File(new File(result.getFilePath()).getParentFile(), "layout_result.json");
+        if (!layoutFile.exists()) return ResponseEntity.notFound().build();
+
+        byte[] bytes = Files.readAllBytes(layoutFile.toPath());
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(bytes);
+    }
+
+    /** P5 에디터용: 레이어 개별 PNG 서빙 (경로 순회 방지) */
+    @GetMapping("/job/{id}/layer-file")
+    public ResponseEntity<Resource> layerFile(
+            @PathVariable String id,
+            @RequestParam String rel) throws IOException {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || job.getResults() == null || job.getResults().isEmpty())
+            return ResponseEntity.notFound().build();
+
+        // filePath 예: /app/storage/outputs/{jobId}/{jobId}/clean_v1/04_composite/01_spec.png
+        // job 루트: 그 3단계 위 (04_composite → clean_v1 → {jobId})
+        File resultFile = new File(job.getResults().get(0).getFilePath());
+        File jobRoot = resultFile.getParentFile().getParentFile().getParentFile();
+
+        File target = new File(jobRoot, rel).getCanonicalFile();
+        // 경로 순회 방지: jobRoot 밖으로 벗어나지 않았는지 확인
+        if (!target.getPath().startsWith(jobRoot.getCanonicalPath())) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (!target.exists()) return ResponseEntity.notFound().build();
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .body(new FileSystemResource(target));
+    }
+
+    /** P5 에디터용: 수정된 레이어 위치로 P4 재합성 */
+    @PostMapping("/job/{id}/recomposite")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<Object> recomposite(
+            @PathVariable String id,
+            @RequestBody java.util.Map<String, Object> body) throws IOException {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || job.getResults() == null) return ResponseEntity.notFound().build();
+
+        String fileName = (String) body.get("fileName");
+        BannerJob.BannerResult result = job.getResults().stream()
+                .filter(r -> fileName.equals(r.getFileName()))
+                .findFirst().orElse(null);
+        if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
+
+        File resultFile = new File(result.getFilePath());
+        File compositeDir = resultFile.getParentFile();  // clean_v1/04_composite/
+        File cleanV1Dir   = compositeDir.getParentFile(); // clean_v1/
+        File bgFile = new File(cleanV1Dir, "03_bg_extraction/smart_resized.png");
+
+        java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("jobId", id);
+        payload.put("bgPath", bgFile.getAbsolutePath());
+        payload.put("psdPath", job.getPsdPath());
+        payload.put("targetW", result.getWidth());
+        payload.put("targetH", result.getHeight());
+        payload.put("sourceW", result.getSourceWidth() != null ? result.getSourceWidth() : result.getWidth());
+        payload.put("sourceH", result.getSourceHeight() != null ? result.getSourceHeight() : result.getHeight());
+        payload.put("layers", body.get("layers"));
+        payload.put("resultPath", result.getFilePath());
+
+        java.util.Map<String, Object> workerResp = workerClient.recomposite(payload);
+        if (workerResp.containsKey("error")) {
+            return ResponseEntity.internalServerError().body(workerResp);
+        }
+        return ResponseEntity.ok(workerResp);
     }
 }

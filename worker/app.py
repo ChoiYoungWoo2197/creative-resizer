@@ -166,5 +166,79 @@ def _make_zip(job_id: str, files: list[str]) -> str:
     return zip_path
 
 
+@app.route("/recomposite", methods=["POST"])
+def recomposite():
+    """P5 에디터에서 수정된 레이어 위치로 P4를 재실행한다.
+
+    Body:
+      jobId       str   — 원본 job ID
+      bgPath      str   — P3 배경 이미지 절대 경로 (컨테이너 내부)
+      psdPath     str   — 원본 PSD 절대 경로 (컨테이너 내부)
+      targetW     int   — 타겟 너비
+      targetH     int   — 타겟 높이
+      sourceW     int   — 소스 너비
+      sourceH     int   — 소스 높이
+      layers      list  — [{name, render_x, render_y, render_w, render_h}]
+      resultPath  str   — 덮어쓸 result.png 절대 경로
+    """
+    data = request.json
+    job_id = data.get("jobId", "recomposite")
+    bg_path = data.get("bgPath")
+    psd_path = data.get("psdPath")
+    target_w = int(data.get("targetW", 0))
+    target_h = int(data.get("targetH", 0))
+    source_w = int(data.get("sourceW", 0))
+    source_h = int(data.get("sourceH", 0))
+    layers_payload = data.get("layers", [])
+    result_path = data.get("resultPath")
+
+    if not all([bg_path, psd_path, target_w, target_h, source_w, source_h, result_path]):
+        return jsonify({"error": "bgPath, psdPath, targetW, targetH, sourceW, sourceH, resultPath are required"}), 400
+
+    try:
+        from PIL import Image
+        from psd_tools import PSDImage
+
+        canvas = Image.open(bg_path).convert("RGBA")
+        psd = PSDImage.open(psd_path)
+
+        from clean_pipeline.psd.element_compositor import _find_layer
+
+        placed = 0
+        for lyr in layers_payload:
+            layer = _find_layer(psd, lyr["name"])
+            if layer is None:
+                print(f"[RECOMPOSITE][LAYER_NOT_FOUND] name={lyr['name']!r}", flush=True)
+                continue
+            try:
+                img = layer.composite()
+            except Exception as exc:
+                print(f"[RECOMPOSITE][COMPOSITE_SKIP] name={lyr['name']!r} err={exc}", flush=True)
+                continue
+            if img is None:
+                continue
+            img = img.convert("RGBA")
+            b = layer.bbox
+            lw, lh = b[2] - b[0], b[3] - b[1]
+            if lw <= 0 or lh <= 0:
+                continue
+            if img.size == (psd.width, psd.height):
+                img = img.crop((b[0], b[1], b[2], b[3]))
+            new_w = max(1, int(lyr["render_w"]))
+            new_h = max(1, int(lyr["render_h"]))
+            scaled = img.resize((new_w, new_h), Image.LANCZOS)
+            canvas.paste(scaled, (int(lyr["render_x"]), int(lyr["render_y"])), scaled)
+            placed += 1
+            print(f"[RECOMPOSITE][LAYER_PLACED] name={lyr['name']!r} pos=({lyr['render_x']},{lyr['render_y']}) size={new_w}x{new_h}", flush=True)
+
+        canvas.convert("RGB").save(result_path)
+        print(f"[RECOMPOSITE][DONE] jobId={job_id} placed={placed} result={result_path}", flush=True)
+        return jsonify({"resultPath": result_path, "placedCount": placed})
+
+    except Exception as exc:
+        print(f"[RECOMPOSITE][ERROR] jobId={job_id} err={exc}", flush=True)
+        return jsonify({"error": str(exc)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
