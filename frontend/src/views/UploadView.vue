@@ -46,27 +46,6 @@
                 </div>
                 <button class="file-change" @click="clearFile">변경</button>
               </div>
-              <!-- PSD 처리 방식: 자동 선택 배지만 표시 (선택 UI 숨김) -->
-              <div v-if="isPsdFile" class="psd-auto-badge">
-                <template v-if="psdLayerAnalyzing">
-                  <span class="spinner" style="width:10px;height:10px;border-width:1.5px;display:inline-block;" />
-                  레이어 분석 중...
-                </template>
-                <template v-else-if="psdLayerAnalysis?.layerReadable === false">
-                  ⚠ 레이어 분석이 제한되어 이미지 기반으로 처리됩니다.
-                </template>
-                <template v-else-if="psdMode === 'object-reflow'">
-                  ✦ 객체 기반 재배치 자동 선택됨
-                </template>
-                <template v-else>
-                  ✦ 자동 최적화 적용 중
-                </template>
-              </div>
-              <button class="ai-analyze-btn" :disabled="aiAnalyzing || !previewUrl" @click="runAiAnalyze">
-                <span v-if="aiAnalyzing" class="spinner" style="width:12px;height:12px;border-width:1.5px;" />
-                <span v-else>✦</span>
-                {{ aiAnalyzing ? 'AI 분석 중...' : 'AI 추천 분석' }}
-              </button>
               <div v-if="aiAnalysis" class="ai-result-card">
                 <div class="ai-result-head">
                   <span class="ai-result-star">✦</span> AI 분석 결과
