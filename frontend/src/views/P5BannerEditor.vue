@@ -44,6 +44,7 @@
               <v-image
                 :config="layerConfig(lyr, idx)"
                 @click="selectLayer(idx)"
+                @dragmove="onDragMove($event, idx)"
                 @dragend="onDragEnd($event, idx)"
                 @transformend="onTransformEnd($event, idx)"
               />
@@ -51,6 +52,15 @@
             <v-transformer
               ref="transformerRef"
               :config="{ keepRatio: true, enabledAnchors: ['top-left','top-right','bottom-left','bottom-right'] }"
+            />
+          </v-layer>
+
+          <!-- 가이드선 레이어: 요소 위에 렌더링, 이벤트 비활성 -->
+          <v-layer :config="{ listening: false }">
+            <v-line
+              v-for="(gl, i) in guideLines"
+              :key="i"
+              :config="gl"
             />
           </v-layer>
         </v-stage>
@@ -132,6 +142,21 @@ const elemLayerRef   = ref(null)
 const DISPLAY_MAX_W = 900
 const DISPLAY_MAX_H = 600
 const displayScale = ref(1)
+
+// ── 스냅/Nudge 상수 ───────────────────────────────────────────────────────────
+const SNAP_THRESHOLD    = 5   // 스냅 인식 거리 (화면 px)
+const NUDGE_STEP        = 1   // 방향키 이동 단위 (원본 좌표 px)
+const NUDGE_STEP_SHIFT  = 10  // Shift+방향키 이동 단위
+
+const guideLines = ref([])    // 드래그 중 표시할 가이드선 배열
+
+// ── 키보드 이벤트 등록/해제 ───────────────────────────────────────────────────
+onMounted(async () => {
+  window.addEventListener('keydown', handleKeyDown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleKeyDown)
+})
 
 // ── 초기 데이터 로드 ──────────────────────────────────────────────────────────
 onMounted(async () => {
@@ -237,6 +262,7 @@ function onStageClick(e) {
 
 // ── 이벤트 핸들러 ─────────────────────────────────────────────────────────────
 function onDragEnd(e, idx) {
+  guideLines.value = []  // 드래그 종료 시 가이드선 제거
   const sc = displayScale.value
   editLayers.value[idx].render_x = Math.round(e.target.x() / sc)
   editLayers.value[idx].render_y = Math.round(e.target.y() / sc)
@@ -260,6 +286,101 @@ function updateField(idx, field, value) {
   nextTick(() => {
     const layer = elemLayerRef.value?.getNode()
     if (layer) layer.batchDraw()
+  })
+}
+
+// ── 스냅 헬퍼 ─────────────────────────────────────────────────────────────────
+// nodeEdges: 드래그 중인 노드의 기준점 배열, targets: 스냅 대상 위치 배열
+// 가장 먼저 발견된 SNAP_THRESHOLD 이내 매칭 반환
+function findSnap(nodeEdges, targets) {
+  for (const { pos } of targets) {
+    for (const edge of nodeEdges) {
+      if (Math.abs(edge - pos) < SNAP_THRESHOLD) {
+        return { delta: pos - edge, snapPos: pos }
+      }
+    }
+  }
+  return null
+}
+
+function onDragMove(e, idx) {
+  const node   = e.target
+  const nx     = node.x()
+  const ny     = node.y()
+  const nw     = node.width()  * node.scaleX()
+  const nh     = node.height() * node.scaleY()
+  const stageW = stageConfig.value.width
+  const stageH = stageConfig.value.height
+  const sc     = displayScale.value
+
+  // 스냅 대상: 캔버스 중앙축 + 타 레이어 bbox 3점(좌·중·우 / 상·중·하)
+  const xTargets = [{ pos: stageW / 2 }]
+  const yTargets = [{ pos: stageH / 2 }]
+  editLayers.value.forEach((lyr, i) => {
+    if (i === idx) return
+    const lx = lyr.render_x * sc,  lw = lyr.render_w * sc
+    const ly = lyr.render_y * sc,  lh = lyr.render_h * sc
+    xTargets.push({ pos: lx }, { pos: lx + lw / 2 }, { pos: lx + lw })
+    yTargets.push({ pos: ly }, { pos: ly + lh / 2 }, { pos: ly + lh })
+  })
+
+  const newGuideLines = []
+
+  // X축 스냅 (노드 좌·중·우 기준점)
+  const snapX = findSnap([nx, nx + nw / 2, nx + nw], xTargets)
+  if (snapX) {
+    node.x(nx + snapX.delta)
+    newGuideLines.push({
+      points: [snapX.snapPos, 0, snapX.snapPos, stageH],
+      stroke: '#FF006B', strokeWidth: 1, dash: [4, 3], listening: false,
+    })
+  }
+
+  // Y축 스냅 (노드 상·중·하 기준점)
+  const snapY = findSnap([ny, ny + nh / 2, ny + nh], yTargets)
+  if (snapY) {
+    node.y(ny + snapY.delta)
+    newGuideLines.push({
+      points: [0, snapY.snapPos, stageW, snapY.snapPos],
+      stroke: '#FF006B', strokeWidth: 1, dash: [4, 3], listening: false,
+    })
+  }
+
+  guideLines.value = newGuideLines
+}
+
+// ── 키보드 Nudge ──────────────────────────────────────────────────────────────
+function handleKeyDown(e) {
+  // 수치 입력창 포커스 중일 때는 방향키가 입력란에서 동작해야 하므로 제외
+  const activeTag = document.activeElement?.tagName
+  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return
+  if (selectedIdx.value === null) return
+
+  const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)
+  if (!isArrow) return
+  e.preventDefault()
+
+  const step = e.shiftKey ? NUDGE_STEP_SHIFT : NUDGE_STEP
+  const lyr  = editLayers.value[selectedIdx.value]
+
+  if (e.key === 'ArrowLeft')  lyr.render_x -= step
+  if (e.key === 'ArrowRight') lyr.render_x += step
+  if (e.key === 'ArrowUp')    lyr.render_y -= step
+  if (e.key === 'ArrowDown')  lyr.render_y += step
+
+  // Konva 노드 + transformer 즉시 동기화
+  nextTick(() => {
+    const konvaLayer = elemLayerRef.value?.getNode()
+    if (!konvaLayer) return
+    const sc   = displayScale.value
+    const node = konvaLayer.findOne(`.layer-${selectedIdx.value}`)
+    if (node) {
+      node.x(lyr.render_x * sc)
+      node.y(lyr.render_y * sc)
+      const tr = transformerRef.value?.getNode()
+      if (tr) tr.forceUpdate()
+      konvaLayer.batchDraw()
+    }
   })
 }
 
