@@ -131,8 +131,14 @@ def composite_elements(
         total_count = len(top_layers)
     else:
         # SmartLayoutEngine 기반 leaf-layer 합성 (EDGE_ANCHORING / VERTICAL_STACKING)
+        layers_dir = stage_dir / "layers"
+        layers_dir.mkdir(exist_ok=True)
         layout_dict = engine.calculate_layout(layers)
-        placed_count = _composite_with_layout(psd, canvas, layout_dict, STAGE.value)
+        placed_count, placed_layers = _composite_with_layout(
+            psd, canvas, layout_dict, STAGE.value,
+            layers_dir=layers_dir,
+            layer_infos=layers,
+        )
         total_count = len(layout_dict)
 
     # ── 6. 결과 저장 ─────────────────────────────────────────────────────────
@@ -143,14 +149,15 @@ def composite_elements(
         f"{placed_count}/{total_count} 레이어 합성 완료",
     )
 
-    # ── 7. P5 layout_result.json 저장 (AP_LAYOUT 시에만) ─────────────────────
+    # ── 7. P5 layout_result.json 저장 (모든 모드 공통) ───────────────────────
     layout_result_path: str | None = None
-    if mode == "AP_LAYOUT" and placed_layers:
+    if placed_layers:
         layout_data = {
             "source_w": source_w,
             "source_h": source_h,
             "target_w": target_w,
             "target_h": target_h,
+            "mode": mode,
             "scale": round(S, 6),
             "offset_x": round(Ox, 2),
             "offset_y": round(Oy, 2),
@@ -295,9 +302,22 @@ def _find_layer_at_depth(parent, name: str, target_depth: int, _depth: int = 0):
     return None
 
 
-def _composite_with_layout(psd, canvas, layout_dict: dict, stage_name: str) -> int:
-    """SmartLayoutEngine layout_dict 좌표로 leaf 레이어를 배경에 합성."""
+def _composite_with_layout(
+    psd,
+    canvas,
+    layout_dict: dict,
+    stage_name: str,
+    layers_dir: Path | None = None,
+    layer_infos: list[LayerInfo] | None = None,
+) -> tuple[int, list[dict]]:
+    """SmartLayoutEngine layout_dict 좌표로 leaf 레이어를 배경에 합성.
+
+    Returns (placed_count, placed_layers) — placed_layers는 layout_result.json용 공통 스키마.
+    """
+    role_map: dict[str, str] = {li.name: (li.role or "unknown") for li in (layer_infos or [])}
     placed_count = 0
+    placed_layers: list[dict] = []
+
     for (layer_name, layer_depth), coords in layout_dict.items():
         layer = _find_layer_at_depth(psd, layer_name, layer_depth)
         if layer is None:
@@ -338,12 +358,36 @@ def _composite_with_layout(psd, canvas, layout_dict: dict, stage_name: str) -> i
         new_y = max(0, coords["new_y1"])
         canvas.paste(scaled, (new_x, new_y), scaled)
         placed_count += 1
+
+        safe = _safe_filename(layer_name)
+        layer_file_rel: str | None = None
+        if layers_dir is not None:
+            layer_save_path = layers_dir / f"{safe}.png"
+            try:
+                scaled.save(str(layer_save_path))
+                layer_file_rel = f"clean_v1/04_composite/layers/{safe}.png"
+            except Exception as exc:
+                print(f"[{stage_name}][LAYER_SAVE_FAIL] name={layer_name!r} err={exc}", flush=True)
+
+        placement: dict = {
+            "name": layer_name.strip("[] \t"),
+            "render_x": new_x,
+            "render_y": new_y,
+            "render_w": new_w,
+            "render_h": new_h,
+            "scale": round(coords["scale_used"], 6),
+            "role": role_map.get(layer_name, "unknown"),
+        }
+        if layer_file_rel:
+            placement["layer_file"] = layer_file_rel
+        placed_layers.append(placement)
+
         print(
             f"[{stage_name}][LAYER_PLACED] name={layer_name!r} depth={layer_depth} "
             f"pos=({new_x},{new_y}) size={new_w}x{new_h} scale={coords['scale_used']}",
             flush=True,
         )
-    return placed_count
+    return placed_count, placed_layers
 
 
 def _fail(
