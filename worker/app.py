@@ -1,5 +1,6 @@
 import io
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -77,6 +78,9 @@ def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
     """Route pipelineVersion=clean_v1 to the clean_pipeline orchestrator.
 
     Fail-closed: FAIL status → failure response. No legacy fallback under any circumstance.
+
+    clean_pipeline.orchestrator.run()은 spec 1개만 처리한다 (조사 완료, MVP 제약).
+    선택된 spec이 여러 개면 여기서 spec별로 한 번씩 반복 호출해 결과를 모은다.
     """
     from clean_pipeline.bridge.request_adapter import adapt_request
     from clean_pipeline.bridge.response_adapter import adapt_response
@@ -87,19 +91,48 @@ def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
         or os.environ.get("BACKGROUND_AI_API_KEY", "")
     )
 
-    cp_request = adapt_request(data, job_id, job_output_dir)
-    print(f"[CLEAN_V1_START] jobId={job_id} specCount={len(cp_request.target_specs)}", flush=True)
+    specs_raw = data.get("specs", [])
+    result_items: list[dict] = []
+    missing_ratio_types: list[str] = []
 
-    cp_result = clean_run(cp_request, api_key=api_key)
+    for spec_index, spec_raw in enumerate(specs_raw):
+        # orchestrator.run()은 target_specs[0]만 사용하므로 spec 1개짜리 요청으로 호출한다.
+        single_spec_data = {**data, "specs": [spec_raw]}
+        cp_request = adapt_request(single_spec_data, job_id, job_output_dir)
+        print(
+            f"[CLEAN_V1_START] jobId={job_id} specIndex={spec_index} "
+            f"specCount={len(specs_raw)} slug={spec_raw.get('slug')!r}",
+            flush=True,
+        )
 
-    result_items, missing_ratio_types = adapt_response(cp_result, data.get("specs", []))
+        cp_result = clean_run(cp_request, api_key=api_key)
+        print(
+            f"[CLEAN_V1_SPEC_DONE] jobId={job_id} specIndex={spec_index} "
+            f"status={cp_result.status.value}",
+            flush=True,
+        )
+
+        items, missing = adapt_response(cp_result, [spec_raw])
+        for item in items:
+            file_path = item.get("filePath")
+            if file_path:
+                # 모든 TYPE이 고정 경로(예: 08_final/result.png)에 쓰므로,
+                # 다음 spec 처리 전에 spec별 고유 파일명으로 옮겨 덮어쓰기를 막는다.
+                item["filePath"], item["fileName"] = _uniquify_result_file(
+                    file_path, spec_index, item.get("slug", ""),
+                    item.get("width", 0), item.get("height", 0),
+                )
+            result_items.append(item)
+        missing_ratio_types.extend(missing)
 
     file_paths = [r["filePath"] for r in result_items if r.get("filePath")]
     zip_path = _make_zip(job_id, file_paths) if file_paths else ""
 
     elapsed_ms = int((time.time() - t_start) * 1000)
     print(
-        f"[CLEAN_V1_END] jobId={job_id} status={cp_result.status.value} elapsedMs={elapsed_ms}",
+        f"[CLEAN_V1_END] jobId={job_id} specCount={len(specs_raw)} "
+        f"resultCount={len(file_paths)} missingCount={len(missing_ratio_types)} "
+        f"elapsedMs={elapsed_ms}",
         flush=True,
     )
     return jsonify({
@@ -109,6 +142,19 @@ def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
         "results": result_items,
         "missingRatioTypes": missing_ratio_types,
     })
+
+
+def _uniquify_result_file(file_path: str, spec_index: int, slug: str, width: int, height: int) -> tuple[str, str]:
+    """spec별 결과가 같은 고정 경로(result.png)에 쓰이므로, 다음 spec 처리 전에
+    고유 파일명으로 옮긴다. 반환값: (새 filePath, 새 fileName)
+    """
+    directory = os.path.dirname(file_path)
+    ext = os.path.splitext(file_path)[1] or ".png"
+    safe_slug = slug or f"spec{spec_index}"
+    new_name = f"{spec_index:02d}_{safe_slug}_{width}x{height}{ext}"
+    new_path = os.path.join(directory, new_name)
+    shutil.move(file_path, new_path)
+    return new_path, new_name
 
 
 def _make_zip(job_id: str, files: list[str]) -> str:
