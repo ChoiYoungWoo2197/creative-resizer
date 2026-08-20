@@ -1,81 +1,42 @@
 <template>
   <div class="editor-wrap">
-    <!-- 헤더 -->
+    <!-- ── 상단 툴바 ─────────────────────────────────────────────────────── -->
     <div class="editor-bar">
-      <button class="back-btn" @click="router.push(`/job/${jobId}`)">← 상세 보기</button>
+      <button class="back-btn" @click="router.push(`/job/${jobId}`)">← 상세</button>
       <span class="editor-title">{{ specFileName }}</span>
       <div class="editor-actions">
-        <button class="btn-undo" @click="undo" :disabled="!canUndo" title="실행 취소 (Ctrl+Z)">↩</button>
-        <button class="btn-undo" @click="redo" :disabled="!canRedo" title="다시 실행 (Ctrl+Y)">↪</button>
+        <button class="btn-tool" @click="undo" :disabled="!canUndo" title="실행 취소 (Ctrl+Z)">↩</button>
+        <button class="btn-tool" @click="redo" :disabled="!canRedo" title="다시 실행 (Ctrl+Y)">↪</button>
+        <div class="bar-sep" />
         <span class="zoom-display">{{ Math.round(stageScale * 100) }}%</span>
-        <button class="btn-undo" @click="resetZoom" :disabled="stageScale === 1 && stagePosX === 0 && stagePosY === 0" title="줌 리셋 (Ctrl+휠)">⊙</button>
+        <button class="btn-tool" @click="resetZoom" :disabled="stageScale === 1 && stagePosX === 0 && stagePosY === 0" title="줌 리셋">⊙</button>
+        <div class="bar-sep" />
         <button class="btn-reset" @click="resetLayers" :disabled="saving">초기화</button>
         <button class="btn-save" @click="saveAndRecomposite" :disabled="saving || !isDirty">
           <span v-if="saving" class="spin" />
-          {{ saving ? '재합성 중...' : '수정 완료 및 재합성' }}
+          {{ saving ? '재합성 중...' : '재합성' }}
         </button>
       </div>
     </div>
 
-    <!-- 로딩 -->
+    <!-- ── 로딩 ─────────────────────────────────────────────────────────── -->
     <div v-if="loading" class="center-state">
       <div class="spinner" />
       <p>레이아웃 데이터 로딩 중...</p>
     </div>
 
-    <!-- 오류 -->
+    <!-- ── 오류 ─────────────────────────────────────────────────────────── -->
     <div v-else-if="error" class="error-box">
       <div class="error-title">로딩 실패</div>
       <div class="error-msg">{{ error }}</div>
     </div>
 
-    <!-- 캔버스 에디터 -->
+    <!-- ── 3단 에디터 ─────────────────────────────────────────────────────── -->
     <div v-else-if="layout" class="canvas-area">
-      <!-- 좌측: Konva 캔버스 -->
-      <div class="konva-wrap" ref="konvaWrapRef" :style="{ cursor: spacebarDown ? 'grab' : '' }">
-        <v-stage
-          :config="stageConfig"
-          @click="onStageClick"
-          @wheel="onStageWheel"
-          @dragmove="onStagePan"
-          @dragend="onStagePan"
-        >
-          <!-- 배경 이미지 레이어 (선택/드래그 불가) -->
-          <v-layer>
-            <v-image :config="bgConfig" />
-          </v-layer>
 
-          <!-- 요소 레이어 -->
-          <v-layer ref="elemLayerRef">
-            <template v-for="(lyr, idx) in editLayers" :key="lyr.name">
-              <v-image
-                :config="layerConfig(lyr, idx)"
-                @click="selectLayer(idx)"
-                @dragmove="onDragMove($event, idx)"
-                @dragend="onDragEnd($event, idx)"
-                @transformend="onTransformEnd($event, idx)"
-              />
-            </template>
-            <v-transformer
-              ref="transformerRef"
-              :config="{ keepRatio: true, enabledAnchors: ['top-left','top-right','bottom-left','bottom-right'] }"
-            />
-          </v-layer>
-
-          <!-- 가이드선 레이어: 요소 위에 렌더링, 이벤트 비활성 -->
-          <v-layer :config="{ listening: false }">
-            <v-line
-              v-for="(gl, i) in guideLines"
-              :key="i"
-              :config="gl"
-            />
-          </v-layer>
-        </v-stage>
-      </div>
-
-      <!-- 우측: 레이어 목록 + 수치 패널 -->
-      <div class="side-panel">
-        <div class="panel-title">레이어 목록</div>
+      <!-- 좌측: Layers 패널 -->
+      <div class="left-panel">
+        <div class="panel-section-title">Layers</div>
         <div
           v-for="(lyr, idx) in editLayers"
           :key="lyr.name"
@@ -85,36 +46,90 @@
         >
           <span class="layer-dot" :class="'role-' + lyr.role" />
           <span class="layer-name">{{ lyr.name }}</span>
-          <span class="layer-role">{{ lyr.role }}</span>
           <div class="layer-order-btns" @click.stop>
             <button class="layer-order-btn" @click="moveLayerUp(idx)" :disabled="idx === 0">▲</button>
             <button class="layer-order-btn" @click="moveLayerDown(idx)" :disabled="idx === editLayers.length - 1">▼</button>
           </div>
         </div>
+      </div>
+
+      <!-- 중앙: Konva 캔버스 워크스페이스 -->
+      <div class="konva-wrap" ref="konvaWrapRef" :style="{ cursor: spacebarDown ? 'grab' : 'default' }">
+        <v-stage
+          :config="stageConfig"
+          @click="onStageClick"
+          @wheel="onStageWheel"
+          @dragmove="onStagePan"
+          @dragend="onStagePan"
+        >
+          <!-- 배경 레이어 (선택/드래그 불가) -->
+          <v-layer>
+            <v-image :config="bgConfig" />
+          </v-layer>
+
+          <!-- 요소 레이어 -->
+          <v-layer ref="elemLayerRef">
+            <v-image
+              v-for="(lyr, idx) in editLayers"
+              :key="lyr.name"
+              :config="layerConfig(lyr, idx)"
+              @click="selectLayer(idx)"
+              @dragmove="onDragMove($event, idx)"
+              @dragend="onDragEnd($event, idx)"
+              @transformend="onTransformEnd($event, idx)"
+            />
+            <v-transformer ref="transformerRef" :config="transformerConfig" />
+          </v-layer>
+
+          <!-- 가이드선 레이어 (이벤트 비활성) -->
+          <v-layer :config="{ listening: false }">
+            <v-line v-for="(gl, i) in guideLines" :key="i" :config="gl" />
+          </v-layer>
+        </v-stage>
+      </div>
+
+      <!-- 우측: Design 패널 -->
+      <div class="right-panel">
+        <div class="panel-section-title">Design</div>
 
         <template v-if="selectedIdx !== null">
-          <div class="panel-title mt">수치 편집</div>
-          <div class="num-row">
-            <label>X</label>
-            <input type="number" :value="editLayers[selectedIdx].render_x"
-              @change="updateField(selectedIdx, 'render_x', +$event.target.value)" />
+          <!-- 선택된 레이어 정보 -->
+          <div class="design-meta">
+            <span class="layer-dot" :class="'role-' + editLayers[selectedIdx].role" />
+            <span class="design-meta-name">{{ editLayers[selectedIdx].name }}</span>
           </div>
-          <div class="num-row">
-            <label>Y</label>
-            <input type="number" :value="editLayers[selectedIdx].render_y"
-              @change="updateField(selectedIdx, 'render_y', +$event.target.value)" />
+          <span class="design-role-badge">{{ editLayers[selectedIdx].role }}</span>
+
+          <div class="design-group-label">Position</div>
+          <div class="design-row">
+            <div class="design-field">
+              <label>X</label>
+              <input type="number" :value="editLayers[selectedIdx].render_x"
+                @change="updateField(selectedIdx, 'render_x', +$event.target.value)" />
+            </div>
+            <div class="design-field">
+              <label>Y</label>
+              <input type="number" :value="editLayers[selectedIdx].render_y"
+                @change="updateField(selectedIdx, 'render_y', +$event.target.value)" />
+            </div>
           </div>
-          <div class="num-row">
-            <label>W</label>
-            <input type="number" :value="editLayers[selectedIdx].render_w"
-              @change="updateField(selectedIdx, 'render_w', Math.max(1, +$event.target.value))" />
-          </div>
-          <div class="num-row">
-            <label>H</label>
-            <input type="number" :value="editLayers[selectedIdx].render_h"
-              @change="updateField(selectedIdx, 'render_h', Math.max(1, +$event.target.value))" />
+
+          <div class="design-group-label">Size</div>
+          <div class="design-row">
+            <div class="design-field">
+              <label>W</label>
+              <input type="number" :value="editLayers[selectedIdx].render_w"
+                @change="updateField(selectedIdx, 'render_w', Math.max(1, +$event.target.value))" />
+            </div>
+            <div class="design-field">
+              <label>H</label>
+              <input type="number" :value="editLayers[selectedIdx].render_h"
+                @change="updateField(selectedIdx, 'render_h', Math.max(1, +$event.target.value))" />
+            </div>
           </div>
         </template>
+
+        <div v-else class="design-empty">레이어를 선택하세요</div>
       </div>
     </div>
 
@@ -124,63 +139,74 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLayoutResult, layerFileUrl, recomposite } from '../api/banner.js'
 
 const route  = useRoute()
 const router = useRouter()
 
-const jobId       = route.params.id
-const fileName    = route.query.fileName  // ?fileName=01_Naver_Mobile_DA_1250x560.png
+const jobId        = route.params.id
+const fileName     = route.query.fileName
 const specFileName = ref(fileName || '')
 
 // ── 상태 ──────────────────────────────────────────────────────────────────────
-const loading    = ref(true)
-const error      = ref('')
-const layout     = ref(null)       // layout_result.json 내용
-const editLayers = ref([])         // 편집 중인 레이어 배열 (deep copy)
-const origLayers = ref([])         // 초기화용 원본 복사본
+const loading     = ref(true)
+const error       = ref('')
+const layout      = ref(null)
+const editLayers  = ref([])
+const origLayers  = ref([])
 const selectedIdx = ref(null)
-const saving     = ref(false)
-const savedMsg   = ref('')
+const saving      = ref(false)
+const savedMsg    = ref('')
 
 // konva refs
 const transformerRef = ref(null)
 const elemLayerRef   = ref(null)
 
-// 스케일: 캔버스가 화면에 맞도록 축소
+// 캔버스 표시 스케일
 const DISPLAY_MAX_W = 900
 const DISPLAY_MAX_H = 600
-const displayScale = ref(1)
+const displayScale  = ref(1)
 
 // ── Zoom/Pan 상태 ─────────────────────────────────────────────────────────────
-const ZOOM_MIN    = 0.5   // 최소 배율
-const ZOOM_MAX    = 3.0   // 최대 배율
-const ZOOM_FACTOR = 1.1   // 휠 1회당 배율 변화
+const ZOOM_MIN    = 0.5
+const ZOOM_MAX    = 3.0
+const ZOOM_FACTOR = 1.1
 
-const stageScale   = ref(1)     // 줌 배율 (1 = fit view)
-const stagePosX    = ref(0)     // 팬 오프셋 X
-const stagePosY    = ref(0)     // 팬 오프셋 Y
-const spacebarDown = ref(false) // 스페이스바 팬 모드 활성 여부
+const stageScale   = ref(1)
+const stagePosX    = ref(0)
+const stagePosY    = ref(0)
+const spacebarDown = ref(false)
 
 // ── 스냅/Nudge 상수 ───────────────────────────────────────────────────────────
-const SNAP_THRESHOLD    = 5   // 스냅 인식 거리 (화면 px)
-const NUDGE_STEP        = 1   // 방향키 이동 단위 (원본 좌표 px)
-const NUDGE_STEP_SHIFT  = 10  // Shift+방향키 이동 단위
+const SNAP_THRESHOLD   = 5
+const NUDGE_STEP       = 1
+const NUDGE_STEP_SHIFT = 10
 
-const guideLines = ref([])    // 드래그 중 표시할 가이드선 배열
+const guideLines = ref([])
+
+// ── Figma 스타일 Transformer 설정 ─────────────────────────────────────────────
+const transformerConfig = {
+  keepRatio: true,
+  enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+  anchorSize: 8,
+  anchorCornerRadius: 50,
+  anchorFill: '#FFFFFF',
+  anchorStroke: '#0D99FF',
+  anchorStrokeWidth: 1.5,
+  borderStroke: '#0D99FF',
+  borderStrokeWidth: 1.5,
+}
 
 // ── Undo/Redo 히스토리 ─────────────────────────────────────────────────────────
 const MAX_HISTORY = 30
-const history     = ref([])   // 상태 스냅샷 배열 (deep copy)
-const historyStep = ref(-1)   // 현재 포인터
+const history     = ref([])
+const historyStep = ref(-1)
 
 const canUndo = computed(() => historyStep.value > 0)
 const canRedo = computed(() => historyStep.value < history.value.length - 1)
 
-// 현재 editLayers를 스냅샷으로 히스토리에 기록.
-// 포인터 이후의 Redo 분기는 제거 (새 행동 발생 시 미래 취소).
 function saveHistory() {
   const snapshot = JSON.parse(JSON.stringify(editLayers.value))
   history.value = history.value.slice(0, historyStep.value + 1)
@@ -189,7 +215,6 @@ function saveHistory() {
   else historyStep.value++
 }
 
-// undo/redo 후 transformer 해제 + Konva 강제 갱신
 function syncKonvaAfterRestore() {
   selectedIdx.value = null
   nextTick(() => {
@@ -214,11 +239,11 @@ function redo() {
   syncKonvaAfterRestore()
 }
 
+// ── 키보드 이벤트 ─────────────────────────────────────────────────────────────
 function handleKeyUp(e) {
   if (e.code === 'Space') spacebarDown.value = false
 }
 
-// ── 키보드 이벤트 등록/해제 ───────────────────────────────────────────────────
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
   window.addEventListener('keyup', handleKeyUp)
@@ -239,17 +264,16 @@ onMounted(async () => {
     const res = await getLayoutResult(jobId, fileName)
     layout.value = res.data
     editLayers.value = JSON.parse(JSON.stringify(res.data.layers))
-    origLayers.value = JSON.parse(JSON.stringify(res.data.layers))
+    origLayers.value  = JSON.parse(JSON.stringify(res.data.layers))
 
     const tw = res.data.target_w
     const th = res.data.target_h
     displayScale.value = Math.min(1, DISPLAY_MAX_W / tw, DISPLAY_MAX_H / th)
 
-    // 레이어 이미지 로드
     await loadLayerImages()
-    saveHistory()  // 초기 상태를 히스토리 기점으로 저장
+    saveHistory()
     await nextTick()
-    cacheAllLayerNodes()  // 투명 픽셀 hit 제외
+    cacheAllLayerNodes()
   } catch (e) {
     error.value = e.response?.status === 404
       ? 'layout_result.json 없음 — TYPE G 파이프라인 결과에서만 사용 가능합니다.'
@@ -261,7 +285,7 @@ onMounted(async () => {
 
 // ── Konva 설정 ────────────────────────────────────────────────────────────────
 const bgImage  = ref(null)
-const imgCache = ref({})   // name → HTMLImageElement
+const imgCache = ref({})
 
 const stageConfig = computed(() => ({
   width:     (layout.value?.target_w  ?? 800) * displayScale.value,
@@ -276,30 +300,28 @@ const stageConfig = computed(() => ({
 const bgConfig = computed(() => ({
   image:  bgImage.value,
   x: 0, y: 0,
-  width:  (layout.value?.target_w ?? 800) * displayScale.value,
-  height: (layout.value?.target_h ?? 400) * displayScale.value,
+  width:     (layout.value?.target_w ?? 800) * displayScale.value,
+  height:    (layout.value?.target_h ?? 400) * displayScale.value,
   listening: false,
 }))
 
 function layerConfig(lyr, idx) {
   const sc = displayScale.value
   return {
-    image:      imgCache.value[lyr.name] ?? null,
-    x:          lyr.render_x * sc,
-    y:          lyr.render_y * sc,
-    width:      lyr.render_w * sc,
-    height:     lyr.render_h * sc,
-    draggable:  !spacebarDown.value,
-    name:       `layer-${idx}`,
+    image:     imgCache.value[lyr.name] ?? null,
+    x:         lyr.render_x * sc,
+    y:         lyr.render_y * sc,
+    width:     lyr.render_w * sc,
+    height:    lyr.render_h * sc,
+    draggable: !spacebarDown.value,
+    name:      `layer-${idx}`,
   }
 }
 
 async function loadLayerImages() {
-  // 배경 이미지
   if (layout.value?.bg_file) {
     bgImage.value = await loadImg(layerFileUrl(jobId, layout.value.bg_file))
   }
-  // 레이어 이미지
   for (const lyr of editLayers.value) {
     if (lyr.layer_file) {
       imgCache.value[lyr.name] = await loadImg(layerFileUrl(jobId, lyr.layer_file))
@@ -330,8 +352,7 @@ function selectLayer(idx) {
 }
 
 function onStageClick(e) {
-  if (spacebarDown.value) return  // 스페이스바 팬 중 클릭 무시
-  // 빈 배경 클릭 시 선택 해제
+  if (spacebarDown.value) return
   if (e.target === e.target.getStage()) {
     selectedIdx.value = null
     const tr = transformerRef.value?.getNode()
@@ -341,7 +362,7 @@ function onStageClick(e) {
 
 // ── 이벤트 핸들러 ─────────────────────────────────────────────────────────────
 function onDragEnd(e, idx) {
-  guideLines.value = []  // 드래그 종료 시 가이드선 제거
+  guideLines.value = []
   const sc = displayScale.value
   editLayers.value[idx].render_x = Math.round(e.target.x() / sc)
   editLayers.value[idx].render_y = Math.round(e.target.y() / sc)
@@ -355,7 +376,6 @@ function onTransformEnd(e, idx) {
   editLayers.value[idx].render_y = Math.round(node.y()      / sc)
   editLayers.value[idx].render_w = Math.round(node.width()  * node.scaleX() / sc)
   editLayers.value[idx].render_h = Math.round(node.height() * node.scaleY() / sc)
-  // 트랜스폼 스케일 리셋 (크기를 직접 반영했으므로)
   node.scaleX(1)
   node.scaleY(1)
   saveHistory()
@@ -377,7 +397,6 @@ function onStageWheel(e) {
   const oldScale = stageScale.value
   const pointer  = stage.getPointerPosition()
 
-  // 포인터 아래의 stage content 좌표 — 이 지점을 줌 기준점으로 고정
   const contentX = (pointer.x - stagePosX.value) / oldScale
   const contentY = (pointer.y - stagePosY.value) / oldScale
 
@@ -386,7 +405,6 @@ function onStageWheel(e) {
     oldScale * (direction > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR)
   ))
 
-  // 기준점이 화면에서 같은 위치를 유지하도록 stagePosX/Y 재계산
   stagePosX.value  = pointer.x - contentX * newScale
   stagePosY.value  = pointer.y - contentY * newScale
   stageScale.value = newScale
@@ -405,7 +423,6 @@ function resetZoom() {
   stagePosY.value  = 0
 }
 
-// 투명 픽셀을 히트 영역에서 제외 (누끼 PNG 선택 정확도 향상)
 function cacheAllLayerNodes() {
   const konvaLayer = elemLayerRef.value?.getNode()
   if (!konvaLayer) return
@@ -415,9 +432,7 @@ function cacheAllLayerNodes() {
   })
 }
 
-// ── 스냅 헬퍼 ─────────────────────────────────────────────────────────────────
-// nodeEdges: 드래그 중인 노드의 기준점 배열, targets: 스냅 대상 위치 배열
-// 가장 먼저 발견된 SNAP_THRESHOLD 이내 매칭 반환
+// ── 스냅 핸들러 ───────────────────────────────────────────────────────────────
 function findSnap(nodeEdges, targets) {
   for (const { pos } of targets) {
     for (const edge of nodeEdges) {
@@ -439,36 +454,33 @@ function onDragMove(e, idx) {
   const stageH = stageConfig.value.height
   const sc     = displayScale.value
 
-  // 스냅 대상: 캔버스 중앙축 + 타 레이어 bbox 3점(좌·중·우 / 상·중·하)
   const xTargets = [{ pos: stageW / 2 }]
   const yTargets = [{ pos: stageH / 2 }]
   editLayers.value.forEach((lyr, i) => {
     if (i === idx) return
-    const lx = lyr.render_x * sc,  lw = lyr.render_w * sc
-    const ly = lyr.render_y * sc,  lh = lyr.render_h * sc
+    const lx = lyr.render_x * sc, lw = lyr.render_w * sc
+    const ly = lyr.render_y * sc, lh = lyr.render_h * sc
     xTargets.push({ pos: lx }, { pos: lx + lw / 2 }, { pos: lx + lw })
     yTargets.push({ pos: ly }, { pos: ly + lh / 2 }, { pos: ly + lh })
   })
 
   const newGuideLines = []
 
-  // X축 스냅 (노드 좌·중·우 기준점)
   const snapX = findSnap([nx, nx + nw / 2, nx + nw], xTargets)
   if (snapX) {
     node.x(nx + snapX.delta)
     newGuideLines.push({
       points: [snapX.snapPos, 0, snapX.snapPos, stageH],
-      stroke: '#FF006B', strokeWidth: 1, dash: [4, 3], listening: false,
+      stroke: '#FF007A', strokeWidth: 1, dash: [4, 3], listening: false,
     })
   }
 
-  // Y축 스냅 (노드 상·중·하 기준점)
   const snapY = findSnap([ny, ny + nh / 2, ny + nh], yTargets)
   if (snapY) {
     node.y(ny + snapY.delta)
     newGuideLines.push({
       points: [0, snapY.snapPos, stageW, snapY.snapPos],
-      stroke: '#FF006B', strokeWidth: 1, dash: [4, 3], listening: false,
+      stroke: '#FF007A', strokeWidth: 1, dash: [4, 3], listening: false,
     })
   }
 
@@ -480,20 +492,17 @@ function handleKeyDown(e) {
   const activeTag = document.activeElement?.tagName
   const isInputFocused = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT'
 
-  // Ctrl+Z (Undo) / Ctrl+Y / Ctrl+Shift+Z (Redo) — 입력창 포커스 중에는 브라우저 기본 동작 유지
   if ((e.ctrlKey || e.metaKey) && !isInputFocused) {
     if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
     if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return }
   }
 
-  // Spacebar: 팬 모드 활성화 (입력창 포커스 중 제외)
   if (e.code === 'Space' && !isInputFocused) {
     e.preventDefault()
     spacebarDown.value = true
     return
   }
 
-  // 수치 입력창 포커스 중일 때는 방향키가 입력란에서 동작해야 하므로 제외
   if (isInputFocused) return
   if (selectedIdx.value === null) return
 
@@ -509,7 +518,6 @@ function handleKeyDown(e) {
   if (e.key === 'ArrowUp')    lyr.render_y -= step
   if (e.key === 'ArrowDown')  lyr.render_y += step
 
-  // Konva 노드 + transformer 즉시 동기화
   nextTick(() => {
     const konvaLayer = elemLayerRef.value?.getNode()
     if (!konvaLayer) return
@@ -525,8 +533,7 @@ function handleKeyDown(e) {
   })
 }
 
-// ── Z-Index (레이어 순서 변경) ────────────────────────────────────────────────
-// splice로 배열 원소를 이동 → Vue 반응형으로 Konva v-for 순서 자동 갱신
+// ── Z-Index 변경 ──────────────────────────────────────────────────────────────
 function moveLayerUp(idx) {
   if (idx === 0) return
   const layers = editLayers.value
@@ -545,13 +552,13 @@ function moveLayerDown(idx) {
   saveHistory()
 }
 
-// ── 더티 체크 ─────────────────────────────────────────────────────────────────
+// ── 더티 체크 / 초기화 ─────────────────────────────────────────────────────────
 const isDirty = computed(() =>
   JSON.stringify(editLayers.value) !== JSON.stringify(origLayers.value)
 )
 
 function resetLayers() {
-  editLayers.value = JSON.parse(JSON.stringify(origLayers.value))
+  editLayers.value  = JSON.parse(JSON.stringify(origLayers.value))
   selectedIdx.value = null
   const tr = transformerRef.value?.getNode()
   if (tr) tr.nodes([])
@@ -583,79 +590,181 @@ async function saveAndRecomposite() {
 </script>
 
 <style scoped>
-.editor-wrap { display: flex; flex-direction: column; height: 100vh; background: #F3F4F6; }
+/* ── 전체 레이아웃 ───────────────────────────────────────────────────────────── */
+.editor-wrap { display: flex; flex-direction: column; height: 100vh; background: #E5E5E5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 
+/* ── 상단 툴바 ──────────────────────────────────────────────────────────────── */
 .editor-bar {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 20px; background: #fff;
-  border-bottom: 1px solid #E5E7EB; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px; height: 48px;
+  background: #FFFFFF; border-bottom: 1px solid #E5E5E5;
+  flex-shrink: 0; box-shadow: 0 1px 0 #E5E5E5;
 }
-.back-btn { background: none; border: 1px solid #D1D5DB; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
-.editor-title { flex: 1; font-size: 13px; font-weight: 600; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.editor-actions { display: flex; gap: 8px; }
-.btn-undo  { background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 14px; }
-.btn-undo:disabled { opacity: 0.35; cursor: default; }
-.zoom-display { font-size: 12px; color: #6B7280; min-width: 36px; text-align: center; flex-shrink: 0; }
-.btn-reset { background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-.btn-save  { background: #7C3AED; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; }
-.btn-save:disabled { opacity: 0.5; cursor: default; }
-.spin { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+.back-btn {
+  background: none; border: 1px solid #E5E5E5; border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; font-size: 12px; color: #333;
+  white-space: nowrap;
+}
+.back-btn:hover { background: #F5F5F5; }
+.editor-title {
+  flex: 1; font-size: 12px; font-weight: 600; color: #333;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.editor-actions { display: flex; align-items: center; gap: 6px; }
+.bar-sep { width: 1px; height: 20px; background: #E5E5E5; margin: 0 2px; }
+
+.btn-tool {
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  padding: 5px 9px; cursor: pointer; font-size: 14px; color: #333;
+  transition: background 0.1s;
+}
+.btn-tool:hover:not(:disabled) { background: #F0F0F0; border-color: #E5E5E5; }
+.btn-tool:disabled { opacity: 0.35; cursor: default; }
+
+.zoom-display {
+  font-size: 12px; color: #888; min-width: 38px;
+  text-align: center; flex-shrink: 0;
+}
+
+.btn-reset {
+  background: none; border: 1px solid #E5E5E5; border-radius: 6px;
+  padding: 5px 12px; cursor: pointer; font-size: 12px; color: #333;
+}
+.btn-reset:hover:not(:disabled) { background: #F5F5F5; }
+.btn-reset:disabled { opacity: 0.4; cursor: default; }
+
+.btn-save {
+  background: #0D99FF; color: #fff; border: none; border-radius: 6px;
+  padding: 6px 14px; cursor: pointer; font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  transition: background 0.15s;
+}
+.btn-save:hover:not(:disabled) { background: #0B87E0; }
+.btn-save:disabled { opacity: 0.45; cursor: default; }
+.spin {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.center-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 12px; color: #6B7280; }
-.spinner { width: 32px; height: 32px; border: 3px solid #E5E7EB; border-top-color: #7C3AED; border-radius: 50%; animation: spin 0.8s linear infinite; }
+/* ── 로딩 / 오류 ─────────────────────────────────────────────────────────────── */
+.center-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; flex: 1; gap: 12px; color: #888; font-size: 13px;
+}
+.spinner {
+  width: 28px; height: 28px;
+  border: 2.5px solid #E5E5E5; border-top-color: #0D99FF;
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+.error-box {
+  margin: 40px auto; max-width: 500px;
+  background: #FFF2F2; border: 1px solid #FFCDD2; border-radius: 8px; padding: 24px;
+}
+.error-title { font-weight: 700; color: #C62828; margin-bottom: 8px; font-size: 14px; }
+.error-msg   { font-size: 13px; color: #7F1D1D; }
 
-.error-box { margin: 40px auto; max-width: 500px; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 10px; padding: 24px; }
-.error-title { font-weight: 700; color: #B91C1C; margin-bottom: 8px; }
-.error-msg { font-size: 13px; color: #7F1D1D; }
-
+/* ── 3단 레이아웃 ────────────────────────────────────────────────────────────── */
 .canvas-area { display: flex; flex: 1; overflow: hidden; }
 
+/* 좌측 Layers 패널 */
+.left-panel {
+  width: 220px; flex-shrink: 0; background: #FFFFFF;
+  border-right: 1px solid #E5E5E5; overflow-y: auto; padding: 0;
+}
+
+/* 중앙 캔버스 워크스페이스 */
 .konva-wrap {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  padding: 24px; overflow: auto; background: #E5E7EB;
+  background: #E5E5E5; overflow: auto;
 }
-/* Konva stage 그림자 */
-.konva-wrap :deep(canvas) { box-shadow: 0 4px 20px rgba(0,0,0,0.18); }
-
-.side-panel {
-  width: 240px; flex-shrink: 0; background: #fff;
-  border-left: 1px solid #E5E7EB; overflow-y: auto;
-  padding: 16px 12px;
+.konva-wrap :deep(canvas) {
+  box-shadow: 0 2px 16px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.06);
 }
-.panel-title { font-size: 11px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-.panel-title.mt { margin-top: 20px; }
 
+/* 우측 Design 패널 */
+.right-panel {
+  width: 220px; flex-shrink: 0; background: #FFFFFF;
+  border-left: 1px solid #E5E5E5; overflow-y: auto; padding: 0;
+}
+
+/* ── 패널 공통 ───────────────────────────────────────────────────────────────── */
+.panel-section-title {
+  font-size: 11px; font-weight: 700; color: #888;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 12px 14px 8px; border-bottom: 1px solid #E5E5E5;
+  position: sticky; top: 0; background: #FFFFFF; z-index: 1;
+}
+
+/* ── Layers 패널 아이템 ──────────────────────────────────────────────────────── */
 .layer-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px; border-radius: 6px; cursor: pointer;
-  font-size: 12px; color: #374151; margin-bottom: 2px;
+  padding: 7px 12px; cursor: pointer; font-size: 12px; color: #333;
+  border-bottom: 1px solid #F5F5F5; user-select: none;
 }
-.layer-item:hover { background: #F3F4F6; }
-.layer-item.active { background: #EDE9FE; }
-.layer-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #9CA3AF; }
-.layer-dot.role-title  { background: #3B82F6; }
-.layer-dot.role-product{ background: #10B981; }
-.layer-dot.role-logo   { background: #F59E0B; }
-.layer-dot.role-person { background: #EC4899; }
-.layer-dot.role-badge  { background: #8B5CF6; }
-.layer-dot.role-body   { background: #6B7280; }
-.layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.layer-role { font-size: 10px; color: #9CA3AF; flex-shrink: 0; }
+.layer-item:hover  { background: #F5F5F5; }
+.layer-item.active { background: #E5F2FF; }
+
+.layer-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #CCC; }
+.layer-dot.role-title        { background: #0D99FF; }
+.layer-dot.role-product      { background: #10B981; }
+.layer-dot.role-logo         { background: #F59E0B; }
+.layer-dot.role-person       { background: #EC4899; }
+.layer-dot.role-badge        { background: #8B5CF6; }
+.layer-dot.role-body         { background: #888; }
+.layer-dot.role-title-group  { background: #0D99FF; }
+.layer-dot.role-product-group{ background: #10B981; }
+
+.layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .layer-order-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
-.layer-order-btn { background: none; border: none; padding: 0 2px; cursor: pointer; font-size: 9px; color: #9CA3AF; line-height: 1; }
-.layer-order-btn:hover:not(:disabled) { color: #374151; }
+.layer-order-btn {
+  background: none; border: none; padding: 0 2px; cursor: pointer;
+  font-size: 9px; color: #CCC; line-height: 1;
+}
+.layer-order-btn:hover:not(:disabled) { color: #333; }
 .layer-order-btn:disabled { opacity: 0.25; cursor: default; }
 
-.num-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.num-row label { width: 16px; font-size: 12px; font-weight: 600; color: #6B7280; flex-shrink: 0; }
-.num-row input { flex: 1; border: 1px solid #D1D5DB; border-radius: 5px; padding: 4px 8px; font-size: 12px; }
-.num-row input:focus { outline: none; border-color: #7C3AED; }
+/* ── Design 패널 ─────────────────────────────────────────────────────────────── */
+.design-meta {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px 4px; font-size: 12px; color: #333;
+}
+.design-meta-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-role-badge {
+  display: inline-block; margin: 0 14px 10px;
+  padding: 2px 8px; border-radius: 10px;
+  background: #F0F0F0; color: #888; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
 
+.design-group-label {
+  font-size: 10px; font-weight: 700; color: #888;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 10px 14px 4px;
+}
+.design-row { display: flex; gap: 8px; padding: 0 14px 6px; }
+.design-field { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.design-field label {
+  font-size: 10px; color: #888; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.design-field input {
+  border: 1px solid #E5E5E5; border-radius: 5px;
+  padding: 5px 8px; font-size: 12px; color: #333; width: 100%; box-sizing: border-box;
+  background: #FAFAFA;
+}
+.design-field input:focus { outline: none; border-color: #0D99FF; background: #FFFFFF; }
+
+.design-empty {
+  padding: 24px 14px; font-size: 12px; color: #888; text-align: center;
+}
+
+/* ── 토스트 ──────────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: #1F2937; color: #fff; padding: 10px 20px;
+  background: #1A1A1A; color: #fff; padding: 10px 20px;
   border-radius: 8px; font-size: 13px; z-index: 999;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25); white-space: nowrap;
 }
 </style>
