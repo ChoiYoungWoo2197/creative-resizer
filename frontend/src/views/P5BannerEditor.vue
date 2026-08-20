@@ -7,6 +7,8 @@
       <div class="editor-actions">
         <button class="btn-undo" @click="undo" :disabled="!canUndo" title="실행 취소 (Ctrl+Z)">↩</button>
         <button class="btn-undo" @click="redo" :disabled="!canRedo" title="다시 실행 (Ctrl+Y)">↪</button>
+        <span class="zoom-display">{{ Math.round(stageScale * 100) }}%</span>
+        <button class="btn-undo" @click="resetZoom" :disabled="stageScale === 1 && stagePosX === 0 && stagePosY === 0" title="줌 리셋 (Ctrl+휠)">⊙</button>
         <button class="btn-reset" @click="resetLayers" :disabled="saving">초기화</button>
         <button class="btn-save" @click="saveAndRecomposite" :disabled="saving || !isDirty">
           <span v-if="saving" class="spin" />
@@ -30,10 +32,13 @@
     <!-- 캔버스 에디터 -->
     <div v-else-if="layout" class="canvas-area">
       <!-- 좌측: Konva 캔버스 -->
-      <div class="konva-wrap" ref="konvaWrapRef">
+      <div class="konva-wrap" ref="konvaWrapRef" :style="{ cursor: spacebarDown ? 'grab' : '' }">
         <v-stage
           :config="stageConfig"
           @click="onStageClick"
+          @wheel="onStageWheel"
+          @dragmove="onStagePan"
+          @dragend="onStagePan"
         >
           <!-- 배경 이미지 레이어 (선택/드래그 불가) -->
           <v-layer>
@@ -149,6 +154,16 @@ const DISPLAY_MAX_W = 900
 const DISPLAY_MAX_H = 600
 const displayScale = ref(1)
 
+// ── Zoom/Pan 상태 ─────────────────────────────────────────────────────────────
+const ZOOM_MIN    = 0.5   // 최소 배율
+const ZOOM_MAX    = 3.0   // 최대 배율
+const ZOOM_FACTOR = 1.1   // 휠 1회당 배율 변화
+
+const stageScale   = ref(1)     // 줌 배율 (1 = fit view)
+const stagePosX    = ref(0)     // 팬 오프셋 X
+const stagePosY    = ref(0)     // 팬 오프셋 Y
+const spacebarDown = ref(false) // 스페이스바 팬 모드 활성 여부
+
 // ── 스냅/Nudge 상수 ───────────────────────────────────────────────────────────
 const SNAP_THRESHOLD    = 5   // 스냅 인식 거리 (화면 px)
 const NUDGE_STEP        = 1   // 방향키 이동 단위 (원본 좌표 px)
@@ -199,12 +214,18 @@ function redo() {
   syncKonvaAfterRestore()
 }
 
+function handleKeyUp(e) {
+  if (e.code === 'Space') spacebarDown.value = false
+}
+
 // ── 키보드 이벤트 등록/해제 ───────────────────────────────────────────────────
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('keyup', handleKeyUp)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('keyup', handleKeyUp)
 })
 
 // ── 초기 데이터 로드 ──────────────────────────────────────────────────────────
@@ -227,6 +248,8 @@ onMounted(async () => {
     // 레이어 이미지 로드
     await loadLayerImages()
     saveHistory()  // 초기 상태를 히스토리 기점으로 저장
+    await nextTick()
+    cacheAllLayerNodes()  // 투명 픽셀 hit 제외
   } catch (e) {
     error.value = e.response?.status === 404
       ? 'layout_result.json 없음 — TYPE G 파이프라인 결과에서만 사용 가능합니다.'
@@ -241,8 +264,13 @@ const bgImage  = ref(null)
 const imgCache = ref({})   // name → HTMLImageElement
 
 const stageConfig = computed(() => ({
-  width:  (layout.value?.target_w  ?? 800) * displayScale.value,
-  height: (layout.value?.target_h  ?? 400) * displayScale.value,
+  width:     (layout.value?.target_w  ?? 800) * displayScale.value,
+  height:    (layout.value?.target_h  ?? 400) * displayScale.value,
+  scaleX:    stageScale.value,
+  scaleY:    stageScale.value,
+  x:         stagePosX.value,
+  y:         stagePosY.value,
+  draggable: spacebarDown.value,
 }))
 
 const bgConfig = computed(() => ({
@@ -261,7 +289,7 @@ function layerConfig(lyr, idx) {
     y:          lyr.render_y * sc,
     width:      lyr.render_w * sc,
     height:     lyr.render_h * sc,
-    draggable:  true,
+    draggable:  !spacebarDown.value,
     name:       `layer-${idx}`,
   }
 }
@@ -302,6 +330,7 @@ function selectLayer(idx) {
 }
 
 function onStageClick(e) {
+  if (spacebarDown.value) return  // 스페이스바 팬 중 클릭 무시
   // 빈 배경 클릭 시 선택 해제
   if (e.target === e.target.getStage()) {
     selectedIdx.value = null
@@ -338,6 +367,50 @@ function updateField(idx, field, value) {
   nextTick(() => {
     const layer = elemLayerRef.value?.getNode()
     if (layer) layer.batchDraw()
+  })
+}
+
+// ── Zoom/Pan 핸들러 ───────────────────────────────────────────────────────────
+function onStageWheel(e) {
+  e.evt.preventDefault()
+  const stage    = e.target.getStage()
+  const oldScale = stageScale.value
+  const pointer  = stage.getPointerPosition()
+
+  // 포인터 아래의 stage content 좌표 — 이 지점을 줌 기준점으로 고정
+  const contentX = (pointer.x - stagePosX.value) / oldScale
+  const contentY = (pointer.y - stagePosY.value) / oldScale
+
+  const direction = e.evt.deltaY < 0 ? 1 : -1
+  const newScale  = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN,
+    oldScale * (direction > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR)
+  ))
+
+  // 기준점이 화면에서 같은 위치를 유지하도록 stagePosX/Y 재계산
+  stagePosX.value  = pointer.x - contentX * newScale
+  stagePosY.value  = pointer.y - contentY * newScale
+  stageScale.value = newScale
+}
+
+function onStagePan(e) {
+  // stage draggable=true 일 때 drag 위치를 상태에 동기화
+  stagePosX.value = e.target.x()
+  stagePosY.value = e.target.y()
+}
+
+function resetZoom() {
+  stageScale.value = 1
+  stagePosX.value  = 0
+  stagePosY.value  = 0
+}
+
+// 투명 픽셀을 히트 영역에서 제외 (누끼 PNG 선택 정확도 향상)
+function cacheAllLayerNodes() {
+  const konvaLayer = elemLayerRef.value?.getNode()
+  if (!konvaLayer) return
+  editLayers.value.forEach((lyr, idx) => {
+    const node = konvaLayer.findOne(`.layer-${idx}`)
+    if (node) node.cache()
   })
 }
 
@@ -410,6 +483,13 @@ function handleKeyDown(e) {
   if ((e.ctrlKey || e.metaKey) && !isInputFocused) {
     if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
     if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return }
+  }
+
+  // Spacebar: 팬 모드 활성화 (입력창 포커스 중 제외)
+  if (e.code === 'Space' && !isInputFocused) {
+    e.preventDefault()
+    spacebarDown.value = true
+    return
   }
 
   // 수치 입력창 포커스 중일 때는 방향키가 입력란에서 동작해야 하므로 제외
@@ -514,6 +594,7 @@ async function saveAndRecomposite() {
 .editor-actions { display: flex; gap: 8px; }
 .btn-undo  { background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 14px; }
 .btn-undo:disabled { opacity: 0.35; cursor: default; }
+.zoom-display { font-size: 12px; color: #6B7280; min-width: 36px; text-align: center; flex-shrink: 0; }
 .btn-reset { background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
 .btn-save  { background: #7C3AED; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .btn-save:disabled { opacity: 0.5; cursor: default; }
