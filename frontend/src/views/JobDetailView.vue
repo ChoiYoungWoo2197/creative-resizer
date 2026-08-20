@@ -63,6 +63,7 @@
         </div>
         <div class="results-header">
           <span class="results-count">{{ job.results?.length || 0 }}개 배너 생성 완료</span>
+          <span class="carousel-hint-text">‹ › 드래그 또는 방향키로 이동</span>
         </div>
 
         <!-- PSD 레이어 재배치 진단 패널 -->
@@ -87,15 +88,148 @@
           <div class="rdiag-hint">레이어명에 title·main_image·cta 관련 키워드 추가 또는 레이어 구조 확인이 필요합니다.</div>
         </div>
 
-        <div class="img-grid">
-          <div class="img-card" v-for="r in job.results" :key="r.fileName" :class="{ invalid: r.valid === false }">
-            <div class="img-thumb" :style="thumbStyle(r)">
-              <img
-                :src="resultPreviewUrl(r)"
-                :alt="r.name"
-                @error="onImgError($event)"
-              />
+        <div class="carousel-wrap">
+          <button class="carousel-arrow left" :disabled="carouselAtStart" @click="scrollByCard(-1)" aria-label="이전 배너">‹</button>
+
+          <div
+            class="carousel-track"
+            ref="trackRef"
+            tabindex="0"
+            @wheel="onCarouselWheel"
+            @scroll="onCarouselScroll"
+            @mousedown="onDragStart"
+            @mousemove="onDragMove"
+            @mouseup="onDragEnd"
+            @mouseleave="onDragEnd"
+            @keydown.left="scrollByCard(-1)"
+            @keydown.right="scrollByCard(1)"
+          >
+            <div class="carousel-card" v-for="(r, idx) in job.results" :key="r.fileName" :class="{ invalid: r.valid === false }">
+              <div class="carousel-img-wrap">
+                <span class="carousel-status-pill" :class="resultStatusClass(r)">{{ resultStatusLabel(r) }}</span>
+                <img
+                  :src="resultPreviewUrl(r)"
+                  :alt="r.name"
+                  draggable="false"
+                  @error="onImgError($event)"
+                />
+                <div class="carousel-hover-overlay">
+                  <button class="carousel-hover-btn" title="크게보기" @click.stop="openLightbox(idx)">🔍</button>
+                  <button class="carousel-hover-btn" title="다운로드" @click.stop="handleSingleDownload(r)">⬇</button>
+                </div>
+              </div>
+              <div class="carousel-footer">
+                <div class="carousel-name">{{ r.name || r.slug }}</div>
+                <div class="carousel-meta">
+                  {{ r.width }} × {{ r.height }}
+                  <span v-if="r.fileSize"> · {{ fmtSize(r.fileSize) }}</span>
+                </div>
+              </div>
             </div>
+          </div>
+
+          <button class="carousel-arrow right" :disabled="carouselAtEnd" @click="scrollByCard(1)" aria-label="다음 배너">›</button>
+        </div>
+
+        <div class="carousel-indicators">
+          <button class="carousel-ind-arrow" :disabled="carouselAtStart" @click="scrollByCard(-1)" aria-label="이전">◀</button>
+          <button
+            v-for="(r, idx) in job.results"
+            :key="'dot-' + r.fileName"
+            class="carousel-dot"
+            :class="{ active: idx === activeIndex }"
+            @click="scrollToIndex(idx)"
+            :aria-label="(idx + 1) + '번째 배너로 이동'"
+          />
+          <button class="carousel-ind-arrow" :disabled="carouselAtEnd" @click="scrollByCard(1)" aria-label="다음">▶</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- AI 후보 비교 모달 -->
+    <div v-if="compareModal" class="cmp-overlay" @click.self="compareModal = false">
+      <div class="cmp-modal">
+        <div class="cmp-header">
+          <span class="cmp-star">✦</span> AI 후보 비교 결과
+          <span class="cmp-best-badge">추천: {{ strengthKr(compareResult?.bestCandidate) }} {{ compareResult?.bestScore }}점</span>
+          <button class="cmp-close" @click="compareModal = false">✕</button>
+        </div>
+        <div class="cmp-summary">{{ compareResult?.summary }}</div>
+        <div class="cmp-candidates">
+          <div v-for="c in compareResult?.candidates" :key="c.strength"
+            class="cmp-card" :class="{ best: c.strength === compareResult?.bestCandidate }">
+            <div class="cmp-card-head">
+              <span class="cmp-strength">{{ strengthKr(c.strength) }}</span>
+              <span class="cmp-score" :class="scoreClass(c.score)">{{ c.score }}점</span>
+              <span v-if="c.strength === compareResult?.bestCandidate" class="cmp-crown">★ 추천</span>
+            </div>
+            <div class="cmp-tags" v-if="strengthTags(c.strength).length">
+              <span v-for="tag in strengthTags(c.strength)" :key="tag" class="cmp-tag">{{ tag }}</span>
+            </div>
+            <div class="cmp-desc" v-if="strengthDesc(c.strength)">{{ strengthDesc(c.strength) }}</div>
+            <div class="cmp-thumb-wrap">
+              <img :src="compareFileUrl(compareResult.id, c.fileName)" class="cmp-thumb" :alt="c.strength" @error="$event.target.style.display='none'" />
+            </div>
+            <!-- 요소 보존 평가 (3.5차) -->
+            <div v-if="c.preservedRequiredGroups?.length || c.lostRequiredGroups?.length || c.preservedPriorityGroups?.length || c.lostPriorityGroups?.length" class="cmp-element-section">
+              <div v-if="c.preservedRequiredGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-preserved-req">✓ 필수 유지</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.preservedRequiredGroups" :key="g" class="cmp-el-tag cmp-el-tag-preserved-req">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+              <div v-if="c.lostRequiredGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-lost-req">✕ 필수 손실</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.lostRequiredGroups" :key="g" class="cmp-el-tag cmp-el-tag-lost-req">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+              <div v-if="c.preservedPriorityGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-preserved-pri">△ 우선 유지</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.preservedPriorityGroups" :key="g" class="cmp-el-tag cmp-el-tag-preserved-pri">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+              <div v-if="c.lostPriorityGroups?.length" class="cmp-el-row">
+                <span class="cmp-el-label cmp-el-lost-pri">△ 우선 손실</span>
+                <div class="cmp-el-tags">
+                  <span v-for="g in c.lostPriorityGroups" :key="g" class="cmp-el-tag cmp-el-tag-lost-pri">{{ groupLabel(g) }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="c.pros?.length" class="cmp-pros">
+              <div v-for="p in c.pros" :key="p" class="cmp-pro-item">✓ {{ p }}</div>
+            </div>
+            <div v-if="c.cons?.length" class="cmp-cons">
+              <div v-for="n in c.cons" :key="n" class="cmp-con-item">✕ {{ n }}</div>
+            </div>
+            <div class="cmp-apply-area">
+              <button class="btn-cmp-apply"
+                :class="{ 'btn-cmp-apply-best': c.strength === compareResult?.bestCandidate }"
+                :disabled="applyLoading[`${compareResult?.specId}_${c.strength}`]"
+                @click="runApply(c.strength)">
+                <span v-if="applyLoading[`${compareResult?.specId}_${c.strength}`]" class="spin-xs" />
+                {{ c.strength === compareResult?.bestCandidate ? '★ 추천 적용' : '이 후보 적용' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 배너 크게보기 (라이트박스) -->
+    <div v-if="lightboxIndex !== null && lightboxResult" class="lightbox-overlay" @click.self="closeLightbox">
+      <div class="lightbox-modal">
+        <button class="lightbox-close" @click="closeLightbox" aria-label="닫기">✕</button>
+        <button class="lightbox-nav left" :disabled="lightboxIndex === 0" @click="lightboxStep(-1)" aria-label="이전">‹</button>
+        <button class="lightbox-nav right" :disabled="lightboxIndex === job.results.length - 1" @click="lightboxStep(1)" aria-label="다음">›</button>
+
+        <div class="lightbox-body">
+          <div class="lightbox-img-wrap">
+            <img :src="resultPreviewUrl(lightboxResult)" :alt="lightboxResult.name" @error="onImgError($event)" />
+          </div>
+
+          <div class="lightbox-detail" v-for="r in [lightboxResult]" :key="r.fileName">
             <div class="img-info">
               <div class="img-name">{{ r.name || r.slug }}</div>
               <div class="img-meta">
@@ -276,81 +410,10 @@
               <button v-if="job.resizeMode === 'smart-fit' && r.specId"
                 class="btn-compare"
                 :disabled="compareLoading[r.specId]"
-                @click="runCompare(r.specId)">
+                @click="closeLightbox(); runCompare(r.specId)">
                 <span v-if="compareLoading[r.specId]" class="spin-xs" />
                 <span v-else>✦</span>
                 {{ compareLoading[r.specId] ? '비교 중...' : 'AI 비교' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </template>
-
-    <!-- AI 후보 비교 모달 -->
-    <div v-if="compareModal" class="cmp-overlay" @click.self="compareModal = false">
-      <div class="cmp-modal">
-        <div class="cmp-header">
-          <span class="cmp-star">✦</span> AI 후보 비교 결과
-          <span class="cmp-best-badge">추천: {{ strengthKr(compareResult?.bestCandidate) }} {{ compareResult?.bestScore }}점</span>
-          <button class="cmp-close" @click="compareModal = false">✕</button>
-        </div>
-        <div class="cmp-summary">{{ compareResult?.summary }}</div>
-        <div class="cmp-candidates">
-          <div v-for="c in compareResult?.candidates" :key="c.strength"
-            class="cmp-card" :class="{ best: c.strength === compareResult?.bestCandidate }">
-            <div class="cmp-card-head">
-              <span class="cmp-strength">{{ strengthKr(c.strength) }}</span>
-              <span class="cmp-score" :class="scoreClass(c.score)">{{ c.score }}점</span>
-              <span v-if="c.strength === compareResult?.bestCandidate" class="cmp-crown">★ 추천</span>
-            </div>
-            <div class="cmp-tags" v-if="strengthTags(c.strength).length">
-              <span v-for="tag in strengthTags(c.strength)" :key="tag" class="cmp-tag">{{ tag }}</span>
-            </div>
-            <div class="cmp-desc" v-if="strengthDesc(c.strength)">{{ strengthDesc(c.strength) }}</div>
-            <div class="cmp-thumb-wrap">
-              <img :src="compareFileUrl(compareResult.id, c.fileName)" class="cmp-thumb" :alt="c.strength" @error="$event.target.style.display='none'" />
-            </div>
-            <!-- 요소 보존 평가 (3.5차) -->
-            <div v-if="c.preservedRequiredGroups?.length || c.lostRequiredGroups?.length || c.preservedPriorityGroups?.length || c.lostPriorityGroups?.length" class="cmp-element-section">
-              <div v-if="c.preservedRequiredGroups?.length" class="cmp-el-row">
-                <span class="cmp-el-label cmp-el-preserved-req">✓ 필수 유지</span>
-                <div class="cmp-el-tags">
-                  <span v-for="g in c.preservedRequiredGroups" :key="g" class="cmp-el-tag cmp-el-tag-preserved-req">{{ groupLabel(g) }}</span>
-                </div>
-              </div>
-              <div v-if="c.lostRequiredGroups?.length" class="cmp-el-row">
-                <span class="cmp-el-label cmp-el-lost-req">✕ 필수 손실</span>
-                <div class="cmp-el-tags">
-                  <span v-for="g in c.lostRequiredGroups" :key="g" class="cmp-el-tag cmp-el-tag-lost-req">{{ groupLabel(g) }}</span>
-                </div>
-              </div>
-              <div v-if="c.preservedPriorityGroups?.length" class="cmp-el-row">
-                <span class="cmp-el-label cmp-el-preserved-pri">△ 우선 유지</span>
-                <div class="cmp-el-tags">
-                  <span v-for="g in c.preservedPriorityGroups" :key="g" class="cmp-el-tag cmp-el-tag-preserved-pri">{{ groupLabel(g) }}</span>
-                </div>
-              </div>
-              <div v-if="c.lostPriorityGroups?.length" class="cmp-el-row">
-                <span class="cmp-el-label cmp-el-lost-pri">△ 우선 손실</span>
-                <div class="cmp-el-tags">
-                  <span v-for="g in c.lostPriorityGroups" :key="g" class="cmp-el-tag cmp-el-tag-lost-pri">{{ groupLabel(g) }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="c.pros?.length" class="cmp-pros">
-              <div v-for="p in c.pros" :key="p" class="cmp-pro-item">✓ {{ p }}</div>
-            </div>
-            <div v-if="c.cons?.length" class="cmp-cons">
-              <div v-for="n in c.cons" :key="n" class="cmp-con-item">✕ {{ n }}</div>
-            </div>
-            <div class="cmp-apply-area">
-              <button class="btn-cmp-apply"
-                :class="{ 'btn-cmp-apply-best': c.strength === compareResult?.bestCandidate }"
-                :disabled="applyLoading[`${compareResult?.specId}_${c.strength}`]"
-                @click="runApply(c.strength)">
-                <span v-if="applyLoading[`${compareResult?.specId}_${c.strength}`]" class="spin-xs" />
-                {{ c.strength === compareResult?.bestCandidate ? '★ 추천 적용' : '이 후보 적용' }}
               </button>
             </div>
           </div>
@@ -361,7 +424,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getJob, downloadZip, downloadImage, previewUrl, compareJob, compareFileUrl, applyCompare } from '../api/banner.js'
 import { ElMessage } from 'element-plus'
@@ -371,6 +434,23 @@ const router = useRouter()
 const job = ref(null)
 const isPolling = ref(false)
 let pollTimer = null
+
+// 결과 캐러셀
+const trackRef = ref(null)
+const activeIndex = ref(0)
+const carouselAtStart = ref(true)
+const carouselAtEnd = ref(false)
+let isDragging = false
+let dragStartX = 0
+let dragStartScrollLeft = 0
+
+// 배너 크게보기 (라이트박스)
+const lightboxIndex = ref(null)
+const lightboxResult = computed(() => (
+  lightboxIndex.value !== null && job.value?.results
+    ? job.value.results[lightboxIndex.value]
+    : null
+))
 
 // AI 후보 비교
 const compareLoading = ref({})   // { specId: true/false }
@@ -413,11 +493,94 @@ function fmtDate(dt) {
   return `${mm}.${dd}. ${ampm} ${h12}:${min}`
 }
 
-function thumbStyle(r) {
-  const ratio = r.width / r.height
-  return ratio > 1.5 ? { paddingBottom: '52%' }
-       : ratio < 0.7 ? { paddingBottom: '130%' }
-       : { paddingBottom: '100%' }
+// ── 결과 캐러셀 ──────────────────────────────────────────────────────────────
+function updateCarouselEdges() {
+  const el = trackRef.value
+  if (!el) return
+  carouselAtStart.value = el.scrollLeft <= 1
+  carouselAtEnd.value = el.scrollLeft >= el.scrollWidth - el.clientWidth - 1
+}
+
+function onCarouselScroll() {
+  const el = trackRef.value
+  if (!el) return
+  updateCarouselEdges()
+  const cards = el.querySelectorAll('.carousel-card')
+  if (!cards.length) return
+  // 뷰포트 좌측 기준 가장 가까운 카드를 현재 위치로 판단
+  let closest = 0
+  let closestDist = Infinity
+  cards.forEach((card, i) => {
+    const dist = Math.abs(card.offsetLeft - el.scrollLeft)
+    if (dist < closestDist) { closestDist = dist; closest = i }
+  })
+  activeIndex.value = closest
+}
+
+function scrollToIndex(idx) {
+  const el = trackRef.value
+  const card = el?.querySelectorAll('.carousel-card')[idx]
+  if (!el || !card) return
+  el.scrollTo({ left: card.offsetLeft, behavior: 'smooth' })
+}
+
+function scrollByCard(dir) {
+  const el = trackRef.value
+  if (!el) return
+  const nextIndex = Math.min(Math.max(activeIndex.value + dir, 0), (job.value?.results?.length || 1) - 1)
+  scrollToIndex(nextIndex)
+}
+
+function onCarouselWheel(e) {
+  const el = trackRef.value
+  if (!el) return
+  // 세로 휠 스크롤을 가로 스크롤로 변환
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+    e.preventDefault()
+    el.scrollLeft += e.deltaY
+  }
+}
+
+function onDragStart(e) {
+  const el = trackRef.value
+  if (!el) return
+  isDragging = true
+  dragStartX = e.pageX
+  dragStartScrollLeft = el.scrollLeft
+}
+
+function onDragMove(e) {
+  if (!isDragging) return
+  const el = trackRef.value
+  if (!el) return
+  e.preventDefault()
+  el.scrollLeft = dragStartScrollLeft - (e.pageX - dragStartX)
+}
+
+function onDragEnd() {
+  isDragging = false
+}
+
+// ── 배너 크게보기 (라이트박스) ─────────────────────────────────────────────
+function openLightbox(idx) {
+  lightboxIndex.value = idx
+}
+
+function closeLightbox() {
+  lightboxIndex.value = null
+}
+
+function lightboxStep(delta) {
+  if (lightboxIndex.value === null || !job.value?.results) return
+  const next = lightboxIndex.value + delta
+  if (next >= 0 && next < job.value.results.length) lightboxIndex.value = next
+}
+
+function onGlobalKeydown(e) {
+  if (lightboxIndex.value === null) return
+  if (e.key === 'Escape') closeLightbox()
+  else if (e.key === 'ArrowLeft') lightboxStep(-1)
+  else if (e.key === 'ArrowRight') lightboxStep(1)
 }
 
 function getPreviewUrl(fileName) {
@@ -452,6 +615,7 @@ async function loadJob() {
     } else {
       stopPolling()
     }
+    nextTick(updateCarouselEdges)
   } catch {
     job.value = { status: 'fail', errorMessage: '작업을 불러올 수 없습니다.' }
   }
@@ -467,6 +631,7 @@ function startPolling() {
       if (job.value.status !== 'pending' && job.value.status !== 'processing') {
         stopPolling()
       }
+      nextTick(updateCarouselEdges)
     } catch {}
   }, 2500)
 }
@@ -750,8 +915,14 @@ async function runApply(candidate) {
   }
 }
 
-onMounted(loadJob)
-onUnmounted(stopPolling)
+onMounted(() => {
+  loadJob()
+  window.addEventListener('keydown', onGlobalKeydown)
+})
+onUnmounted(() => {
+  stopPolling()
+  window.removeEventListener('keydown', onGlobalKeydown)
+})
 </script>
 
 <style scoped>
@@ -895,52 +1066,278 @@ onUnmounted(stopPolling)
 .fail-banner-title { font-size: 14px; font-weight: 700; color: #B91C1C; margin-bottom: 3px; }
 .fail-banner-msg   { font-size: 13px; color: #6B7280; }
 
-/* 결과 그리드 */
+/* 결과 캐러셀 */
 .results-area { display: flex; flex-direction: column; gap: 16px; }
 .results-header {
   display: flex;
   align-items: center;
+  gap: 10px;
 }
 .results-count { font-size: 14px; font-weight: 600; color: #374151; }
+.carousel-hint-text { font-size: 12px; color: #9CA3AF; }
 
-.img-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+.carousel-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.img-card {
+.carousel-arrow {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #374151;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.carousel-arrow:hover:not(:disabled) { background: #F5F3FF; border-color: #C4B5FD; color: #7C3AED; }
+.carousel-arrow:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.carousel-track {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  padding: 4px 2px 12px;
+  cursor: grab;
+  outline: none;
+}
+.carousel-track:active { cursor: grabbing; }
+.carousel-track::-webkit-scrollbar { height: 6px; }
+.carousel-track::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 3px; }
+
+.carousel-card {
+  flex: 0 0 auto;
+  height: 520px;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border: 1px solid #E5E7EB;
   border-radius: 12px;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  scroll-snap-align: start;
   transition: box-shadow 0.15s;
 }
-.img-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
-.img-card.invalid { border-color: #FECACA; }
+.carousel-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.carousel-card.invalid { border-color: #FECACA; }
 
-.img-thumb {
+.carousel-img-wrap {
   position: relative;
-  width: 100%;
-  background: #F9FAFB;
-  overflow: hidden;
-}
-.img-thumb img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-.img-thumb.no-img {
+  flex: 1;
+  min-width: 220px;
+  background: #F8F9FA;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+.carousel-img-wrap img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.carousel-img-wrap.no-img {
   font-size: 12px;
   color: #9CA3AF;
 }
-.img-thumb.no-img::after { content: '미리보기 없음'; }
+.carousel-img-wrap.no-img::after { content: '미리보기 없음'; }
+
+.carousel-status-pill {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  z-index: 1;
+}
+.carousel-status-pill.ok          { background: #D1FAE5; color: #065F46; }
+.carousel-status-pill.invalid     { background: #FEE2E2; color: #991B1B; }
+.carousel-status-pill.warn        { background: #FEF3C7; color: #92400E; }
+.carousel-status-pill.quality-bad { background: #FEE2E2; color: #991B1B; }
+
+.carousel-hover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(17,17,17,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.carousel-img-wrap:hover .carousel-hover-overlay { opacity: 1; }
+.carousel-hover-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.95);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+}
+.carousel-hover-btn:hover { background: #fff; transform: scale(1.08); }
+
+.carousel-footer {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border-top: 1px solid #F3F4F6;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+.carousel-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.carousel-meta { font-size: 12px; color: #9CA3AF; }
+
+.carousel-indicators {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.carousel-ind-arrow {
+  background: none;
+  border: none;
+  color: #9CA3AF;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px;
+}
+.carousel-ind-arrow:hover:not(:disabled) { color: #7C3AED; }
+.carousel-ind-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
+.carousel-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: none;
+  background: #E5E7EB;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.carousel-dot.active { background: #7C3AED; transform: scale(1.3); }
+
+@media (max-width: 640px) {
+  .carousel-card { height: 380px; }
+  .carousel-arrow { display: none; }
+}
+
+/* 배너 크게보기 (라이트박스) */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 250;
+  padding: 20px;
+}
+.lightbox-modal {
+  position: relative;
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 1080px;
+  max-height: 90vh;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(17,17,17,0.06);
+  color: #374151;
+  font-size: 14px;
+  cursor: pointer;
+}
+.lightbox-close:hover { background: rgba(17,17,17,0.12); }
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.9);
+  color: #374151;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lightbox-nav:hover:not(:disabled) { background: #fff; }
+.lightbox-nav:disabled { opacity: 0.3; cursor: not-allowed; }
+.lightbox-nav.left { left: 12px; }
+.lightbox-nav.right { right: 12px; }
+
+.lightbox-body {
+  display: flex;
+  max-height: 90vh;
+}
+.lightbox-img-wrap {
+  flex: 1.3;
+  min-width: 0;
+  background: #F8F9FA;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.lightbox-img-wrap img { max-width: 100%; max-height: 78vh; object-fit: contain; }
+.lightbox-img-wrap.no-img { font-size: 13px; color: #9CA3AF; }
+.lightbox-img-wrap.no-img::after { content: '미리보기 없음'; }
+
+.lightbox-detail {
+  flex: 1;
+  min-width: 320px;
+  max-width: 400px;
+  padding-top: 16px;
+  overflow-y: auto;
+  border-left: 1px solid #F0EEF8;
+}
+
+@media (max-width: 720px) {
+  .lightbox-body { flex-direction: column; overflow-y: auto; }
+  .lightbox-detail { max-width: none; min-width: 0; border-left: none; border-top: 1px solid #F0EEF8; }
+}
 
 .img-info {
   padding: 12px 14px 8px;
