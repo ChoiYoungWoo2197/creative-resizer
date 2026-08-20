@@ -516,10 +516,9 @@
                                 :style="{ left: (getSafeZoneMetrics(spec).leftPct / 2).toFixed(1) + '%' }">{{ getSafeZoneMetrics(spec).left }}px</span>
                         </div>
                       </template>
-                      <!-- 일반 미리보기 -->
+                      <!-- 일반 미리보기: 타깃 규격 사이즈만 표시 -->
                       <template v-else>
-                        <img v-if="previewUrl" :src="previewUrl" class="spec-preview-img" :alt="spec.placementName" />
-                        <div v-else class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
+                        <div class="spec-preview-ph" :style="{ background: platformCfg[platform]?.tagBg }">
                           <span>{{ spec.width }}×{{ spec.height }}</span>
                         </div>
                       </template>
