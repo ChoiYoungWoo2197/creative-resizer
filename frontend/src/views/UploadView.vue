@@ -259,22 +259,9 @@
             </h1>
             <p class="hero-sub">AI가 최적화된 크리에이티브를 빠르게 생성합니다.</p>
           </div>
-          <div class="ai-insight-card">
-            <div class="ai-insight-head">
-              <span class="ai-star">✦</span> AI 추천 인사이트
-            </div>
-            <div class="ai-features">
-              <div v-for="f in aiFeatures" :key="f.id" class="ai-feat">
-                <span class="ai-feat-ico">{{ f.icon }}</span>
-                <div class="ai-feat-title">{{ f.title }}</div>
-                <div class="ai-feat-desc">{{ f.desc }}</div>
-              </div>
-            </div>
-          </div>
         </div>
 
-        <!-- AI 객체 분석 섹션 (PSD 전용) -->
-        <div v-if="isPsdFile && psdLayerAnalysis" class="oa-section">
+        <div v-if="false" class="oa-section-removed">
           <!-- 툴바 -->
           <div class="oa-toolbar">
             <div class="oa-toolbar-left">
