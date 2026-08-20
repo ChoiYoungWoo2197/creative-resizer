@@ -44,7 +44,8 @@ class LayerInfo:
 
 
 def _parse_role(layer_name: str) -> str:
-    lower = layer_name.lower()
+    # 대괄호 컨벤션([logo], [person] 등) 및 공백 제거 후 매칭
+    lower = layer_name.lower().strip("[] \t")
     for prefix, role in _PREFIX_ROLE.items():
         if lower.startswith(prefix):
             return role

@@ -263,7 +263,7 @@ def _place_layer(
         flush=True,
     )
     return {
-        "name": layer.name,
+        "name": layer.name.strip("[] \t"),
         "render_x": new_x,
         "render_y": new_y,
         "render_w": new_w,
