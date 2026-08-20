@@ -1119,6 +1119,7 @@ onUnmounted(() => {
 .carousel-card {
   flex: 0 0 auto;
   height: 520px;
+  max-width: min(560px, 88%);
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -1246,7 +1247,7 @@ onUnmounted(() => {
 .carousel-dot.active { background: #7C3AED; transform: scale(1.3); }
 
 @media (max-width: 640px) {
-  .carousel-card { height: 380px; }
+  .carousel-card { height: 380px; max-width: 82%; }
   .carousel-arrow { display: none; }
 }
 
