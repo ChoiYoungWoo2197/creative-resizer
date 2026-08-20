@@ -154,7 +154,7 @@ def composite_elements(
             "scale": round(S, 6),
             "offset_x": round(Ox, 2),
             "offset_y": round(Oy, 2),
-            "bg_file": "clean_v1/03_bg_extraction/smart_resized.png",
+            "bg_file": _relative_path(bg_path, Path(output_dir) / job_id),
             "layers": placed_layers,
         }
         layout_result_path = str(stage_dir / "layout_result.json")
@@ -193,6 +193,14 @@ def composite_elements(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _relative_path(abs_path: str, base: Path) -> str:
+    """abs_path 를 base 기준 상대경로 문자열(슬래시)로 반환. 실패 시 abs_path 원본."""
+    try:
+        return str(Path(abs_path).relative_to(base)).replace("\\", "/")
+    except ValueError:
+        return abs_path
 
 
 def _safe_filename(name: str) -> str:

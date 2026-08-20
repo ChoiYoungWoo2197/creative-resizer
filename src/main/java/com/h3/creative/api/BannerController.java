@@ -310,10 +310,27 @@ public class BannerController {
                 .findFirst().orElse(null);
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
-        File resultFile = new File(result.getFilePath());
-        File compositeDir = resultFile.getParentFile();  // clean_v1/04_composite/
-        File cleanV1Dir   = compositeDir.getParentFile(); // clean_v1/
-        File bgFile = new File(cleanV1Dir, "03_bg_extraction/smart_resized.png");
+        File resultFile   = new File(result.getFilePath());
+        File compositeDir = resultFile.getParentFile();           // .../clean_v1/04_composite/
+        File jobRoot      = compositeDir.getParentFile().getParentFile(); // .../clean_v1/ → job root
+
+        // layout_result.json 에서 bg_file 경로를 읽어 절대경로로 변환
+        File layoutFile = new File(compositeDir, "layout_result.json");
+        File bgFile;
+        if (layoutFile.exists()) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> layoutData =
+                    new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(layoutFile, java.util.Map.class);
+            String bgRelative = (String) layoutData.get("bg_file");
+            bgFile = bgRelative != null ? new File(jobRoot, bgRelative) : null;
+        } else {
+            bgFile = null;
+        }
+        if (bgFile == null || !bgFile.exists()) {
+            return ResponseEntity.internalServerError()
+                    .body(java.util.Map.of("error", "bg 이미지를 찾을 수 없습니다: layout_result.json 확인 필요"));
+        }
 
         java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("jobId", id);
