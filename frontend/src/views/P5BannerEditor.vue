@@ -5,6 +5,8 @@
       <button class="back-btn" @click="router.push(`/job/${jobId}`)">← 상세 보기</button>
       <span class="editor-title">{{ specFileName }}</span>
       <div class="editor-actions">
+        <button class="btn-undo" @click="undo" :disabled="!canUndo" title="실행 취소 (Ctrl+Z)">↩</button>
+        <button class="btn-undo" @click="redo" :disabled="!canRedo" title="다시 실행 (Ctrl+Y)">↪</button>
         <button class="btn-reset" @click="resetLayers" :disabled="saving">초기화</button>
         <button class="btn-save" @click="saveAndRecomposite" :disabled="saving || !isDirty">
           <span v-if="saving" class="spin" />
@@ -79,6 +81,10 @@
           <span class="layer-dot" :class="'role-' + lyr.role" />
           <span class="layer-name">{{ lyr.name }}</span>
           <span class="layer-role">{{ lyr.role }}</span>
+          <div class="layer-order-btns" @click.stop>
+            <button class="layer-order-btn" @click="moveLayerUp(idx)" :disabled="idx === 0">▲</button>
+            <button class="layer-order-btn" @click="moveLayerDown(idx)" :disabled="idx === editLayers.length - 1">▼</button>
+          </div>
         </div>
 
         <template v-if="selectedIdx !== null">
@@ -150,6 +156,49 @@ const NUDGE_STEP_SHIFT  = 10  // Shift+방향키 이동 단위
 
 const guideLines = ref([])    // 드래그 중 표시할 가이드선 배열
 
+// ── Undo/Redo 히스토리 ─────────────────────────────────────────────────────────
+const MAX_HISTORY = 30
+const history     = ref([])   // 상태 스냅샷 배열 (deep copy)
+const historyStep = ref(-1)   // 현재 포인터
+
+const canUndo = computed(() => historyStep.value > 0)
+const canRedo = computed(() => historyStep.value < history.value.length - 1)
+
+// 현재 editLayers를 스냅샷으로 히스토리에 기록.
+// 포인터 이후의 Redo 분기는 제거 (새 행동 발생 시 미래 취소).
+function saveHistory() {
+  const snapshot = JSON.parse(JSON.stringify(editLayers.value))
+  history.value = history.value.slice(0, historyStep.value + 1)
+  history.value.push(snapshot)
+  if (history.value.length > MAX_HISTORY) history.value.shift()
+  else historyStep.value++
+}
+
+// undo/redo 후 transformer 해제 + Konva 강제 갱신
+function syncKonvaAfterRestore() {
+  selectedIdx.value = null
+  nextTick(() => {
+    const tr = transformerRef.value?.getNode()
+    if (tr) tr.nodes([])
+    const konvaLayer = elemLayerRef.value?.getNode()
+    if (konvaLayer) konvaLayer.batchDraw()
+  })
+}
+
+function undo() {
+  if (!canUndo.value) return
+  historyStep.value--
+  editLayers.value = JSON.parse(JSON.stringify(history.value[historyStep.value]))
+  syncKonvaAfterRestore()
+}
+
+function redo() {
+  if (!canRedo.value) return
+  historyStep.value++
+  editLayers.value = JSON.parse(JSON.stringify(history.value[historyStep.value]))
+  syncKonvaAfterRestore()
+}
+
 // ── 키보드 이벤트 등록/해제 ───────────────────────────────────────────────────
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
@@ -177,6 +226,7 @@ onMounted(async () => {
 
     // 레이어 이미지 로드
     await loadLayerImages()
+    saveHistory()  // 초기 상태를 히스토리 기점으로 저장
   } catch (e) {
     error.value = e.response?.status === 404
       ? 'layout_result.json 없음 — TYPE G 파이프라인 결과에서만 사용 가능합니다.'
@@ -266,6 +316,7 @@ function onDragEnd(e, idx) {
   const sc = displayScale.value
   editLayers.value[idx].render_x = Math.round(e.target.x() / sc)
   editLayers.value[idx].render_y = Math.round(e.target.y() / sc)
+  saveHistory()
 }
 
 function onTransformEnd(e, idx) {
@@ -278,11 +329,12 @@ function onTransformEnd(e, idx) {
   // 트랜스폼 스케일 리셋 (크기를 직접 반영했으므로)
   node.scaleX(1)
   node.scaleY(1)
+  saveHistory()
 }
 
 function updateField(idx, field, value) {
   editLayers.value[idx][field] = value
-  // 캔버스 노드 수동 갱신
+  saveHistory()
   nextTick(() => {
     const layer = elemLayerRef.value?.getNode()
     if (layer) layer.batchDraw()
@@ -351,9 +403,17 @@ function onDragMove(e, idx) {
 
 // ── 키보드 Nudge ──────────────────────────────────────────────────────────────
 function handleKeyDown(e) {
-  // 수치 입력창 포커스 중일 때는 방향키가 입력란에서 동작해야 하므로 제외
   const activeTag = document.activeElement?.tagName
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return
+  const isInputFocused = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT'
+
+  // Ctrl+Z (Undo) / Ctrl+Y / Ctrl+Shift+Z (Redo) — 입력창 포커스 중에는 브라우저 기본 동작 유지
+  if ((e.ctrlKey || e.metaKey) && !isInputFocused) {
+    if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
+    if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return }
+  }
+
+  // 수치 입력창 포커스 중일 때는 방향키가 입력란에서 동작해야 하므로 제외
+  if (isInputFocused) return
   if (selectedIdx.value === null) return
 
   const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)
@@ -382,6 +442,26 @@ function handleKeyDown(e) {
       konvaLayer.batchDraw()
     }
   })
+}
+
+// ── Z-Index (레이어 순서 변경) ────────────────────────────────────────────────
+// splice로 배열 원소를 이동 → Vue 반응형으로 Konva v-for 순서 자동 갱신
+function moveLayerUp(idx) {
+  if (idx === 0) return
+  const layers = editLayers.value
+  const item = layers.splice(idx, 1)[0]
+  layers.splice(idx - 1, 0, item)
+  selectedIdx.value = idx - 1
+  saveHistory()
+}
+
+function moveLayerDown(idx) {
+  if (idx === editLayers.value.length - 1) return
+  const layers = editLayers.value
+  const item = layers.splice(idx, 1)[0]
+  layers.splice(idx + 1, 0, item)
+  selectedIdx.value = idx + 1
+  saveHistory()
 }
 
 // ── 더티 체크 ─────────────────────────────────────────────────────────────────
@@ -432,6 +512,8 @@ async function saveAndRecomposite() {
 .back-btn { background: none; border: 1px solid #D1D5DB; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
 .editor-title { flex: 1; font-size: 13px; font-weight: 600; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-actions { display: flex; gap: 8px; }
+.btn-undo  { background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 14px; }
+.btn-undo:disabled { opacity: 0.35; cursor: default; }
 .btn-reset { background: #F9FAFB; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
 .btn-save  { background: #7C3AED; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .btn-save:disabled { opacity: 0.5; cursor: default; }
@@ -478,6 +560,10 @@ async function saveAndRecomposite() {
 .layer-dot.role-body   { background: #6B7280; }
 .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .layer-role { font-size: 10px; color: #9CA3AF; flex-shrink: 0; }
+.layer-order-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
+.layer-order-btn { background: none; border: none; padding: 0 2px; cursor: pointer; font-size: 9px; color: #9CA3AF; line-height: 1; }
+.layer-order-btn:hover:not(:disabled) { color: #374151; }
+.layer-order-btn:disabled { opacity: 0.25; cursor: default; }
 
 .num-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .num-row label { width: 16px; font-size: 12px; font-weight: 600; color: #6B7280; flex-shrink: 0; }
