@@ -76,6 +76,7 @@
               @click="selectLayer(idx)"
               @dragmove="onDragMove($event, idx)"
               @dragend="onDragEnd($event, idx)"
+              @transform="onTransform($event, idx)"
               @transformend="onTransformEnd($event, idx)"
             />
             <v-transformer ref="transformerRef" :config="transformerConfig" />
@@ -188,8 +189,7 @@ const guideLines = ref([])
 
 // ── Figma 스타일 Transformer 설정 ─────────────────────────────────────────────
 const transformerConfig = {
-  keepRatio: true,
-  enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+  keepRatio: false,   // 8방향 자유 리사이즈
   anchorSize: 8,
   anchorCornerRadius: 50,
   anchorFill: '#FFFFFF',
@@ -367,6 +367,15 @@ function onDragEnd(e, idx) {
   editLayers.value[idx].render_x = Math.round(e.target.x() / sc)
   editLayers.value[idx].render_y = Math.round(e.target.y() / sc)
   saveHistory()
+}
+
+// 리사이즈 중 실시간으로 scale을 width/height에 반영 — 핸들 드래그 중 부드러운 조작감
+function onTransform(e, idx) {
+  const node = e.target
+  node.width(node.width()   * node.scaleX())
+  node.height(node.height() * node.scaleY())
+  node.scaleX(1)
+  node.scaleY(1)
 }
 
 function onTransformEnd(e, idx) {
