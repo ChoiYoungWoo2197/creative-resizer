@@ -259,8 +259,11 @@ public class BannerController {
                 .findFirst().orElse(null);
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
-        // layout_result.json 은 result.png 와 같은 디렉토리에 위치
-        File layoutFile = new File(new File(result.getFilePath()).getParentFile(), "layout_result.json");
+        // 규격별 layout_result_{w}x{h}.json 우선, 없으면 공통 layout_result.json 폴백
+        File compositeDir = new File(result.getFilePath()).getParentFile();
+        String specKey = result.getWidth() + "x" + result.getHeight();
+        File layoutFile = new File(compositeDir, "layout_result_" + specKey + ".json");
+        if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result.json");
         if (!layoutFile.exists()) return ResponseEntity.notFound().build();
 
         byte[] bytes = Files.readAllBytes(layoutFile.toPath());

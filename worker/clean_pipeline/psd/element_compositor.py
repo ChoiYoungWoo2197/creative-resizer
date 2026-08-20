@@ -157,7 +157,7 @@ def composite_elements(
             "bg_file": _relative_path(bg_path, Path(output_dir) / job_id),
             "layers": placed_layers,
         }
-        layout_result_path = str(stage_dir / "layout_result.json")
+        layout_result_path = str(stage_dir / f"layout_result_{target_w}x{target_h}.json")
         with open(layout_result_path, "w", encoding="utf-8") as f:
             json.dump(layout_data, f, ensure_ascii=False, indent=2)
         print(f"[{STAGE.value}][LAYOUT_RESULT_SAVED] path={layout_result_path}", flush=True)
