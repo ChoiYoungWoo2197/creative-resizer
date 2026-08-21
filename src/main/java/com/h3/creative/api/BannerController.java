@@ -337,15 +337,17 @@ public class BannerController {
                 .findFirst().orElse(null);
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
-        File resultFile   = new File(result.getFilePath());
-        File compositeDir = resultFile.getParentFile();                              // 04_composite/
-        // bg_file 은 output_dir/{jobId} 기준 상대경로: 04_composite→clean_v1→{jobId}inner→{jobId}outer
-        File jobRoot      = compositeDir.getParentFile().getParentFile().getParentFile();
+        File resultFile = new File(result.getFilePath());
+        // filePath = .../clean_v1/08_final/{fileName}  → layout_result 는 04_composite/ 에 있음
+        File cleanV1Dir = resultFile.getParentFile().getParentFile();  // 08_final → clean_v1
+        File stage04Dir = new File(cleanV1Dir, "04_composite");        // layout_result 위치
+        // bg_file 은 output_dir/{jobId} 기준 상대경로: clean_v1 → inner_{jobId} → outer_{jobId}
+        File jobRoot    = cleanV1Dir.getParentFile().getParentFile();
 
         // layout_result_{w}x{h}.json 우선, 없으면 layout_result.json 폴백
         String specKey2 = result.getWidth() + "x" + result.getHeight();
-        File layoutFile = new File(compositeDir, "layout_result_" + specKey2 + ".json");
-        if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result.json");
+        File layoutFile = new File(stage04Dir, "layout_result_" + specKey2 + ".json");
+        if (!layoutFile.exists()) layoutFile = new File(stage04Dir, "layout_result.json");
         File bgFile;
         if (layoutFile.exists()) {
             @SuppressWarnings("unchecked")
