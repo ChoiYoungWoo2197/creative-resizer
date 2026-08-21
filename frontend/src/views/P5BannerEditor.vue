@@ -54,7 +54,14 @@
           >
             <button v-if="lyr.rendered" class="vis-btn" :class="{ 'vis-hidden': hiddenNames.has(lyr.name) }"
               @click.stop="toggleVis(lyr.name)" :title="hiddenNames.has(lyr.name) ? '표시' : '숨기기'">
-              {{ hiddenNames.has(lyr.name) ? '○' : '●' }}
+              <svg v-if="!hiddenNames.has(lyr.name)" width="14" height="10" viewBox="0 0 14 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 1C4 1 1.5 5 1.5 5C1.5 5 4 9 7 9C10 9 12.5 5 12.5 5C12.5 5 10 1 7 1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                <circle cx="7" cy="5" r="1.8" fill="currentColor"/>
+              </svg>
+              <svg v-else width="14" height="10" viewBox="0 0 14 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 1C4 1 1.5 5 1.5 5C1.5 5 4 9 7 9C10 9 12.5 5 12.5 5C12.5 5 10 1 7 1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" opacity="0.35"/>
+                <line x1="1.5" y1="9" x2="12.5" y2="1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
             </button>
             <span v-else class="vis-placeholder" />
             <span class="tree-chevron">{{ lyr.bbox === null ? '▸' : '  ' }}</span>
@@ -811,11 +818,13 @@ async function saveAndRecomposite() {
 .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vis-btn {
   background: none; border: none; padding: 0; cursor: pointer;
-  font-size: 9px; color: #0D99FF; width: 14px; flex-shrink: 0; line-height: 1;
+  width: 16px; height: 16px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #0D99FF; border-radius: 3px; transition: background 0.1s;
 }
-.vis-btn:hover { opacity: 0.7; }
+.vis-btn:hover { background: rgba(13,153,255,0.1); }
 .vis-btn.vis-hidden { color: #CCC; }
-.vis-placeholder { width: 14px; flex-shrink: 0; }
+.vis-placeholder { width: 16px; flex-shrink: 0; }
 .layer-order-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
 .layer-order-btn {
   background: none; border: none; padding: 0 2px; cursor: pointer;
