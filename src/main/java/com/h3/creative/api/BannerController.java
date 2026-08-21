@@ -379,6 +379,40 @@ public class BannerController {
         if (workerResp.containsKey("error")) {
             return ResponseEntity.internalServerError().body(workerResp);
         }
+
+        // 재합성 성공 시 layout_result JSON의 레이어 위치를 갱신 → P5 재진입 시 최신 좌표 반영
+        try {
+            @SuppressWarnings("unchecked")
+            java.util.List<java.util.Map<String, Object>> newLayers =
+                    (java.util.List<java.util.Map<String, Object>>) body.get("layers");
+            if (layoutFile.exists() && newLayers != null) {
+                com.fasterxml.jackson.databind.ObjectMapper om =
+                        new com.fasterxml.jackson.databind.ObjectMapper();
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> layoutData =
+                        om.readValue(layoutFile, java.util.Map.class);
+                @SuppressWarnings("unchecked")
+                java.util.List<java.util.Map<String, Object>> storedLayers =
+                        (java.util.List<java.util.Map<String, Object>>) layoutData.get("layers");
+                if (storedLayers != null) {
+                    java.util.Map<String, java.util.Map<String, Object>> byName = new java.util.HashMap<>();
+                    for (java.util.Map<String, Object> nl : newLayers) {
+                        byName.put((String) nl.get("name"), nl);
+                    }
+                    for (java.util.Map<String, Object> sl : storedLayers) {
+                        java.util.Map<String, Object> updated = byName.get(sl.get("name"));
+                        if (updated != null) {
+                            for (String key : java.util.List.of("render_x", "render_y", "render_w", "render_h")) {
+                                if (updated.containsKey(key)) sl.put(key, updated.get(key));
+                            }
+                        }
+                    }
+                    layoutData.put("layers", storedLayers);
+                    om.writeValue(layoutFile, layoutData);
+                }
+            }
+        } catch (Exception ignored) { /* JSON 갱신 실패는 재합성 결과에 영향 없음 */ }
+
         return ResponseEntity.ok(workerResp);
     }
 }
