@@ -663,9 +663,7 @@ async function saveAndRecomposite() {
       render_h: l.render_h,
     }))
     await recomposite(jobId, fileName, payload)
-    origLayers.value = JSON.parse(JSON.stringify(editLayers.value))
-    savedMsg.value = '재합성 완료! 상세 페이지에서 결과를 확인하세요.'
-    setTimeout(() => { savedMsg.value = '' }, 4000)
+    router.push(`/job/${jobId}`)
   } catch (e) {
     savedMsg.value = '재합성 실패: ' + (e.response?.data?.error || e.message)
     setTimeout(() => { savedMsg.value = '' }, 5000)
