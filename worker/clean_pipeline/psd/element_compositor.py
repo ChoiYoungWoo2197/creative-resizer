@@ -20,7 +20,7 @@ from PIL import Image
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
 from clean_pipeline.pipeline_logger import PipelineLogger
-from clean_pipeline.psd.psd_layer_reader import LayerInfo
+from clean_pipeline.psd.psd_layer_reader import LayerInfo, _parse_role
 from clean_pipeline.psd.smart_layout_engine import SmartLayoutEngine
 
 STAGE = StageName.ELEMENT_COMPOSITE
@@ -101,21 +101,44 @@ def composite_elements(
                 continue
 
             if layer.is_group():
-                # 그룹이면 bg 서브레이어 제외하고 자식 개별 합성
+                # 그룹이면 bg 서브레이어 제외하고 자식 합성
                 for child in layer:
                     if child.name.lower() in _BG_SUBLAYER_NAMES:
                         print(f"[{STAGE.value}][BG_SUBLAYER_SKIP] name={child.name!r}", flush=True)
                         continue
-                    safe = _safe_filename(f"{layer_info.name}__{child.name}")
-                    placement = _place_layer(
-                        child, canvas, psd, S, Ox, Oy, STAGE.value,
-                        layer_save_path=layers_dir / f"{safe}.png",
+
+                    # 자식 그룹 안에 의미 있는 서브레이어가 2개 이상이면 개별 추출
+                    sub_targets = (
+                        [sc for sc in child
+                         if sc.name.lower() not in _BG_SUBLAYER_NAMES and sc.is_visible()]
+                        if child.is_group() else []
                     )
-                    if placement:
-                        placement["role"] = layer_info.role
-                        placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
-                        placed_layers.append(placement)
-                        placed_count += 1
+
+                    if len(sub_targets) > 1:
+                        print(f"[{STAGE.value}][SUBLAYER_EXPAND] parent={child.name!r} count={len(sub_targets)}", flush=True)
+                        for sub in sub_targets:
+                            safe = _safe_filename(f"{layer_info.name}__{child.name}__{sub.name}")
+                            placement = _place_layer(
+                                sub, canvas, psd, S, Ox, Oy, STAGE.value,
+                                layer_save_path=layers_dir / f"{safe}.png",
+                            )
+                            if placement:
+                                placement["role"] = _parse_role(sub.name)
+                                placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
+                                placed_layers.append(placement)
+                                placed_count += 1
+                    else:
+                        # 단일 자식 or 리프 → 현재대로 전체 합성
+                        safe = _safe_filename(f"{layer_info.name}__{child.name}")
+                        placement = _place_layer(
+                            child, canvas, psd, S, Ox, Oy, STAGE.value,
+                            layer_save_path=layers_dir / f"{safe}.png",
+                        )
+                        if placement:
+                            placement["role"] = _parse_role(child.name) or layer_info.role
+                            placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
+                            placed_layers.append(placement)
+                            placed_count += 1
             else:
                 safe = _safe_filename(layer_info.name)
                 placement = _place_layer(
