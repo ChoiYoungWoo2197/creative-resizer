@@ -338,11 +338,11 @@ public class BannerController {
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
         File resultFile = new File(result.getFilePath());
-        // filePath = .../clean_v1/08_final/{fileName}  → layout_result 는 04_composite/ 에 있음
+        // filePath = .../output/{jobId}/{jobId}/clean_v1/08_final/{fileName}
         File cleanV1Dir = resultFile.getParentFile().getParentFile();  // 08_final → clean_v1
         File stage04Dir = new File(cleanV1Dir, "04_composite");        // layout_result 위치
-        // bg_file 은 output_dir/{jobId} 기준 상대경로: clean_v1 → inner_{jobId} → outer_{jobId}
-        File jobRoot    = cleanV1Dir.getParentFile().getParentFile();
+        // bg_file 은 Path(output_dir)/job_id = .../output/{jobId}/{jobId}/ 기준 상대경로
+        File jobRoot    = cleanV1Dir.getParentFile();                  // clean_v1 → inner_{jobId}
 
         // layout_result_{w}x{h}.json 우선, 없으면 layout_result.json 폴백
         String specKey2 = result.getWidth() + "x" + result.getHeight();
