@@ -52,6 +52,11 @@
             :style="{ paddingLeft: (10 + lyr.depth * 14) + 'px' }"
             @click="lyr.rendered && selectByName(lyr.name)"
           >
+            <button v-if="lyr.rendered" class="vis-btn" :class="{ 'vis-hidden': hiddenNames.has(lyr.name) }"
+              @click.stop="toggleVis(lyr.name)" :title="hiddenNames.has(lyr.name) ? '표시' : '숨기기'">
+              {{ hiddenNames.has(lyr.name) ? '○' : '●' }}
+            </button>
+            <span v-else class="vis-placeholder" />
             <span class="tree-chevron">{{ lyr.bbox === null ? '▸' : '  ' }}</span>
             <span class="layer-dot" :class="lyr.rendered ? 'role-' + lyr.role : ''" />
             <span class="tree-name">{{ lyr.name }}</span>
@@ -186,6 +191,7 @@ const layout       = ref(null)
 const editLayers   = ref([])
 const origLayers   = ref([])
 const mergedLayers = ref([])   // PSD 전체 트리 (P2 + P4 merged)
+const hiddenNames  = ref(new Set())  // 숨긴 레이어 name 집합
 const selectedIdx  = ref(null)
 const saving       = ref(false)
 const savedMsg     = ref('')
@@ -353,6 +359,7 @@ function layerConfig(lyr, idx) {
     y:         lyr.render_y * sc,
     width:     lyr.render_w * sc,
     height:    lyr.render_h * sc,
+    opacity:   hiddenNames.value.has(lyr.name) ? 0 : 1,
     draggable: !spacebarDown.value,
     name:      `layer-${idx}`,
   }
@@ -586,6 +593,12 @@ function handleKeyDown(e) {
 function editLayerIdx(name) {
   return editLayers.value.findIndex(l => l.name === name)
 }
+function toggleVis(name) {
+  const next = new Set(hiddenNames.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  hiddenNames.value = next
+}
 function selectByName(name) {
   const idx = editLayerIdx(name)
   if (idx !== -1) selectLayer(idx)
@@ -796,6 +809,13 @@ async function saveAndRecomposite() {
 .tree-item.tree-dim { cursor: default; color: #BBB; }
 .tree-chevron { font-size: 9px; width: 12px; flex-shrink: 0; color: #AAA; }
 .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vis-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 9px; color: #0D99FF; width: 14px; flex-shrink: 0; line-height: 1;
+}
+.vis-btn:hover { opacity: 0.7; }
+.vis-btn.vis-hidden { color: #CCC; }
+.vis-placeholder { width: 14px; flex-shrink: 0; }
 .layer-order-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
 .layer-order-btn {
   background: none; border: none; padding: 0 2px; cursor: pointer;
