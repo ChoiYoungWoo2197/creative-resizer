@@ -169,6 +169,48 @@ def composite_elements(
             json.dump(layout_data, f, ensure_ascii=False, indent=2)
         print(f"[{STAGE.value}][LAYOUT_RESULT_SAVED] path={layout_result_path}", flush=True)
 
+    # ── 8. P2↔P4 merged layers JSON (PSD 전체 트리 + 렌더 좌표 매핑) ─────────
+    p2_layers_path = Path(output_dir) / job_id / "clean_v1" / "02_psd_layers" / "layers.json"
+    if placed_layers and p2_layers_path.exists():
+        rendered_map: dict[str, dict] = {
+            pl["name"]: {
+                "x": pl["render_x"],
+                "y": pl["render_y"],
+                "w": pl["render_w"],
+                "h": pl["render_h"],
+                "scale": pl["scale"],
+                "layer_file": pl.get("layer_file"),
+            }
+            for pl in placed_layers
+        }
+        with open(p2_layers_path, encoding="utf-8") as f:
+            p2_data = json.load(f)
+        merged_layers = [
+            {**layer, "rendered": rendered_map.get(layer["name"].strip("[] \t"))}
+            for layer in p2_data.get("layers", [])
+        ]
+        merged_path = str(stage_dir / f"layers_merged_{target_w}x{target_h}.json")
+        with open(merged_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "jobId": job_id,
+                    "psdPath": p2_data.get("psdPath"),
+                    "psdSize": p2_data.get("psdSize"),
+                    "target_w": target_w,
+                    "target_h": target_h,
+                    "mode": mode,
+                    "scale_S": round(S, 6),
+                    "offset_x": round(Ox, 2),
+                    "offset_y": round(Oy, 2),
+                    "bg_file": _relative_path(bg_path, Path(output_dir) / job_id),
+                    "layers": merged_layers,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+        print(f"[{STAGE.value}][LAYERS_MERGED_SAVED] path={merged_path}", flush=True)
+
     logger.stage_pass(
         STAGE.value,
         f"element composite PASS mode={mode} placed={placed_count}/{total_count}",
