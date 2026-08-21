@@ -34,23 +34,51 @@
     <!-- ── 3단 에디터 ─────────────────────────────────────────────────────── -->
     <div v-else-if="layout" class="canvas-area">
 
-      <!-- 좌측: Layers 패널 -->
+      <!-- 좌측: Layers 패널 (PSD 전체 트리) -->
       <div class="left-panel">
         <div class="panel-section-title">Layers</div>
-        <div
-          v-for="(lyr, idx) in editLayers"
-          :key="lyr.name"
-          class="layer-item"
-          :class="{ active: selectedIdx === idx }"
-          @click="selectLayer(idx)"
-        >
-          <span class="layer-dot" :class="'role-' + lyr.role" />
-          <span class="layer-name">{{ lyr.name }}</span>
-          <div class="layer-order-btns" @click.stop>
-            <button class="layer-order-btn" @click="moveLayerUp(idx)" :disabled="idx === 0">▲</button>
-            <button class="layer-order-btn" @click="moveLayerDown(idx)" :disabled="idx === editLayers.length - 1">▼</button>
+
+        <!-- PSD 트리 뷰 (layers_merged 로드 성공 시) -->
+        <template v-if="mergedLayers.length">
+          <div
+            v-for="(lyr, i) in mergedLayers"
+            :key="i"
+            class="tree-item"
+            :class="{
+              'tree-rendered': !!lyr.rendered,
+              'tree-dim':      !lyr.rendered,
+              active: !!lyr.rendered && lyr.name === selectedLayerName,
+            }"
+            :style="{ paddingLeft: (10 + lyr.depth * 14) + 'px' }"
+            @click="lyr.rendered && selectByName(lyr.name)"
+          >
+            <span class="tree-chevron">{{ lyr.bbox === null ? '▸' : '  ' }}</span>
+            <span class="layer-dot" :class="lyr.rendered ? 'role-' + lyr.role : ''" />
+            <span class="tree-name">{{ lyr.name }}</span>
+            <div v-if="lyr.rendered" class="layer-order-btns" @click.stop>
+              <button class="layer-order-btn" @click="moveLayerUpByName(lyr.name)"   :disabled="editLayerIdx(lyr.name) === 0">▲</button>
+              <button class="layer-order-btn" @click="moveLayerDownByName(lyr.name)" :disabled="editLayerIdx(lyr.name) === editLayers.length - 1">▼</button>
+            </div>
           </div>
-        </div>
+        </template>
+
+        <!-- fallback: mergedLayers 없으면 기존 editLayers flat list -->
+        <template v-else>
+          <div
+            v-for="(lyr, idx) in editLayers"
+            :key="lyr.name"
+            class="layer-item"
+            :class="{ active: selectedIdx === idx }"
+            @click="selectLayer(idx)"
+          >
+            <span class="layer-dot" :class="'role-' + lyr.role" />
+            <span class="layer-name">{{ lyr.name }}</span>
+            <div class="layer-order-btns" @click.stop>
+              <button class="layer-order-btn" @click="moveLayerUp(idx)"   :disabled="idx === 0">▲</button>
+              <button class="layer-order-btn" @click="moveLayerDown(idx)" :disabled="idx === editLayers.length - 1">▼</button>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- 중앙: Konva 캔버스 워크스페이스 -->
@@ -142,7 +170,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getLayoutResult, layerFileUrl, recomposite } from '../api/banner.js'
+import { getLayoutResult, getLayersMerged, layerFileUrl, recomposite } from '../api/banner.js'
 
 const route  = useRoute()
 const router = useRouter()
@@ -152,14 +180,20 @@ const fileName     = route.query.fileName
 const specFileName = ref(fileName || '')
 
 // ── 상태 ──────────────────────────────────────────────────────────────────────
-const loading     = ref(true)
-const error       = ref('')
-const layout      = ref(null)
-const editLayers  = ref([])
-const origLayers  = ref([])
-const selectedIdx = ref(null)
-const saving      = ref(false)
-const savedMsg    = ref('')
+const loading      = ref(true)
+const error        = ref('')
+const layout       = ref(null)
+const editLayers   = ref([])
+const origLayers   = ref([])
+const mergedLayers = ref([])   // PSD 전체 트리 (P2 + P4 merged)
+const selectedIdx  = ref(null)
+const saving       = ref(false)
+const savedMsg     = ref('')
+
+// 현재 선택된 레이어명 (mergedLayers 트리에서 active 판별용)
+const selectedLayerName = computed(() =>
+  selectedIdx.value !== null ? editLayers.value[selectedIdx.value]?.name : null
+)
 
 // konva refs
 const transformerRef = ref(null)
@@ -274,6 +308,12 @@ onMounted(async () => {
     saveHistory()
     await nextTick()
     cacheAllLayerNodes()
+
+    // PSD 전체 트리 로드 (실패해도 에디터는 동작)
+    try {
+      const merged = await getLayersMerged(jobId, fileName)
+      mergedLayers.value = merged.data.layers || []
+    } catch { /* silent fallback */ }
   } catch (e) {
     error.value = e.response?.status === 404
       ? 'layout_result.json 없음 — TYPE G 파이프라인 결과에서만 사용 가능합니다.'
@@ -542,6 +582,23 @@ function handleKeyDown(e) {
   })
 }
 
+// ── 트리 뷰 헬퍼 (mergedLayers → editLayers 연결) ──────────────────────────────
+function editLayerIdx(name) {
+  return editLayers.value.findIndex(l => l.name === name)
+}
+function selectByName(name) {
+  const idx = editLayerIdx(name)
+  if (idx !== -1) selectLayer(idx)
+}
+function moveLayerUpByName(name) {
+  const idx = editLayerIdx(name)
+  if (idx > 0) moveLayerUp(idx)
+}
+function moveLayerDownByName(name) {
+  const idx = editLayerIdx(name)
+  if (idx < editLayers.value.length - 1) moveLayerDown(idx)
+}
+
 // ── Z-Index 변경 ──────────────────────────────────────────────────────────────
 function moveLayerUp(idx) {
   if (idx === 0) return
@@ -726,6 +783,19 @@ async function saveAndRecomposite() {
 .layer-dot.role-product-group{ background: #10B981; }
 
 .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+/* ── PSD 트리 뷰 ─────────────────────────────────────────────────────────────── */
+.tree-item {
+  display: flex; align-items: center; gap: 5px;
+  padding-top: 5px; padding-bottom: 5px; padding-right: 10px;
+  font-size: 12px; border-bottom: 1px solid #F5F5F5; user-select: none;
+}
+.tree-item.tree-rendered { cursor: pointer; color: #333; }
+.tree-item.tree-rendered:hover { background: #F5F5F5; }
+.tree-item.tree-rendered.active { background: #E5F2FF; }
+.tree-item.tree-dim { cursor: default; color: #BBB; }
+.tree-chevron { font-size: 9px; width: 12px; flex-shrink: 0; color: #AAA; }
+.tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .layer-order-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
 .layer-order-btn {
   background: none; border: none; padding: 0 2px; cursor: pointer;

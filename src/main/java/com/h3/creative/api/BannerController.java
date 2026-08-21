@@ -272,6 +272,30 @@ public class BannerController {
                 .body(bytes);
     }
 
+    /** P5 에디터용: P2 전체 PSD 트리 + P4 렌더 좌표 merged JSON */
+    @GetMapping("/job/{id}/layers-merged")
+    public ResponseEntity<Object> layersMerged(
+            @PathVariable String id,
+            @RequestParam String fileName) throws IOException {
+        BannerJob job = bannerService.getJob(id);
+        if (job == null || job.getResults() == null) return ResponseEntity.notFound().build();
+
+        BannerJob.BannerResult result = job.getResults().stream()
+                .filter(r -> fileName.equals(r.getFileName()))
+                .findFirst().orElse(null);
+        if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
+
+        File compositeDir = new File(result.getFilePath()).getParentFile();
+        String specKey = result.getWidth() + "x" + result.getHeight();
+        File mergedFile = new File(compositeDir, "layers_merged_" + specKey + ".json");
+        if (!mergedFile.exists()) return ResponseEntity.notFound().build();
+
+        byte[] bytes = Files.readAllBytes(mergedFile.toPath());
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(bytes);
+    }
+
     /** P5 에디터용: 레이어 개별 PNG 서빙 (경로 순회 방지) */
     @GetMapping("/job/{id}/layer-file")
     public ResponseEntity<Resource> layerFile(

@@ -64,6 +64,9 @@ export const analyzePsdObjects = (formData) =>
 export const getLayoutResult = (jobId, fileName) =>
   api.get(`/banner/job/${jobId}/layout-result`, { params: { fileName } })
 
+export const getLayersMerged = (jobId, fileName) =>
+  api.get(`/banner/job/${jobId}/layers-merged`, { params: { fileName } })
+
 export const layerFileUrl = (jobId, rel) =>
   `/api/banner/job/${jobId}/layer-file?rel=${encodeURIComponent(rel)}`
 
