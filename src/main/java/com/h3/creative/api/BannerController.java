@@ -338,11 +338,14 @@ public class BannerController {
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
         File resultFile   = new File(result.getFilePath());
-        File compositeDir = resultFile.getParentFile();           // .../clean_v1/04_composite/
-        File jobRoot      = compositeDir.getParentFile().getParentFile(); // .../clean_v1/ → job root
+        File compositeDir = resultFile.getParentFile();                              // 04_composite/
+        // bg_file 은 output_dir/{jobId} 기준 상대경로: 04_composite→clean_v1→{jobId}inner→{jobId}outer
+        File jobRoot      = compositeDir.getParentFile().getParentFile().getParentFile();
 
-        // layout_result.json 에서 bg_file 경로를 읽어 절대경로로 변환
-        File layoutFile = new File(compositeDir, "layout_result.json");
+        // layout_result_{w}x{h}.json 우선, 없으면 layout_result.json 폴백
+        String specKey2 = result.getWidth() + "x" + result.getHeight();
+        File layoutFile = new File(compositeDir, "layout_result_" + specKey2 + ".json");
+        if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result.json");
         File bgFile;
         if (layoutFile.exists()) {
             @SuppressWarnings("unchecked")
