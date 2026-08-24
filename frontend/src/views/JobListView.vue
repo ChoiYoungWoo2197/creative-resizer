@@ -197,6 +197,7 @@
               </div>
               <div class="dp-result-label">{{ r.name || r.slug || r.fileName }}</div>
               <div class="dp-result-size" v-if="r.width && r.height">{{ r.width }}×{{ r.height }}</div>
+              <div class="dp-result-file" :title="r.fileName">{{ r.fileName }}</div>
             </div>
           </template>
         </div>
@@ -800,7 +801,11 @@ onMounted(load)
   color: #3D2D6E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dp-result-size {
-  padding: 0 10px 8px; font-size: 10.5px; color: #9B8EC4; font-weight: 500;
+  padding: 0 10px 4px; font-size: 10.5px; color: #9B8EC4; font-weight: 500;
+}
+.dp-result-file {
+  padding: 0 10px 8px; font-size: 9px; color: #C4B5FD; font-family: monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* 액션 영역 */
