@@ -28,6 +28,7 @@ def extract_and_resize(
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
+    psd=None,
 ) -> tuple[StageResult, dict | None]:
     """bg 레이어 추출 후 타겟 규격으로 확장.
 
@@ -48,7 +49,7 @@ def extract_and_resize(
         return _fail(logger, "BG_LAYER_NOT_FOUND", "role=bg 레이어 없음 — bg 그룹 또는 레이어명 확인 필요")
 
     # ── 2. psd-tools로 bg 레이어 composite ──────────────────────────────────
-    bg_img = _composite_bg_layer(psd_path, bg_layer_name)
+    bg_img = _composite_bg_layer(psd_path, bg_layer_name, psd=psd)
     if bg_img is None:
         return _fail(logger, "BG_COMPOSITE_FAILED", f"bg 레이어({bg_layer_name!r}) composite 실패")
 
@@ -59,23 +60,36 @@ def extract_and_resize(
         f"bg 추출 완료 {bg_img.width}x{bg_img.height} layer={bg_layer_name!r}",
     )
 
-    # ── 3. fal-ai/smart-resize (PIL center crop fallback) ────────────────────
-    from clean_pipeline.typed import smart_resizer
+    # ── 3. bg 리사이즈: 동일 규격이면 PIL만, 다른 규격이면 fal-ai 시도 ───────────
+    stage_dir_r = Path(output_dir) / job_id / _OUTPUT_SUBDIR
+    resized_path = str(stage_dir_r / "smart_resized.png")
+    is_smart = False
 
-    _, sr_result = smart_resizer.resize(
-        canonical_path=bg_path,
-        target_width=target_width,
-        target_height=target_height,
-        output_dir=output_dir,
-        job_id=job_id,
-        logger=logger,
-    )
+    if bg_img.width == target_width and bg_img.height == target_height:
+        # 규격 동일 → fal-ai 불필요, 그대로 복사
+        import shutil as _shutil
+        _shutil.copy2(bg_path, resized_path)
+        logger.artifact_written(
+            STAGE.value, "(skip-fal)",
+            f"bg 규격({bg_img.width}x{bg_img.height}) == target → fal-ai 스킵 (직접 복사)",
+        )
+    else:
+        from clean_pipeline.typed import smart_resizer
 
-    if sr_result is None:
-        return _fail(logger, "BG_RESIZE_FAILED", "smart-resize 실패")
+        _, sr_result = smart_resizer.resize(
+            canonical_path=bg_path,
+            target_width=target_width,
+            target_height=target_height,
+            output_dir=output_dir,
+            job_id=job_id,
+            logger=logger,
+        )
 
-    resized_path = sr_result["resized_path"]
-    is_smart = sr_result["is_smart_resized"]
+        if sr_result is None:
+            return _fail(logger, "BG_RESIZE_FAILED", "smart-resize 실패")
+
+        resized_path = sr_result["resized_path"]
+        is_smart = sr_result["is_smart_resized"]
 
     logger.stage_pass(
         STAGE.value,
@@ -108,13 +122,14 @@ def extract_and_resize(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _composite_bg_layer(psd_path: str, bg_layer_name: str) -> Image.Image | None:
+def _composite_bg_layer(psd_path: str, bg_layer_name: str, psd=None) -> Image.Image | None:
     """psd-tools로 bg_layer_name 레이어를 composite 추출 후 RGB Image 반환."""
-    try:
-        from psd_tools import PSDImage
-        psd = PSDImage.open(psd_path)
-    except Exception:
-        return None
+    if psd is None:
+        try:
+            from psd_tools import PSDImage
+            psd = PSDImage.open(psd_path)
+        except Exception:
+            return None
 
     psd_w, psd_h = psd.width, psd.height
 

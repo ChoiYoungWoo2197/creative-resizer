@@ -38,6 +38,7 @@ def composite_elements(
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
+    psd=None,
 ) -> tuple[StageResult, dict | None]:
     """비-bg 레이어를 letterbox 변환 좌표로 배경에 합성.
 
@@ -71,12 +72,13 @@ def composite_elements(
     except Exception as exc:
         return _fail(logger, "BG_OPEN_FAILED", f"배경 이미지 열기 실패: {exc}")
 
-    # ── 3. PSD 열기 ─────────────────────────────────────────────────────────
-    try:
-        from psd_tools import PSDImage
-        psd = PSDImage.open(psd_path)
-    except Exception as exc:
-        return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
+    # ── 3. PSD 열기 (type_g_pipeline에서 이미 열어 전달했으면 재사용) ─────────────
+    if psd is None:
+        try:
+            from psd_tools import PSDImage
+            psd = PSDImage.open(psd_path)
+        except Exception as exc:
+            return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
 
     # ── 4-5. 레이아웃 모드에 따른 레이어 합성 ──────────────────────────────────
     # bg 계열 서브레이어 이름 집합 — AP_LAYOUT 그룹 합성 시 제외

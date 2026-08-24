@@ -44,6 +44,18 @@ def run(
     job_id = request.job_id
     out_dir = request.output_directory
 
+    # PSD를 한 번만 열어서 P2/P3/P4에 재사용 (4번 open → 1번)
+    try:
+        from psd_tools import PSDImage
+        psd_obj = PSDImage.open(request.source_path)
+    except Exception as exc:
+        fail_sr = StageResult(
+            stage=StageName.ELEMENT_ANALYSIS,
+            status=PipelineStatus.FAIL,
+            reasons=[f"[PSD_OPEN_FAILED] {exc}"],
+        )
+        return _fail(job_id, fail_sr, stage_results, logger)
+
     # ── P2: ELEMENT_ANALYSIS — PSD 레이어 트리 읽기 ──────────────────────────
     from clean_pipeline.psd import psd_layer_reader
 
@@ -52,6 +64,7 @@ def run(
         output_dir=out_dir,
         job_id=job_id,
         logger=logger,
+        psd=psd_obj,
     )
     stage_results.append(sr)
     if sr.status == PipelineStatus.FAIL:
@@ -68,6 +81,7 @@ def run(
         output_dir=out_dir,
         job_id=job_id,
         logger=logger,
+        psd=psd_obj,
     )
     stage_results.append(sr_bg)
     if sr_bg.status == PipelineStatus.FAIL:
@@ -87,6 +101,7 @@ def run(
         output_dir=out_dir,
         job_id=job_id,
         logger=logger,
+        psd=psd_obj,
     )
     stage_results.append(sr_comp)
     if sr_comp.status == PipelineStatus.FAIL:

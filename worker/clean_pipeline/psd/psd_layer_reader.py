@@ -87,6 +87,7 @@ def read_layers(
     output_dir: str,
     job_id: str,
     logger: PipelineLogger,
+    psd=None,
 ) -> tuple[StageResult, dict[str, Any] | None]:
     """PSD 레이어 트리를 읽고 로그로 출력한다.
 
@@ -104,10 +105,11 @@ def read_layers(
     if not os.path.isfile(psd_path):
         return _fail(logger, "PSD_FILE_NOT_FOUND", f"PSD 파일 없음: {psd_path}")
 
-    try:
-        psd = PSDImage.open(psd_path)
-    except Exception as exc:
-        return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
+    if psd is None:
+        try:
+            psd = PSDImage.open(psd_path)
+        except Exception as exc:
+            return _fail(logger, "PSD_OPEN_FAILED", f"PSD 열기 실패: {exc}")
 
     layers: list[LayerInfo] = []
     for top_layer in psd:
