@@ -151,7 +151,12 @@ def _uniquify_result_file(file_path: str, spec_index: int, slug: str, width: int
     directory = os.path.dirname(file_path)
     ext = os.path.splitext(file_path)[1] or ".png"
     safe_slug = slug or f"spec{spec_index}"
-    new_name = f"{spec_index:02d}_{safe_slug}_{width}x{height}{ext}"
+    size_suffix = f"{width}x{height}"
+    # slug가 이미 _WxH로 끝나면 중복 방지
+    if safe_slug.endswith(size_suffix):
+        new_name = f"{spec_index:02d}_{safe_slug}{ext}"
+    else:
+        new_name = f"{spec_index:02d}_{safe_slug}_{size_suffix}{ext}"
     new_path = os.path.join(directory, new_name)
     shutil.move(file_path, new_path)
     return new_path, new_name
