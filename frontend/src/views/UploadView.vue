@@ -630,7 +630,7 @@
             <div v-for="(cs, i) in customSpecs" :key="i" class="hcard">
               <div class="hcard-preview">
                 <div class="spec-preview-canvas">
-                  <div class="spec-preview-frame" :style="{ aspectRatio: `${cs.width} / ${cs.height}` }">
+                  <div class="spec-preview-frame" :class="getPreviewType(cs)" :style="{ aspectRatio: `${cs.width} / ${cs.height}` }">
                     <div class="spec-preview-ph" style="background:#6B7280">
                       <span>{{ cs.width }}×{{ cs.height }}</span>
                     </div>
