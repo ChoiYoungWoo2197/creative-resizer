@@ -132,11 +132,11 @@
             <div class="field-stack">
               <div class="input-wrap">
                 <svg class="input-ico" width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#B0B8C1" stroke-width="2"/><path d="M4 20c0-4 3.582-7 8-7s8 3 8 7" stroke="#B0B8C1" stroke-width="2" stroke-linecap="round"/></svg>
-                <input v-model="form.advertiser" class="side-input" placeholder="광고주명" />
+                <input v-model="form.advertiser" class="side-input" placeholder="제목" />
               </div>
               <div class="input-wrap">
                 <svg class="input-ico" width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="#B0B8C1" stroke-width="2"/><path d="M3 10h18M8 3v3M16 3v3" stroke="#B0B8C1" stroke-width="2" stroke-linecap="round"/></svg>
-                <input v-model="form.campaignName" class="side-input" placeholder="캠페인명" />
+                <input v-model="form.campaignName" class="side-input" placeholder="설명" />
               </div>
             </div>
           </div>
@@ -212,7 +212,7 @@
       <div class="sidebar-foot">
         <div class="foot-info">선택된 사이즈 <b>{{ selectedSpecIds.length }}</b>개</div>
         <button class="gen-btn"
-          :disabled="loading || !selectedSpecIds.length || !form.psdFile || !form.advertiser || !form.campaignName"
+          :disabled="loading || !selectedSpecIds.length || !form.psdFile"
           @click="submit">
           <span v-if="loading" class="spinner" />
           <span v-else class="gen-star">✦</span>
@@ -1321,8 +1321,6 @@ function onDrop(e) {
 
 async function submit() {
   if (!form.psdFile)              return ElMessage.warning('PSD 파일을 선택해주세요.')
-  if (!form.advertiser)           return ElMessage.warning('광고주명을 입력해주세요.')
-  if (!form.campaignName)         return ElMessage.warning('캠페인명을 입력해주세요.')
   if (!selectedSpecIds.value.length) return ElMessage.warning('사이즈를 1개 이상 선택해주세요.')
 
   const fd = new FormData()
