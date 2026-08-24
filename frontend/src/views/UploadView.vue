@@ -193,7 +193,7 @@
               <span class="ai-only-icon">✦</span>
               <div class="ai-only-content">
                 <strong class="ai-only-title">AI 자동 재구성</strong>
-                <span class="ai-only-desc">Stage 20.3 Source-Faithful Repair — 소재의 핵심 요소를 보존하면서 AI가 각 규격에 맞는 배경을 자동 생성합니다.</span>
+                <span class="ai-only-desc">선택한 규격 수에 따라 약 5분 내외 소요됩니다. 생성이 시작되면 작업 목록에서 진행 상태를 확인할 수 있습니다.</span>
               </div>
             </div>
             <div class="adv-row">
