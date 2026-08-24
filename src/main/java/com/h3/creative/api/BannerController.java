@@ -259,8 +259,10 @@ public class BannerController {
                 .findFirst().orElse(null);
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
-        // 규격별 layout_result_{w}x{h}.json 우선, 없으면 공통 layout_result.json 폴백
-        File compositeDir = new File(result.getFilePath()).getParentFile();
+        // filePath = .../clean_v1/08_final/{fileName} → 04_composite 로 이동
+        File resultFile0 = new File(result.getFilePath());
+        File cleanV1Dir0 = resultFile0.getParentFile().getParentFile(); // 08_final → clean_v1
+        File compositeDir = new File(cleanV1Dir0, "04_composite");
         String specKey = result.getWidth() + "x" + result.getHeight();
         File layoutFile = new File(compositeDir, "layout_result_" + specKey + ".json");
         if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result.json");
@@ -285,7 +287,10 @@ public class BannerController {
                 .findFirst().orElse(null);
         if (result == null || result.getFilePath() == null) return ResponseEntity.notFound().build();
 
-        File compositeDir = new File(result.getFilePath()).getParentFile();
+        // filePath = .../clean_v1/08_final/{fileName} → 04_composite 로 이동
+        File resultFile1 = new File(result.getFilePath());
+        File cleanV1Dir1 = resultFile1.getParentFile().getParentFile(); // 08_final → clean_v1
+        File compositeDir = new File(cleanV1Dir1, "04_composite");
         String specKey = result.getWidth() + "x" + result.getHeight();
         File mergedFile = new File(compositeDir, "layers_merged_" + specKey + ".json");
         if (!mergedFile.exists()) return ResponseEntity.notFound().build();
