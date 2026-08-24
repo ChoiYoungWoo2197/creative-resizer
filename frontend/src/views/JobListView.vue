@@ -118,7 +118,7 @@
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
           <span class="c-dl">다운로드</span>
         </div>
-        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" @click="goDetail(job.id)">
+        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id }" @click="selectJob(job)">
           <span class="c-id">
             <span class="job-id">{{ job.id.slice(0, 10) }}...</span>
           </span>
@@ -139,6 +139,52 @@
             <span v-else-if="job.status === 'fail'" class="err-txt" @click.stop="openError(job)">오류 ↗</span>
             <span v-else class="dash">—</span>
           </span>
+        </div>
+      </template>
+    </div>
+
+    <!-- 우측 디테일 패널 오버레이 -->
+    <div v-if="selectedJob" class="panel-overlay" @click="closePanel" />
+    <div class="detail-panel" :class="{ open: selectedJob }">
+      <template v-if="selectedJob">
+        <div class="dp-head">
+          <div class="dp-head-left">
+            <span class="dp-job-id">{{ selectedJob.id.slice(0, 14) }}...</span>
+            <span class="badge" :class="selectedJob.status">
+              <span v-if="selectedJob.status === 'processing' || selectedJob.status === 'pending'" class="badge-spinner"></span>
+              {{ statusLabel(selectedJob.status) }}
+            </span>
+          </div>
+          <button class="dp-close" @click="closePanel">✕</button>
+        </div>
+        <div class="dp-meta">
+          <div class="dp-meta-row"><span class="dp-meta-label">광고주</span><span class="dp-meta-val">{{ selectedJob.advertiser || '—' }}</span></div>
+          <div class="dp-meta-row"><span class="dp-meta-label">캠페인</span><span class="dp-meta-val">{{ selectedJob.campaignName || '—' }}</span></div>
+          <div class="dp-meta-row"><span class="dp-meta-label">생성일</span><span class="dp-meta-val gray">{{ formatDate(selectedJob.createdAt) }}</span></div>
+          <div class="dp-meta-row"><span class="dp-meta-label">매체</span>
+            <span>
+              <span v-for="m in selectedJob.targetMedia" :key="m" class="media-tag" :class="m">{{ m }}</span>
+            </span>
+          </div>
+        </div>
+        <div class="dp-section-title">결과 이미지 <span class="dp-cnt">{{ (selectedJob.results || []).length }}개</span></div>
+        <div class="dp-results">
+          <div v-if="!selectedJob.results || selectedJob.results.length === 0" class="dp-empty">
+            {{ selectedJob.status === 'done' ? '결과가 없습니다.' : '생성이 완료되면 여기에 표시됩니다.' }}
+          </div>
+          <template v-else>
+            <div v-for="r in selectedJob.results" :key="r.fileName" class="dp-result-card">
+              <div class="dp-thumb-wrap">
+                <img :src="getPreviewUrl(selectedJob.id, r.fileName)" class="dp-thumb" :alt="r.name || r.slug" />
+              </div>
+              <div class="dp-result-label">{{ r.name || r.slug || r.fileName }}</div>
+              <div class="dp-result-size" v-if="r.width && r.height">{{ r.width }}×{{ r.height }}</div>
+            </div>
+          </template>
+        </div>
+        <div class="dp-actions">
+          <button v-if="selectedJob.status === 'done'" class="dp-btn dp-btn-primary" @click="download(selectedJob)">ZIP 다운로드 ↓</button>
+          <button class="dp-btn dp-btn-ghost" @click="goDetail(selectedJob.id)">상세 페이지 →</button>
         </div>
       </template>
     </div>
@@ -193,14 +239,19 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { listJobs, downloadZip } from '../api/banner.js'
+import { listJobs, downloadZip, previewUrl } from '../api/banner.js'
 
 const router = useRouter()
 const goDetail = (id) => router.push(`/job/${id}`)
 
-const jobs     = ref([])
-const loading  = ref(false)
-const errorJob = ref(null)
+const jobs        = ref([])
+const loading     = ref(false)
+const errorJob    = ref(null)
+const selectedJob = ref(null)
+
+function selectJob(job) { selectedJob.value = job }
+function closePanel()   { selectedJob.value = null }
+function getPreviewUrl(jobId, fileName) { return previewUrl(jobId, fileName) }
 
 function openError(job) {
   errorJob.value = job
@@ -573,6 +624,83 @@ onMounted(load)
   margin-left: 6px; font-family: inherit;
 }
 .more-btn:hover { border-color: #C4CAD4; color: #6B7684; }
+
+/* 선택된 행 강조 */
+.row-selected { background: #F5F0FF !important; }
+
+/* 우측 디테일 패널 */
+.panel-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.25); z-index: 1000;
+}
+.detail-panel {
+  position: fixed; top: 0; right: 0; height: 100vh; width: 400px;
+  background: #fff; box-shadow: -4px 0 24px rgba(0,0,0,0.12);
+  display: flex; flex-direction: column; z-index: 1001;
+  transform: translateX(100%); transition: transform 0.22s cubic-bezier(0.4,0,0.2,1);
+  overflow: hidden;
+}
+.detail-panel.open { transform: translateX(0); }
+
+.dp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 20px; border-bottom: 1px solid #EAEDF0; flex-shrink: 0;
+}
+.dp-head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dp-job-id { font-family: monospace; font-size: 12px; color: #6B7684; white-space: nowrap; }
+.dp-close {
+  background: none; border: none; font-size: 16px; color: #8B95A1;
+  cursor: pointer; padding: 4px 6px; border-radius: 6px; flex-shrink: 0;
+}
+.dp-close:hover { background: #F2F4F6; color: #191F28; }
+
+.dp-meta {
+  padding: 16px 20px; border-bottom: 1px solid #EAEDF0; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.dp-meta-row { display: flex; align-items: baseline; gap: 10px; }
+.dp-meta-label { font-size: 12px; color: #8B95A1; font-weight: 500; width: 48px; flex-shrink: 0; }
+.dp-meta-val { font-size: 13px; color: #191F28; font-weight: 500; word-break: break-all; }
+.dp-meta-val.gray { color: #8B95A1; }
+
+.dp-section-title {
+  padding: 14px 20px 8px; font-size: 12px; font-weight: 700;
+  color: #8B95A1; text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+}
+.dp-cnt { font-size: 12px; color: #B0B8C1; margin-left: 4px; }
+
+.dp-results {
+  flex: 1; overflow-y: auto; padding: 0 20px 16px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start;
+}
+.dp-empty { grid-column: 1/-1; padding: 32px 0; text-align: center; color: #B0B8C1; font-size: 13px; }
+.dp-result-card {
+  border: 1px solid #EAEDF0; border-radius: 10px; overflow: hidden;
+  background: #F8F9FA; transition: border-color 0.12s;
+}
+.dp-result-card:hover { border-color: #7C3AED; }
+.dp-thumb-wrap {
+  width: 100%; aspect-ratio: 4/3; overflow: hidden; background: #EAEDF0;
+  display: flex; align-items: center; justify-content: center;
+}
+.dp-thumb { width: 100%; height: 100%; object-fit: contain; display: block; }
+.dp-result-label {
+  padding: 6px 8px 2px; font-size: 11px; font-weight: 600;
+  color: #4E5968; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dp-result-size { padding: 0 8px 6px; font-size: 10px; color: #B0B8C1; }
+
+.dp-actions {
+  padding: 14px 20px; border-top: 1px solid #EAEDF0; flex-shrink: 0;
+  display: flex; gap: 8px;
+}
+.dp-btn {
+  flex: 1; padding: 10px; border-radius: 9px; font-size: 13px; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: all 0.12s; border: none;
+}
+.dp-btn-primary { background: linear-gradient(135deg, #7C3AED, #3B82F6); color: #fff; }
+.dp-btn-primary:hover { opacity: 0.88; }
+.dp-btn-ghost { background: #fff; border: 1.5px solid #EAEDF0; color: #4E5968; }
+.dp-btn-ghost:hover { border-color: #7C3AED; color: #7C3AED; }
 
 /* pagination */
 .pagination { display: flex; align-items: center; gap: 8px; justify-content: center; flex-wrap: wrap; }
