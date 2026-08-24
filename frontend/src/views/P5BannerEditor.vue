@@ -179,7 +179,7 @@
                 @change="updateField(selectedIdx, 'render_h', Math.max(1, +$event.target.value))" />
             </div>
           </div>
-          <!-- Text 오버라이드 (badge 제외 type 레이어에만 표시) -->
+          <!-- Text + Font 섹션 (badge 제외 type 레이어에만 표시) -->
           <template v-if="isTypeLayer(editLayers[selectedIdx].name)">
             <div class="design-group-label">Text</div>
             <div class="design-text-area">
@@ -192,6 +192,86 @@
               />
               <div v-if="textOverrides[editLayers[selectedIdx].name]" class="text-override-hint">
                 ✏ 오버라이드 적용 중
+              </div>
+            </div>
+
+            <div class="design-group-label">Font</div>
+
+            <!-- 크기 + 색상 -->
+            <div class="design-row">
+              <div class="design-field">
+                <label>Size</label>
+                <input type="number" min="6" max="300"
+                  :value="getFontSetting(selectedLayerName, 'fontSize') ?? Math.round(editLayers[selectedIdx].render_h * 0.62)"
+                  @change="setFontSetting(selectedLayerName, 'fontSize', Math.max(6, +$event.target.value))"
+                />
+              </div>
+              <div class="design-field">
+                <label>Color</label>
+                <input type="color" class="color-input"
+                  :value="getFontSetting(selectedLayerName, 'color') ?? '#111111'"
+                  @input="setFontSetting(selectedLayerName, 'color', $event.target.value)"
+                />
+              </div>
+            </div>
+
+            <!-- 폰트 패밀리 -->
+            <div class="design-row-full">
+              <label class="design-field-label">Family</label>
+              <select class="font-select"
+                :value="getFontSetting(selectedLayerName, 'fontFamily') ?? 'Apple SD Gothic Neo'"
+                @change="setFontSetting(selectedLayerName, 'fontFamily', $event.target.value)"
+              >
+                <option value="Apple SD Gothic Neo">Apple SD Gothic Neo</option>
+                <option value="Malgun Gothic">맑은 고딕 (Malgun Gothic)</option>
+                <option value="Noto Sans KR">Noto Sans KR</option>
+                <option value="Arial">Arial</option>
+              </select>
+            </div>
+
+            <!-- 스타일 + 정렬 -->
+            <div class="design-row-full">
+              <label class="design-field-label">Style</label>
+              <div class="btn-group">
+                <button class="btn-fs"
+                  :class="{ active: !(getFontSetting(selectedLayerName, 'fontStyle') ?? 'normal').includes('bold') && !(getFontSetting(selectedLayerName, 'fontStyle') ?? 'normal').includes('italic') }"
+                  @click="setFontSetting(selectedLayerName, 'fontStyle', 'normal')">N</button>
+                <button class="btn-fs" style="font-weight:700"
+                  :class="{ active: (getFontSetting(selectedLayerName, 'fontStyle') ?? '').includes('bold') }"
+                  @click="toggleFontStyle(selectedLayerName, 'bold')">B</button>
+                <button class="btn-fs" style="font-style:italic"
+                  :class="{ active: (getFontSetting(selectedLayerName, 'fontStyle') ?? '').includes('italic') }"
+                  @click="toggleFontStyle(selectedLayerName, 'italic')">I</button>
+              </div>
+              <label class="design-field-label" style="margin-left:8px">Align</label>
+              <div class="btn-group">
+                <button class="btn-fs"
+                  :class="{ active: (getFontSetting(selectedLayerName, 'align') ?? 'left') === 'left' }"
+                  @click="setFontSetting(selectedLayerName, 'align', 'left')">⬛L</button>
+                <button class="btn-fs"
+                  :class="{ active: getFontSetting(selectedLayerName, 'align') === 'center' }"
+                  @click="setFontSetting(selectedLayerName, 'align', 'center')">⬛C</button>
+                <button class="btn-fs"
+                  :class="{ active: getFontSetting(selectedLayerName, 'align') === 'right' }"
+                  @click="setFontSetting(selectedLayerName, 'align', 'right')">⬛R</button>
+              </div>
+            </div>
+
+            <!-- 행간 + 자간 -->
+            <div class="design-row">
+              <div class="design-field">
+                <label>행간</label>
+                <input type="number" min="0.5" max="4" step="0.1"
+                  :value="getFontSetting(selectedLayerName, 'lineHeight') ?? 1"
+                  @change="setFontSetting(selectedLayerName, 'lineHeight', Math.max(0.5, +$event.target.value))"
+                />
+              </div>
+              <div class="design-field">
+                <label>자간(px)</label>
+                <input type="number" min="-10" max="50" step="0.5"
+                  :value="getFontSetting(selectedLayerName, 'letterSpacing') ?? 0"
+                  @change="setFontSetting(selectedLayerName, 'letterSpacing', +$event.target.value)"
+                />
               </div>
             </div>
           </template>
@@ -228,6 +308,7 @@ const mergedLayers = ref([])   // PSD 전체 트리 (P2 + P4 merged)
 const hiddenNames    = ref(new Set())  // 숨긴 레이어 name 집합
 const selectedIdx    = ref(null)
 const textOverrides  = ref({})         // { layerName: 'override text' } — type 레이어 텍스트 수정
+const fontOverrides  = ref({})         // { layerName: { fontSize, fontFamily, fontStyle, align, lineHeight, letterSpacing, color } }
 const saving       = ref(false)
 const savedMsg     = ref('')
 
@@ -419,25 +500,45 @@ function layerConfig(lyr, idx) {
 
 function textOverlayConfig(lyr) {
   const sc = displayScale.value
+  const fo = fontOverrides.value[lyr.name] || {}
   return {
-    text:       textOverrides.value[lyr.name] || '',
-    x:          lyr.render_x * sc,
-    y:          lyr.render_y * sc,
-    width:      lyr.render_w * sc,
-    fontSize:   Math.max(10, Math.round(lyr.render_h * 0.62 * sc)),
-    fontFamily: '"Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
-    fill:       '#111111',
-    wrap:       'word',
-    listening:  false,
+    text:          textOverrides.value[lyr.name] || '',
+    x:             lyr.render_x * sc,
+    y:             lyr.render_y * sc,
+    width:         lyr.render_w * sc,
+    fontSize:      (fo.fontSize ?? Math.max(10, Math.round(lyr.render_h * 0.62))) * sc,
+    fontFamily:    fo.fontFamily ?? '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+    fontStyle:     fo.fontStyle ?? 'normal',
+    align:         fo.align ?? 'left',
+    lineHeight:    fo.lineHeight ?? 1,
+    letterSpacing: (fo.letterSpacing ?? 0) * sc,
+    fill:          fo.color ?? '#111111',
+    wrap:          'word',
+    listening:     false,
   }
 }
 
 function setTextOverride(name, text) {
   textOverrides.value = { ...textOverrides.value, [name]: text }
-  nextTick(() => {
-    const kl = elemLayerRef.value?.getNode()
-    if (kl) kl.batchDraw()
-  })
+  nextTick(() => { elemLayerRef.value?.getNode()?.batchDraw() })
+}
+
+function getFontSetting(name, key) {
+  return fontOverrides.value[name]?.[key]
+}
+
+function setFontSetting(name, key, value) {
+  fontOverrides.value = { ...fontOverrides.value, [name]: { ...(fontOverrides.value[name] || {}), [key]: value } }
+  nextTick(() => { elemLayerRef.value?.getNode()?.batchDraw() })
+}
+
+function toggleFontStyle(name, style) {
+  const current = fontOverrides.value[name]?.fontStyle ?? 'normal'
+  let parts = current === 'normal' ? [] : current.split(' ')
+  parts = parts.includes(style) ? parts.filter(p => p !== style) : [...parts, style]
+  // bold italic 순서 보장
+  parts.sort((a, b) => a === 'bold' ? -1 : 1)
+  setFontSetting(name, 'fontStyle', parts.length ? parts.join(' ') : 'normal')
 }
 
 async function loadLayerImages() {
@@ -710,12 +811,14 @@ function moveLayerDown(idx) {
 const isDirty = computed(() =>
   JSON.stringify(editLayers.value) !== JSON.stringify(origLayers.value)
   || Object.values(textOverrides.value).some(v => !!v)
+  || Object.keys(fontOverrides.value).length > 0
 )
 
 function resetLayers() {
-  editLayers.value   = JSON.parse(JSON.stringify(origLayers.value))
+  editLayers.value    = JSON.parse(JSON.stringify(origLayers.value))
   textOverrides.value = {}
-  selectedIdx.value  = null
+  fontOverrides.value = {}
+  selectedIdx.value   = null
   const tr = transformerRef.value?.getNode()
   if (tr) tr.nodes([])
 }
@@ -942,6 +1045,29 @@ async function saveAndRecomposite() {
 
 /* ── Text 오버라이드 ─────────────────────────────────────────────────────────── */
 .design-text-area { padding: 0 14px 10px; }
+.design-row-full { padding: 0 14px 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.design-field-label {
+  font-size: 10px; color: #888; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
+}
+.font-select {
+  flex: 1; border: 1px solid #E5E5E5; border-radius: 5px;
+  padding: 5px 8px; font-size: 11px; color: #333;
+  background: #FAFAFA; cursor: pointer; min-width: 0;
+}
+.font-select:focus { outline: none; border-color: #0D99FF; }
+.btn-group { display: flex; gap: 2px; }
+.btn-fs {
+  background: #F5F5F5; border: 1px solid #E5E5E5; border-radius: 4px;
+  padding: 3px 7px; font-size: 11px; cursor: pointer; color: #555;
+  transition: background 0.1s; min-width: 26px; text-align: center;
+}
+.btn-fs:hover { background: #EBEBEB; }
+.btn-fs.active { background: #0D99FF; color: #fff; border-color: #0D99FF; }
+.color-input {
+  width: 100%; height: 30px; border: 1px solid #E5E5E5; border-radius: 5px;
+  padding: 2px; cursor: pointer; background: #FAFAFA; box-sizing: border-box;
+}
 .text-override-input {
   width: 100%; box-sizing: border-box;
   border: 1px solid #E5E5E5; border-radius: 5px;
