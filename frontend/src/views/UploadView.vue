@@ -211,13 +211,6 @@
 
       <div class="sidebar-foot">
         <div class="foot-info">선택된 사이즈 <b>{{ selectedSpecIds.length }}</b>개</div>
-        <button class="gen-btn"
-          :disabled="loading || !selectedSpecIds.length || !form.psdFile"
-          @click="submit">
-          <span v-if="loading" class="spinner" />
-          <span v-else class="gen-star">✦</span>
-          {{ loading ? '생성 중...' : '배너 생성' }}
-        </button>
       </div>
     </aside>
 
@@ -237,6 +230,19 @@
               선택된 사이즈 <span class="accent-num">{{ selectedSpecIds.length }}개</span>
             </h1>
             <p class="hero-sub">AI가 최적화된 크리에이티브를 빠르게 생성합니다.</p>
+          </div>
+          <div class="hero-right">
+            <button class="gen-btn"
+              :disabled="loading || !selectedSpecIds.length || !form.psdFile"
+              @click="submit">
+              <span v-if="loading" class="spinner" />
+              <span v-else class="gen-star">✦</span>
+              {{ loading ? loadingStep : '배너 생성' }}
+            </button>
+            <div v-if="loading" class="gen-step-dots">
+              <span v-for="(s, i) in loadingSteps" :key="i"
+                class="gen-step-dot" :class="{ active: s === loadingStep }"></span>
+            </div>
           </div>
         </div>
 
@@ -625,6 +631,9 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 
 const loading      = ref(false)
+const loadingStep  = ref('')
+const loadingSteps = ['PSD 레이어 분석 중...', 'AI 배경 생성 중...', '최종 합성 중...']
+let stepTimer = null
 const result       = ref(null)
 const aiAnalyzing  = ref(false)
 const aiAnalysis   = ref(null)
@@ -1343,12 +1352,22 @@ async function submit() {
   // 명시적 전달 불필요 — 사이트 기본 요청은 항상 clean_v1
 
   loading.value = true
+  let stepIdx = 0
+  loadingStep.value = loadingSteps[0]
+  stepTimer = setInterval(() => {
+    stepIdx = (stepIdx + 1) % loadingSteps.length
+    loadingStep.value = loadingSteps[stepIdx]
+  }, 2500)
   try {
     const { data } = await uploadPsd(fd)
     router.push('/jobs')
   } catch (e) {
     ElMessage.error('업로드 실패: ' + (e.response?.data?.message ?? e.message))
-  } finally { loading.value = false }
+  } finally {
+    loading.value = false
+    clearInterval(stepTimer)
+    loadingStep.value = ''
+  }
 }
 
 async function loadSpecs() {
@@ -1399,8 +1418,8 @@ onMounted(loadSpecs)
 
 /* drop zone */
 .drop-zone {
-  border: 1.5px dashed #DDE0E7; border-radius: 10px;
-  background: #FAFBFF; padding: 22px 16px; text-align: center;
+  border: 1.5px dashed rgba(124,58,237,0.35); border-radius: 10px;
+  background: rgba(124,58,237,0.04); padding: 22px 16px; text-align: center;
   cursor: pointer; transition: all 0.12s; margin-bottom: 12px;
 }
 .drop-zone:hover, .drop-zone.dragover { border-color: #7C3AED; background: #F5F0FF; }
@@ -1622,14 +1641,18 @@ onMounted(loadSpecs)
 .sidebar-foot { padding: 14px 16px; border-top: 1px solid #EAEDF0; background: #fff; flex-shrink: 0; }
 .foot-info { font-size: 12px; color: #6B7684; margin-bottom: 8px; }
 .foot-info b { color: #7C3AED; font-weight: 700; }
+.hero-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
 .gen-btn {
-  width: 100%; padding: 12px;
+  padding: 12px 24px; min-width: 160px;
   background: linear-gradient(135deg, #7C3AED, #3B82F6);
   color: #fff; border: none; border-radius: 10px;
   font-size: 14px; font-weight: 700; font-family: inherit;
   cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px;
-  transition: opacity 0.12s;
+  transition: opacity 0.12s; white-space: nowrap;
 }
+.gen-step-dots { display: flex; gap: 5px; align-items: center; }
+.gen-step-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(124,58,237,0.2); transition: background 0.3s; }
+.gen-step-dot.active { background: #7C3AED; }
 .gen-btn:hover:not(:disabled) { opacity: 0.88; }
 .gen-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .gen-star { font-size: 13px; }
