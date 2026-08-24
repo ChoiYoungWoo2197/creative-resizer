@@ -2,7 +2,7 @@
   <div class="editor-wrap">
     <!-- ── 상단 툴바 ─────────────────────────────────────────────────────── -->
     <div class="editor-bar">
-      <button class="back-btn" @click="router.push(`/job/${jobId}`)">← 상세</button>
+      <button class="back-btn" @click="router.push('/jobs')">← 상세</button>
       <span class="editor-title">{{ specFileName }}</span>
       <div class="editor-actions">
         <button class="btn-tool" @click="undo" :disabled="!canUndo" title="실행 취소 (Ctrl+Z)">↩</button>
@@ -663,7 +663,7 @@ async function saveAndRecomposite() {
       render_h: l.render_h,
     }))
     await recomposite(jobId, fileName, payload)
-    router.push(`/job/${jobId}`)
+    router.push('/jobs')
   } catch (e) {
     savedMsg.value = '재합성 실패: ' + (e.response?.data?.error || e.message)
     setTimeout(() => { savedMsg.value = '' }, 5000)
