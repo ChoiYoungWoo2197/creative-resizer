@@ -15,8 +15,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,7 +50,8 @@ public class BannerService {
                             String aiRecommendedFocalPosition,
                             String psdMode, List<String> selectedArtboardIds,
                             String objectAnalysisId, Boolean objectReflowEnabled,
-                            String pipelineVersion, String pipelineType) throws IOException {
+                            String pipelineVersion, String pipelineType,
+                            String customSpecsJson) throws IOException {
         if (smartFitStrength == null || smartFitStrength.isBlank()) smartFitStrength = "balanced";
         if (focalPosition == null || focalPosition.isBlank()) focalPosition = "center";
         if (psdMode == null || psdMode.isBlank()) psdMode = "artboard-first";
@@ -72,9 +76,14 @@ public class BannerService {
 
         String sourceType = detectSourceType(psdFile.getOriginalFilename());
 
-        List<BannerSpec> selectedSpecs = specMongoService.findByIds(specIds);
-        List<String> targetMedia = selectedSpecs.stream()
-                .map(BannerSpec::getMedia).distinct().toList();
+        List<BannerSpec> selectedSpecs = specMongoService.findByIds(specIds != null ? specIds : List.of());
+        List<BannerSpec> parsedCustomSpecs = parseCustomSpecs(customSpecsJson);
+
+        List<String> targetMedia = new ArrayList<>(selectedSpecs.stream()
+                .map(BannerSpec::getMedia).distinct().toList());
+        if (!parsedCustomSpecs.isEmpty() && !targetMedia.contains("Custom")) {
+            targetMedia.add("Custom");
+        }
 
         BannerJob job = new BannerJob();
         job.setAdvertiser(advertiser);
@@ -103,6 +112,9 @@ public class BannerService {
         }
         job.setObjectReflowEnabled(objectReflowEnabled != null && objectReflowEnabled);
         job.setPipelineVersion(pipelineVersion);
+        if (!parsedCustomSpecs.isEmpty()) {
+            job.setCustomSpecs(parsedCustomSpecs);
+        }
 
         // PSD이면 Worker에 분석 요청 → 결과를 job에 저장 (프론트 즉시 표시용)
         if ("psd".equals(sourceType)) {
@@ -135,6 +147,7 @@ public class BannerService {
                 .objectReflowEnabled(job.getObjectReflowEnabled())
                 .pipelineVersion(pipelineVersion)
                 .pipelineType(pipelineType)
+                .customSpecs(parsedCustomSpecs.isEmpty() ? null : parsedCustomSpecs)
                 .build();
 
         bannerProducer.publish(message);
@@ -156,6 +169,29 @@ public class BannerService {
         return "artboard-first";
     }
 
+    private List<BannerSpec> parseCustomSpecs(String customSpecsJson) {
+        if (customSpecsJson == null || customSpecsJson.isBlank()) return List.of();
+        try {
+            ObjectMapper om = new ObjectMapper();
+            List<Map<String, Object>> raw = om.readValue(customSpecsJson, new TypeReference<>() {});
+            List<BannerSpec> result = new ArrayList<>();
+            for (Map<String, Object> m : raw) {
+                BannerSpec s = new BannerSpec();
+                s.setWidth(((Number) m.getOrDefault("width", 0)).intValue());
+                s.setHeight(((Number) m.getOrDefault("height", 0)).intValue());
+                s.setPlacementName(String.valueOf(m.getOrDefault("name", "")));
+                s.setSlug(String.valueOf(m.getOrDefault("slug", "custom-" + s.getWidth() + "x" + s.getHeight())));
+                s.setMedia(String.valueOf(m.getOrDefault("media", "Custom")));
+                s.setActive(true);
+                if (s.getWidth() > 0 && s.getHeight() > 0) result.add(s);
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("customSpecsJson 파싱 실패, 무시: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     public void process(BannerMessage message) {
         String jobId = message.getJobId();
         bannerMongoService.updateStatus(jobId, "processing");
@@ -163,9 +199,12 @@ public class BannerService {
 
         List<BannerSpec> specs;
         if (message.getSpecIds() != null && !message.getSpecIds().isEmpty()) {
-            specs = specMongoService.findByIds(message.getSpecIds());
+            specs = new ArrayList<>(specMongoService.findByIds(message.getSpecIds()));
         } else {
-            specs = specMongoService.findByMediaIn(message.getTargetMedia());
+            specs = new ArrayList<>(specMongoService.findByMediaIn(message.getTargetMedia()));
+        }
+        if (message.getCustomSpecs() != null && !message.getCustomSpecs().isEmpty()) {
+            specs.addAll(message.getCustomSpecs());
         }
 
         if (specs.isEmpty()) {

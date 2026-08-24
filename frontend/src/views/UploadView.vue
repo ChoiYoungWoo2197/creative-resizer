@@ -182,6 +182,30 @@
           </div>
         </div>
 
+        <!-- 커스텀 사이즈 -->
+        <div class="sec">
+          <div class="sec-head" @click="customOpen = !customOpen">
+            <span class="sec-title">커스텀 사이즈</span>
+            <span class="chevron" :class="{ up: customOpen }">›</span>
+          </div>
+          <div v-show="customOpen" class="sec-body">
+            <div class="custom-inputs">
+              <input class="custom-inp" v-model.number="customForm.width" type="number" placeholder="너비 (px)" min="1" />
+              <input class="custom-inp" v-model.number="customForm.height" type="number" placeholder="높이 (px)" min="1" />
+              <input class="custom-inp custom-inp-full" v-model="customForm.name" type="text" placeholder="제목 (선택)" maxlength="60" />
+              <input class="custom-inp custom-inp-full" v-model="customForm.description" type="text" placeholder="설명 (선택)" maxlength="100" />
+              <button class="custom-add-btn" @click="addCustomSpec" :disabled="!customForm.width || !customForm.height">+ 추가</button>
+            </div>
+            <div v-if="customSpecs.length" class="custom-list">
+              <div v-for="(cs, i) in customSpecs" :key="i" class="custom-item">
+                <span class="ci-dim">{{ cs.width }}×{{ cs.height }}</span>
+                <span v-if="cs.name" class="ci-name">{{ cs.name }}</span>
+                <button class="ci-x" @click="removeCustomSpec(i)">×</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- AI 자동 재구성 -->
         <div class="sec">
           <div class="sec-head" @click="advOpen = !advOpen">
@@ -210,7 +234,7 @@
       </div>
 
       <div class="sidebar-foot">
-        <div class="foot-info">선택된 사이즈 <b>{{ selectedSpecIds.length }}</b>개</div>
+        <div class="foot-info">선택된 사이즈 <b>{{ selectedSpecIds.length + customSpecs.length }}</b>개</div>
       </div>
     </aside>
 
@@ -227,13 +251,13 @@
               <span class="sp sp3">✦</span>
             </div>
             <h1 class="hero-title">
-              선택된 사이즈 <span class="accent-num">{{ selectedSpecIds.length }}개</span>
+              선택된 사이즈 <span class="accent-num">{{ selectedSpecIds.length + customSpecs.length }}개</span>
             </h1>
             <p class="hero-sub">AI가 최적화된 크리에이티브를 빠르게 생성합니다.</p>
           </div>
           <div class="hero-right">
             <button class="gen-btn"
-              :disabled="loading || !selectedSpecIds.length || !form.psdFile"
+              :disabled="loading || (!selectedSpecIds.length && !customSpecs.length) || !form.psdFile"
               @click="submit">
               <span v-if="loading" class="spinner" />
               <span v-else class="gen-star">✦</span>
@@ -477,9 +501,9 @@
         </div>
 
         <!-- Empty -->
-        <div v-if="selectedSpecIds.length === 0" class="empty-hint">
+        <div v-if="selectedSpecIds.length === 0 && customSpecs.length === 0" class="empty-hint">
           <div class="empty-icon">☰</div>
-          <div class="empty-text">왼쪽 매체 가이드에서 사이즈를 선택하세요</div>
+          <div class="empty-text">왼쪽 매체 가이드에서 사이즈를 선택하거나 커스텀 사이즈를 추가하세요</div>
         </div>
 
         <!-- Platform groups -->
@@ -594,6 +618,36 @@
           </div>
         </template>
 
+        <!-- Custom spec cards -->
+        <div v-if="customSpecs.length" class="pf-group">
+          <div class="pf-group-head">
+            <span class="pf-badge" style="background:#6B7280">C</span>
+            <span class="pf-group-name">커스텀</span>
+            <span class="pf-group-cnt">{{ customSpecs.length }}</span>
+            <button class="desel-btn" @click="customSpecs = []">전체 삭제</button>
+          </div>
+          <div class="hcards-grid">
+            <div v-for="(cs, i) in customSpecs" :key="i" class="hcard">
+              <div class="hcard-preview">
+                <div class="spec-preview-canvas">
+                  <div class="spec-preview-frame" :style="{ aspectRatio: `${cs.width} / ${cs.height}` }">
+                    <div class="spec-preview-ph" style="background:#6B7280">
+                      <span>{{ cs.width }}×{{ cs.height }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="hcard-info">
+                <button class="hcard-x" @click="removeCustomSpec(i)">×</button>
+                <div class="hcard-name">{{ cs.name || `${cs.width}×${cs.height}` }}</div>
+                <div class="hcard-dim">{{ cs.width }}×{{ cs.height }}px</div>
+                <span class="hcard-tag" style="background:#6B7280">CUSTOM</span>
+                <div v-if="cs.description" class="hcard-meta"><span class="hcard-ratio">{{ cs.description }}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- AI bar (sticky bottom) -->
@@ -670,8 +724,11 @@ const isPsdFile = computed(() =>
 )
 
 const uploadOpen = ref(true)
-const mediaOpen  = ref(true)
-const advOpen    = ref(true)
+const mediaOpen   = ref(true)
+const advOpen     = ref(true)
+const customOpen  = ref(false)
+const customSpecs = ref([])
+const customForm  = reactive({ width: '', height: '', name: '', description: '' })
 const expandedPlatforms = reactive({})
 const viewModes = reactive({})
 
@@ -828,6 +885,24 @@ function removeSpec(id) {
   const s = new Set(safeZoneVisibleIds.value)
   s.delete(id)
   safeZoneVisibleIds.value = s
+}
+function addCustomSpec() {
+  if (!customForm.width || !customForm.height) return
+  customSpecs.value.push({
+    width: Number(customForm.width),
+    height: Number(customForm.height),
+    name: customForm.name || '',
+    description: customForm.description || '',
+    slug: `custom-${customForm.width}x${customForm.height}`,
+    media: 'Custom',
+  })
+  customForm.width = ''
+  customForm.height = ''
+  customForm.name = ''
+  customForm.description = ''
+}
+function removeCustomSpec(i) {
+  customSpecs.value.splice(i, 1)
 }
 
 function toggleSafeZone(specId) {
@@ -1329,8 +1404,8 @@ function onDrop(e) {
 }
 
 async function submit() {
-  if (!form.psdFile)              return ElMessage.warning('PSD 파일을 선택해주세요.')
-  if (!selectedSpecIds.value.length) return ElMessage.warning('사이즈를 1개 이상 선택해주세요.')
+  if (!form.psdFile) return ElMessage.warning('PSD 파일을 선택해주세요.')
+  if (!selectedSpecIds.value.length && !customSpecs.value.length) return ElMessage.warning('사이즈를 1개 이상 선택하거나 커스텀 사이즈를 추가해주세요.')
 
   const fd = new FormData()
   fd.append('psdFile', form.psdFile)
@@ -1342,6 +1417,9 @@ async function submit() {
   fd.append('focalPosition', 'center')
   fd.append('outputFormat', form.outputFormat)
   fd.append('pipelineType', 'G')
+  if (customSpecs.value.length) {
+    fd.append('customSpecsJson', JSON.stringify(customSpecs.value))
+  }
   if (isPsdFile.value) {
     fd.append('psdMode', 'artboard-first')
   }
@@ -1471,6 +1549,38 @@ onMounted(loadSpecs)
   border: 1px solid #F59E0B; background: #fff; color: #B45309; cursor: pointer; font-family: inherit;
 }
 .spec-retry-btn:hover { background: #FFFBEB; }
+
+/* 커스텀 사이즈 입력 폼 */
+.custom-inputs {
+  padding: 10px 14px 6px; display: flex; flex-direction: column; gap: 6px;
+}
+.custom-inp {
+  width: 100%; box-sizing: border-box;
+  padding: 6px 10px; border: 1px solid #DDD6FE; border-radius: 7px;
+  font-size: 12.5px; color: #3D2D6E; background: #FDFBFF; font-family: inherit;
+  outline: none; transition: border-color 0.15s;
+}
+.custom-inp:focus { border-color: #7C3AED; }
+.custom-inp::placeholder { color: #B0A0D8; }
+.custom-add-btn {
+  align-self: flex-end; padding: 6px 16px; border-radius: 7px;
+  background: #7C3AED; color: #fff; border: none; cursor: pointer;
+  font-size: 12.5px; font-family: inherit; transition: background 0.15s;
+}
+.custom-add-btn:hover:not(:disabled) { background: #5B21B6; }
+.custom-add-btn:disabled { background: #C4B5FD; cursor: not-allowed; }
+.custom-list { padding: 0 14px 10px; display: flex; flex-direction: column; gap: 4px; }
+.custom-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  background: #F5F0FF; border-radius: 6px; font-size: 12px;
+}
+.ci-dim { font-weight: 600; color: #5B21B6; flex-shrink: 0; }
+.ci-name { color: #6D5B8E; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ci-x {
+  border: none; background: none; cursor: pointer; color: #9B8EC4;
+  font-size: 14px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
+.ci-x:hover { color: #7C3AED; }
 
 /* safe zone badge on spec item */
 .sp-sz-badge {

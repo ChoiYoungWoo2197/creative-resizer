@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import com.h3.creative.domain.BannerSpec;
 import java.util.List;
 
 @Data
@@ -34,4 +35,7 @@ public class BannerMessage {
 
     // 파이프라인 타입 (예: "G") — Worker pipeline_type_selector에 전달
     private String pipelineType;
+
+    // 커스텀 사이즈 (DB에 없는 사용자 지정 규격)
+    private List<BannerSpec> customSpecs;
 }

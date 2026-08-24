@@ -51,6 +51,9 @@ public class BannerJob {
     private String aiRecommendedSmartFitStrength;
     private String aiRecommendedFocalPosition;
 
+    // 커스텀 사이즈 (DB에 없는 사용자 지정 규격)
+    private List<BannerSpec> customSpecs;
+
     private String errorMessage;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
