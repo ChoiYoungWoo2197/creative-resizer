@@ -143,6 +143,18 @@
       </template>
     </div>
 
+    <!-- 라이트박스 -->
+    <div v-if="lightboxItem" class="lightbox-overlay" @click.self="closeLightbox">
+      <div class="lightbox-box">
+        <button class="lightbox-close" @click="closeLightbox">✕</button>
+        <img :src="getPreviewUrl(selectedJob.id, lightboxItem.fileName)" class="lightbox-img" :alt="lightboxItem.name" />
+        <div class="lightbox-info">
+          <span class="lightbox-name">{{ lightboxItem.name || lightboxItem.slug }}</span>
+          <span v-if="lightboxItem.width && lightboxItem.height" class="lightbox-size">{{ lightboxItem.width }}×{{ lightboxItem.height }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 우측 디테일 패널 오버레이 -->
     <div v-if="selectedJob" class="panel-overlay" @click="closePanel" />
     <div class="detail-panel" :class="{ open: selectedJob }">
@@ -176,6 +188,11 @@
             <div v-for="r in selectedJob.results" :key="r.fileName" class="dp-result-card">
               <div class="dp-thumb-wrap">
                 <img :src="getPreviewUrl(selectedJob.id, r.fileName)" class="dp-thumb" :alt="r.name || r.slug" />
+                <div class="dp-card-hover">
+                  <button class="dp-card-action" @click.stop="openLightbox(r)" title="크게보기">⤢</button>
+                  <button class="dp-card-action" @click.stop="downloadSingle(selectedJob.id, r.fileName)" title="다운로드">↓</button>
+                  <button class="dp-card-action" @click.stop="goEditor(selectedJob.id, r.fileName)" title="P5 에디터">✏</button>
+                </div>
               </div>
               <div class="dp-result-label">{{ r.name || r.slug || r.fileName }}</div>
               <div class="dp-result-size" v-if="r.width && r.height">{{ r.width }}×{{ r.height }}</div>
@@ -184,7 +201,6 @@
         </div>
         <div class="dp-actions">
           <button v-if="selectedJob.status === 'done'" class="dp-btn dp-btn-primary" @click="download(selectedJob)">ZIP 다운로드 ↓</button>
-          <button class="dp-btn dp-btn-ghost" @click="goDetail(selectedJob.id)">상세 페이지 →</button>
         </div>
       </template>
     </div>
@@ -239,7 +255,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { listJobs, downloadZip, previewUrl } from '../api/banner.js'
+import { listJobs, downloadZip, downloadImage, previewUrl } from '../api/banner.js'
 
 const router = useRouter()
 const goDetail = (id) => router.push(`/job/${id}`)
@@ -248,10 +264,24 @@ const jobs        = ref([])
 const loading     = ref(false)
 const errorJob    = ref(null)
 const selectedJob = ref(null)
+const lightboxItem = ref(null)
 
-function selectJob(job) { selectedJob.value = job }
-function closePanel()   { selectedJob.value = null }
+function selectJob(job)  { selectedJob.value = job }
+function closePanel()    { selectedJob.value = null }
 function getPreviewUrl(jobId, fileName) { return previewUrl(jobId, fileName) }
+function openLightbox(result)  { lightboxItem.value = result }
+function closeLightbox() { lightboxItem.value = null }
+function goEditor(jobId, fileName) { router.push({ name: 'jobEdit', params: { id: jobId }, query: { fileName } }) }
+
+async function downloadSingle(jobId, fileName) {
+  try {
+    const { data } = await downloadImage(jobId, fileName)
+    const url = URL.createObjectURL(data)
+    const a = document.createElement('a')
+    a.href = url; a.download = fileName; a.click()
+    URL.revokeObjectURL(url)
+  } catch { ElMessage.error('다운로드 실패') }
+}
 
 function openError(job) {
   errorJob.value = job
@@ -433,7 +463,7 @@ async function download(row) {
     const { data } = await downloadZip(row.id)
     const url = URL.createObjectURL(data)
     const a = document.createElement('a')
-    a.href = url; a.download = `${row.advertiser}_${row.campaignName}.zip`; a.click()
+    a.href = url; a.download = `${row.id}.zip`; a.click()
     URL.revokeObjectURL(url)
   } catch { ElMessage.error('다운로드 실패') }
 }
@@ -625,6 +655,29 @@ onMounted(load)
 }
 .more-btn:hover { border-color: #C4CAD4; color: #6B7684; }
 
+/* 라이트박스 */
+.lightbox-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.82);
+  display: flex; align-items: center; justify-content: center; z-index: 2000;
+}
+.lightbox-box {
+  position: relative; max-width: 90vw; max-height: 90vh;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.lightbox-close {
+  position: absolute; top: -36px; right: 0;
+  background: none; border: none; color: #fff; font-size: 20px;
+  cursor: pointer; padding: 4px 8px; opacity: 0.7;
+}
+.lightbox-close:hover { opacity: 1; }
+.lightbox-img {
+  max-width: 85vw; max-height: 80vh; object-fit: contain;
+  border-radius: 10px; display: block;
+}
+.lightbox-info { display: flex; align-items: center; gap: 12px; }
+.lightbox-name { font-size: 13px; color: rgba(255,255,255,0.85); font-weight: 600; }
+.lightbox-size { font-size: 12px; color: rgba(255,255,255,0.5); }
+
 /* 선택된 행 강조 */
 .row-selected { background: #F5F0FF !important; }
 
@@ -679,10 +732,23 @@ onMounted(load)
 }
 .dp-result-card:hover { border-color: #7C3AED; }
 .dp-thumb-wrap {
-  width: 100%; aspect-ratio: 4/3; overflow: hidden; background: #EAEDF0;
+  position: relative; width: 100%; aspect-ratio: 4/3; overflow: hidden; background: #EAEDF0;
   display: flex; align-items: center; justify-content: center;
 }
 .dp-thumb { width: 100%; height: 100%; object-fit: contain; display: block; }
+.dp-card-hover {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.48);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  opacity: 0; transition: opacity 0.15s;
+}
+.dp-thumb-wrap:hover .dp-card-hover { opacity: 1; }
+.dp-card-action {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5);
+  color: #fff; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s;
+}
+.dp-card-action:hover { background: rgba(255,255,255,0.35); }
 .dp-result-label {
   padding: 6px 8px 2px; font-size: 11px; font-weight: 600;
   color: #4E5968; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
