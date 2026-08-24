@@ -90,11 +90,13 @@ def composite_elements(
         layers_dir = stage_dir / "layers"
         layers_dir.mkdir(exist_ok=True)
 
+        effective_depth = _find_effective_depth(layers)
         top_layers = [
             l for l in layers
-            if l.depth == 0 and l.role != "bg"
-            and l.name not in _BG_SUBLAYER_NAMES and l.visible
+            if l.depth == effective_depth and l.role != "bg"
+            and l.name.lower() not in _BG_SUBLAYER_NAMES and l.visible
         ]
+        print(f"[{STAGE.value}][EFFECTIVE_DEPTH] depth={effective_depth} top_layer_count={len(top_layers)}", flush=True)
         placed_count = 0
         for layer_info in top_layers:
             layer = _find_layer(psd, layer_info.name)
@@ -103,44 +105,54 @@ def composite_elements(
                 continue
 
             if layer.is_group():
-                # 그룹이면 bg 서브레이어 제외하고 자식 합성
                 for child in layer:
                     if child.name.lower() in _BG_SUBLAYER_NAMES:
                         print(f"[{STAGE.value}][BG_SUBLAYER_SKIP] name={child.name!r}", flush=True)
                         continue
 
-                    # 자식 그룹 안에 의미 있는 서브레이어가 2개 이상이면 개별 추출
-                    sub_targets = (
-                        [sc for sc in child
-                         if sc.name.lower() not in _BG_SUBLAYER_NAMES and sc.is_visible()]
-                        if child.is_group() else []
-                    )
-
-                    if len(sub_targets) > 1:
-                        print(f"[{STAGE.value}][SUBLAYER_EXPAND] parent={child.name!r} count={len(sub_targets)}", flush=True)
-                        for sub in sub_targets:
-                            safe = _safe_filename(f"{layer_info.name}__{child.name}__{sub.name}")
-                            placement = _place_layer(
-                                sub, canvas, psd, S, Ox, Oy, STAGE.value,
-                                layer_save_path=layers_dir / f"{safe}.png",
-                            )
-                            if placement:
-                                placement["role"] = _parse_role(sub.name)
-                                placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
-                                placed_layers.append(placement)
-                                placed_count += 1
-                    else:
-                        # 단일 자식 or 리프 → 현재대로 전체 합성
+                    child_role = _parse_role(child.name)
+                    # 역할 있는 그룹(badge 등)은 통째로 합성, 역할 없는 그룹만 하위 분해
+                    if not child.is_group() or child_role != "unknown":
                         safe = _safe_filename(f"{layer_info.name}__{child.name}")
                         placement = _place_layer(
                             child, canvas, psd, S, Ox, Oy, STAGE.value,
                             layer_save_path=layers_dir / f"{safe}.png",
                         )
                         if placement:
-                            placement["role"] = _parse_role(child.name) or layer_info.role
+                            placement["role"] = child_role or layer_info.role
                             placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
                             placed_layers.append(placement)
                             placed_count += 1
+                    else:
+                        # 역할 없는 그룹 → 하위 레이어 개별 분해
+                        sub_targets = [
+                            sc for sc in child
+                            if sc.name.lower() not in _BG_SUBLAYER_NAMES and sc.is_visible()
+                        ]
+                        if len(sub_targets) > 1:
+                            print(f"[{STAGE.value}][SUBLAYER_EXPAND] parent={child.name!r} count={len(sub_targets)}", flush=True)
+                            for sub in sub_targets:
+                                safe = _safe_filename(f"{layer_info.name}__{child.name}__{sub.name}")
+                                placement = _place_layer(
+                                    sub, canvas, psd, S, Ox, Oy, STAGE.value,
+                                    layer_save_path=layers_dir / f"{safe}.png",
+                                )
+                                if placement:
+                                    placement["role"] = _parse_role(sub.name)
+                                    placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
+                                    placed_layers.append(placement)
+                                    placed_count += 1
+                        else:
+                            safe = _safe_filename(f"{layer_info.name}__{child.name}")
+                            placement = _place_layer(
+                                child, canvas, psd, S, Ox, Oy, STAGE.value,
+                                layer_save_path=layers_dir / f"{safe}.png",
+                            )
+                            if placement:
+                                placement["role"] = child_role or layer_info.role
+                                placement["layer_file"] = f"clean_v1/04_composite/layers/{safe}.png"
+                                placed_layers.append(placement)
+                                placed_count += 1
             else:
                 safe = _safe_filename(layer_info.name)
                 placement = _place_layer(
@@ -344,6 +356,12 @@ def _place_layer(
         "render_h": new_h,
         "scale": round(S, 6),
     }
+
+
+def _find_effective_depth(layers: list[LayerInfo]) -> int:
+    """역할 있는 레이어의 최소 depth — 배경/banner 같은 래퍼 그룹을 건너뜀."""
+    depths = [l.depth for l in layers if l.role not in ("unknown", "bg")]
+    return min(depths) if depths else 0
 
 
 def _find_layer(parent, name: str):
