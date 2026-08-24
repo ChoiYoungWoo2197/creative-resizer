@@ -67,6 +67,7 @@
             <span class="tree-chevron">{{ lyr.bbox === null ? '▸' : '  ' }}</span>
             <span class="layer-dot" :class="lyr.rendered ? 'role-' + lyr.role : ''" />
             <span class="tree-name">{{ lyr.name }}</span>
+            <span v-if="isTypeLayer(lyr.name) && textOverrides[lyr.name]" class="text-badge">T</span>
             <div v-if="lyr.rendered" class="layer-order-btns" @click.stop>
               <button class="layer-order-btn" @click="moveLayerUpByName(lyr.name)"   :disabled="editLayerIdx(lyr.name) === 0">▲</button>
               <button class="layer-order-btn" @click="moveLayerDownByName(lyr.name)" :disabled="editLayerIdx(lyr.name) === editLayers.length - 1">▼</button>
@@ -126,6 +127,16 @@
           <v-layer :config="{ listening: false }">
             <v-line v-for="(gl, i) in guideLines" :key="i" :config="gl" />
           </v-layer>
+
+          <!-- 텍스트 오버레이 레이어 (이벤트 비활성, 순수 시각) -->
+          <v-layer :config="{ listening: false }">
+            <v-text
+              v-for="lyr in editLayers"
+              :key="'txt-' + lyr.name"
+              v-show="isTypeLayer(lyr.name) && !!textOverrides[lyr.name] && !hiddenNames.has(lyr.name)"
+              :config="textOverlayConfig(lyr)"
+            />
+          </v-layer>
         </v-stage>
       </div>
 
@@ -168,6 +179,22 @@
                 @change="updateField(selectedIdx, 'render_h', Math.max(1, +$event.target.value))" />
             </div>
           </div>
+          <!-- Text 오버라이드 (badge 제외 type 레이어에만 표시) -->
+          <template v-if="isTypeLayer(editLayers[selectedIdx].name)">
+            <div class="design-group-label">Text</div>
+            <div class="design-text-area">
+              <textarea
+                class="text-override-input"
+                :value="textOverrides[editLayers[selectedIdx].name] ?? ''"
+                @input="setTextOverride(editLayers[selectedIdx].name, $event.target.value)"
+                placeholder="텍스트를 입력하세요"
+                rows="4"
+              />
+              <div v-if="textOverrides[editLayers[selectedIdx].name]" class="text-override-hint">
+                ✏ 오버라이드 적용 중
+              </div>
+            </div>
+          </template>
         </template>
 
         <div v-else class="design-empty">레이어를 선택하세요</div>
@@ -198,8 +225,9 @@ const layout       = ref(null)
 const editLayers   = ref([])
 const origLayers   = ref([])
 const mergedLayers = ref([])   // PSD 전체 트리 (P2 + P4 merged)
-const hiddenNames  = ref(new Set())  // 숨긴 레이어 name 집합
-const selectedIdx  = ref(null)
+const hiddenNames    = ref(new Set())  // 숨긴 레이어 name 집합
+const selectedIdx    = ref(null)
+const textOverrides  = ref({})         // { layerName: 'override text' } — type 레이어 텍스트 수정
 const saving       = ref(false)
 const savedMsg     = ref('')
 
@@ -207,6 +235,21 @@ const savedMsg     = ref('')
 const selectedLayerName = computed(() =>
   selectedIdx.value !== null ? editLayers.value[selectedIdx.value]?.name : null
 )
+
+// badge 제외한 type 레이어 이름 집합 (mergedLayers 기반)
+const typeLayerNames = computed(() => {
+  const s = new Set()
+  mergedLayers.value.forEach(l => {
+    if (l.kind === 'type' && l.role !== 'badge') {
+      s.add(l.name.replace(/^\[|\]$/g, '').trim())
+    }
+  })
+  return s
+})
+
+function isTypeLayer(name) {
+  return typeLayerNames.value.has(name)
+}
 
 // konva refs
 const transformerRef = ref(null)
@@ -360,8 +403,10 @@ const bgConfig = computed(() => ({
 
 function layerConfig(lyr, idx) {
   const sc = displayScale.value
+  // text override 있으면 이미지 숨김 (투명 상호작용 영역만 유지)
+  const hasTextOverride = isTypeLayer(lyr.name) && !!textOverrides.value[lyr.name]
   return {
-    image:     imgCache.value[lyr.name] ?? null,
+    image:     hasTextOverride ? null : (imgCache.value[lyr.name] ?? null),
     x:         lyr.render_x * sc,
     y:         lyr.render_y * sc,
     width:     lyr.render_w * sc,
@@ -370,6 +415,29 @@ function layerConfig(lyr, idx) {
     draggable: !spacebarDown.value,
     name:      `layer-${idx}`,
   }
+}
+
+function textOverlayConfig(lyr) {
+  const sc = displayScale.value
+  return {
+    text:       textOverrides.value[lyr.name] || '',
+    x:          lyr.render_x * sc,
+    y:          lyr.render_y * sc,
+    width:      lyr.render_w * sc,
+    fontSize:   Math.max(10, Math.round(lyr.render_h * 0.62 * sc)),
+    fontFamily: '"Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
+    fill:       '#111111',
+    wrap:       'word',
+    listening:  false,
+  }
+}
+
+function setTextOverride(name, text) {
+  textOverrides.value = { ...textOverrides.value, [name]: text }
+  nextTick(() => {
+    const kl = elemLayerRef.value?.getNode()
+    if (kl) kl.batchDraw()
+  })
 }
 
 async function loadLayerImages() {
@@ -641,11 +709,13 @@ function moveLayerDown(idx) {
 // ── 더티 체크 / 초기화 ─────────────────────────────────────────────────────────
 const isDirty = computed(() =>
   JSON.stringify(editLayers.value) !== JSON.stringify(origLayers.value)
+  || Object.values(textOverrides.value).some(v => !!v)
 )
 
 function resetLayers() {
-  editLayers.value  = JSON.parse(JSON.stringify(origLayers.value))
-  selectedIdx.value = null
+  editLayers.value   = JSON.parse(JSON.stringify(origLayers.value))
+  textOverrides.value = {}
+  selectedIdx.value  = null
   const tr = transformerRef.value?.getNode()
   if (tr) tr.nodes([])
 }
@@ -864,6 +934,25 @@ async function saveAndRecomposite() {
 
 .design-empty {
   padding: 24px 14px; font-size: 12px; color: #888; text-align: center;
+}
+
+/* ── Text 오버라이드 ─────────────────────────────────────────────────────────── */
+.design-text-area { padding: 0 14px 10px; }
+.text-override-input {
+  width: 100%; box-sizing: border-box;
+  border: 1px solid #E5E5E5; border-radius: 5px;
+  padding: 7px 9px; font-size: 12px; color: #333;
+  resize: vertical; font-family: inherit; line-height: 1.5;
+  background: #FAFAFA;
+}
+.text-override-input:focus { outline: none; border-color: #0D99FF; background: #FFFFFF; }
+.text-override-hint {
+  margin-top: 5px; font-size: 10px; color: #0D99FF; font-weight: 600;
+}
+.text-badge {
+  flex-shrink: 0; background: #0D99FF; color: #fff;
+  font-size: 9px; font-weight: 700; border-radius: 3px;
+  padding: 1px 4px; line-height: 1.4;
 }
 
 /* ── 토스트 ──────────────────────────────────────────────────────────────────── */
