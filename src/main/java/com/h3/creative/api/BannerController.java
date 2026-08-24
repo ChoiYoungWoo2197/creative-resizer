@@ -355,19 +355,46 @@ public class BannerController {
         File layoutFile = new File(stage04Dir, "layout_result_" + specKey2 + ".json");
         if (!layoutFile.exists()) layoutFile = new File(stage04Dir, "layout_result.json");
         File bgFile;
+        java.util.Map<String, String> layerFileMap = new java.util.HashMap<>();
         if (layoutFile.exists()) {
-            @SuppressWarnings("unchecked")
             java.util.Map<String, Object> layoutData =
                     new com.fasterxml.jackson.databind.ObjectMapper()
                             .readValue(layoutFile, java.util.Map.class);
             String bgRelative = (String) layoutData.get("bg_file");
             bgFile = bgRelative != null ? new File(jobRoot, bgRelative) : null;
+            // layer_file 절대경로 추출 → worker textOverrides 처리 후 레이어 파일 갱신용
+            @SuppressWarnings("unchecked")
+            java.util.List<java.util.Map<String, Object>> layoutLayers =
+                    (java.util.List<java.util.Map<String, Object>>) layoutData.get("layers");
+            if (layoutLayers != null) {
+                for (java.util.Map<String, Object> ll : layoutLayers) {
+                    String lname = (String) ll.get("name");
+                    String lfile = (String) ll.get("layer_file");
+                    if (lname != null && lfile != null)
+                        layerFileMap.put(lname, new File(jobRoot, lfile).getAbsolutePath());
+                }
+            }
         } else {
             bgFile = null;
         }
         if (bgFile == null || !bgFile.exists()) {
             return ResponseEntity.internalServerError()
                     .body(java.util.Map.of("error", "bg 이미지를 찾을 수 없습니다: layout_result.json 확인 필요"));
+        }
+
+        // layers에 layerFilePath 주입 (textOverrides 시 레이어 파일 갱신 → P5 재진입 시 반영)
+        @SuppressWarnings("unchecked")
+        java.util.List<java.util.Map<String, Object>> rawLayers =
+                (java.util.List<java.util.Map<String, Object>>) body.get("layers");
+        java.util.List<java.util.Map<String, Object>> enrichedLayers = new java.util.ArrayList<>();
+        if (rawLayers != null) {
+            for (java.util.Map<String, Object> rl : rawLayers) {
+                java.util.Map<String, Object> el = new java.util.LinkedHashMap<>(rl);
+                String lname = (String) rl.get("name");
+                if (layerFileMap.containsKey(lname))
+                    el.put("layerFilePath", layerFileMap.get(lname));
+                enrichedLayers.add(el);
+            }
         }
 
         java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
@@ -378,7 +405,7 @@ public class BannerController {
         payload.put("targetH", result.getHeight());
         payload.put("sourceW", result.getSourceWidth() != null ? result.getSourceWidth() : result.getWidth());
         payload.put("sourceH", result.getSourceHeight() != null ? result.getSourceHeight() : result.getHeight());
-        payload.put("layers", body.get("layers"));
+        payload.put("layers", enrichedLayers.isEmpty() ? rawLayers : enrichedLayers);
         payload.put("resultPath", result.getFilePath());
         if (body.containsKey("textOverrides")) {
             payload.put("textOverrides", body.get("textOverrides"));

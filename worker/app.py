@@ -263,13 +263,21 @@ def recomposite():
 
             if override_text:
                 # textOverrides 있는 레이어 → PSD composite 없이 PIL 텍스트로 대체
-                _draw_text_pil(
-                    canvas, override_text,
-                    int(lyr["render_x"]), int(lyr["render_y"]),
-                    int(lyr["render_w"]), int(lyr["render_h"]),
-                )
+                rx, ry = int(lyr["render_x"]), int(lyr["render_y"])
+                rw, rh = int(lyr["render_w"]), int(lyr["render_h"])
+                _draw_text_pil(canvas, override_text, rx, ry, rw, rh)
                 placed += 1
                 print(f"[RECOMPOSITE][TEXT_OVERRIDE] name={name!r} text={override_text[:30]!r}", flush=True)
+                # 레이어 파일 갱신 → P5 재진입 시 업데이트된 텍스트 이미지 표시
+                layer_file_path = lyr.get("layerFilePath")
+                if layer_file_path:
+                    try:
+                        text_layer = Image.new("RGBA", (canvas.width, canvas.height), (0, 0, 0, 0))
+                        _draw_text_pil(text_layer, override_text, rx, ry, rw, rh)
+                        text_layer.crop((rx, ry, rx + rw, ry + rh)).save(layer_file_path)
+                        print(f"[RECOMPOSITE][LAYER_FILE_UPDATED] name={name!r} path={layer_file_path}", flush=True)
+                    except Exception as lf_exc:
+                        print(f"[RECOMPOSITE][LAYER_FILE_FAIL] name={name!r} err={lf_exc}", flush=True)
                 continue
 
             layer = _find_layer(psd, name)

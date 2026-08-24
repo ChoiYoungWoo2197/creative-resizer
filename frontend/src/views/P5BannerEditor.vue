@@ -542,12 +542,13 @@ function toggleFontStyle(name, style) {
 }
 
 async function loadLayerImages() {
+  const bust = `?t=${Date.now()}`
   if (layout.value?.bg_file) {
-    bgImage.value = await loadImg(layerFileUrl(jobId, layout.value.bg_file))
+    bgImage.value = await loadImg(layerFileUrl(jobId, layout.value.bg_file) + bust)
   }
   for (const lyr of editLayers.value) {
     if (lyr.layer_file) {
-      imgCache.value[lyr.name] = await loadImg(layerFileUrl(jobId, lyr.layer_file))
+      imgCache.value[lyr.name] = await loadImg(layerFileUrl(jobId, lyr.layer_file) + bust)
     }
   }
 }
