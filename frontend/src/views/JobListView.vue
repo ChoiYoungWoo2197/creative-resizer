@@ -70,7 +70,7 @@
           <circle cx="11" cy="11" r="7" stroke="#B0B8C1" stroke-width="2"/>
           <path d="M16.5 16.5L21 21" stroke="#B0B8C1" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        <input v-model="search" class="search-input" placeholder="작업 ID, 광고주, 캠페인 검색" />
+        <input v-model="search" class="search-input" placeholder="작업 ID, 제목, 설명 검색" />
       </div>
       <select v-model="filterMedia" class="filter-select">
         <option value="">매체 전체</option>
