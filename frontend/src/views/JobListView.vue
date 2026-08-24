@@ -111,8 +111,8 @@
       <template v-else>
         <div class="tbl-head">
           <span class="c-id" @click="sort('id')">작업 ID <span class="sort-ico">↕</span></span>
-          <span class="c-ad" @click="sort('advertiser')">광고주 <span class="sort-ico">↕</span></span>
-          <span class="c-camp" @click="sort('campaignName')">캠페인 <span class="sort-ico">↕</span></span>
+          <span class="c-ad" @click="sort('advertiser')">제목 <span class="sort-ico">↕</span></span>
+          <span class="c-camp" @click="sort('campaignName')">설명 <span class="sort-ico">↕</span></span>
           <span class="c-media">매체</span>
           <span class="c-status" @click="sort('status')">상태 <span class="sort-ico">↕</span></span>
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
@@ -120,7 +120,7 @@
         </div>
         <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id }" @click="selectJob(job)">
           <span class="c-id">
-            <span class="job-id">{{ job.id.slice(0, 10) }}...</span>
+            <span class="job-id">{{ job.id }}</span>
           </span>
           <span class="c-ad fw">{{ job.advertiser }}</span>
           <span class="c-camp fw">{{ job.campaignName }}</span>
@@ -551,7 +551,7 @@ onMounted(load)
 
 .tbl-head, .tbl-row {
   display: grid;
-  grid-template-columns: 130px 90px 1fr 180px 80px 140px 100px;
+  grid-template-columns: 260px 90px 1fr 180px 80px 140px 100px;
   align-items: center; padding: 0 20px; gap: 8px;
 }
 .tbl-head {
