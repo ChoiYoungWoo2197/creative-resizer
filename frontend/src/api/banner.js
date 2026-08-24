@@ -70,5 +70,5 @@ export const getLayersMerged = (jobId, fileName) =>
 export const layerFileUrl = (jobId, rel) =>
   `/api/banner/job/${jobId}/layer-file?rel=${encodeURIComponent(rel)}`
 
-export const recomposite = (jobId, fileName, layers) =>
-  api.post(`/banner/job/${jobId}/recomposite`, { fileName, layers }, { timeout: 60000 })
+export const recomposite = (jobId, fileName, layers, textOverrides) =>
+  api.post(`/banner/job/${jobId}/recomposite`, { fileName, layers, textOverrides }, { timeout: 60000 })

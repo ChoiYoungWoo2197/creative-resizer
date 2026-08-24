@@ -380,6 +380,9 @@ public class BannerController {
         payload.put("sourceH", result.getSourceHeight() != null ? result.getSourceHeight() : result.getHeight());
         payload.put("layers", body.get("layers"));
         payload.put("resultPath", result.getFilePath());
+        if (body.containsKey("textOverrides")) {
+            payload.put("textOverrides", body.get("textOverrides"));
+        }
 
         java.util.Map<String, Object> workerResp = workerClient.recomposite(payload);
         if (workerResp.containsKey("error")) {

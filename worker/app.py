@@ -171,6 +171,52 @@ def _make_zip(job_id: str, files: list[str]) -> str:
     return zip_path
 
 
+def _draw_text_pil(canvas, text: str, x: int, y: int, w: int, h: int) -> None:
+    """PIL ImageDraw로 텍스트를 canvas에 그린다 (textOverrides 처리용)."""
+    import os
+    from PIL import ImageDraw, ImageFont
+
+    draw = ImageDraw.Draw(canvas)
+    font_size = max(12, int(h * 0.65))
+
+    font = None
+    for fpath in [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf",
+    ]:
+        if os.path.exists(fpath):
+            try:
+                font = ImageFont.truetype(fpath, font_size)
+                break
+            except Exception:
+                pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    # 단어 단위 줄바꿈
+    dummy_draw = ImageDraw.Draw(canvas)
+    lines, current = [], ""
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            test = current + " " + word
+            bbox = dummy_draw.textbbox((0, 0), test, font=font)
+            if bbox[2] <= w:
+                current = test
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+
+    draw.multiline_text((x, y), "\n".join(lines), font=font, fill=(0, 0, 0, 255), spacing=4)
+
+
 @app.route("/recomposite", methods=["POST"])
 def recomposite():
     """P5 에디터에서 수정된 레이어 위치로 P4를 재실행한다.
@@ -196,6 +242,7 @@ def recomposite():
     source_h = int(data.get("sourceH", 0))
     layers_payload = data.get("layers", [])
     result_path = data.get("resultPath")
+    text_overrides = data.get("textOverrides") or {}
 
     if not all([bg_path, psd_path, target_w, target_h, source_w, source_h, result_path]):
         return jsonify({"error": "bgPath, psdPath, targetW, targetH, sourceW, sourceH, resultPath are required"}), 400
@@ -211,14 +258,28 @@ def recomposite():
 
         placed = 0
         for lyr in layers_payload:
-            layer = _find_layer(psd, lyr["name"])
+            name = lyr["name"]
+            override_text = text_overrides.get(name, "")
+
+            if override_text:
+                # textOverrides 있는 레이어 → PSD composite 없이 PIL 텍스트로 대체
+                _draw_text_pil(
+                    canvas, override_text,
+                    int(lyr["render_x"]), int(lyr["render_y"]),
+                    int(lyr["render_w"]), int(lyr["render_h"]),
+                )
+                placed += 1
+                print(f"[RECOMPOSITE][TEXT_OVERRIDE] name={name!r} text={override_text[:30]!r}", flush=True)
+                continue
+
+            layer = _find_layer(psd, name)
             if layer is None:
-                print(f"[RECOMPOSITE][LAYER_NOT_FOUND] name={lyr['name']!r}", flush=True)
+                print(f"[RECOMPOSITE][LAYER_NOT_FOUND] name={name!r}", flush=True)
                 continue
             try:
                 img = layer.composite()
             except Exception as exc:
-                print(f"[RECOMPOSITE][COMPOSITE_SKIP] name={lyr['name']!r} err={exc}", flush=True)
+                print(f"[RECOMPOSITE][COMPOSITE_SKIP] name={name!r} err={exc}", flush=True)
                 continue
             if img is None:
                 continue
@@ -234,7 +295,7 @@ def recomposite():
             scaled = img.resize((new_w, new_h), Image.LANCZOS)
             canvas.paste(scaled, (int(lyr["render_x"]), int(lyr["render_y"])), scaled)
             placed += 1
-            print(f"[RECOMPOSITE][LAYER_PLACED] name={lyr['name']!r} pos=({lyr['render_x']},{lyr['render_y']}) size={new_w}x{new_h}", flush=True)
+            print(f"[RECOMPOSITE][LAYER_PLACED] name={name!r} pos=({lyr['render_x']},{lyr['render_y']}) size={new_w}x{new_h}", flush=True)
 
         canvas.convert("RGB").save(result_path)
         print(f"[RECOMPOSITE][DONE] jobId={job_id} placed={placed} result={result_path}", flush=True)

@@ -732,7 +732,11 @@ async function saveAndRecomposite() {
       render_w: l.render_w,
       render_h: l.render_h,
     }))
-    await recomposite(jobId, fileName, payload)
+    // textOverrides: 빈 문자열은 제외하고 전달
+    const activeOverrides = Object.fromEntries(
+      Object.entries(textOverrides.value).filter(([, v]) => !!v)
+    )
+    await recomposite(jobId, fileName, payload, Object.keys(activeOverrides).length ? activeOverrides : undefined)
     router.push('/jobs')
   } catch (e) {
     savedMsg.value = '재합성 실패: ' + (e.response?.data?.error || e.message)
