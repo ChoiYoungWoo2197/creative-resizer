@@ -710,7 +710,7 @@ onMounted(load)
   padding: 16px 20px 14px; background: #fff;
   border-bottom: 1px solid #EDE9FF; flex-shrink: 0; gap: 12px;
 }
-.dp-head-left { display: flex; flex-direction: column; gap: 7px; min-width: 0; flex: 1; }
+.dp-head-left { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .dp-job-id {
   font-family: monospace; font-size: 11px; color: #7C3AED;
   background: #F3EEFF; border: 1px solid #DDD6FE;
