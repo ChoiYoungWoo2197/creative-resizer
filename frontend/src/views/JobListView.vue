@@ -166,7 +166,11 @@
           </span>
           <span class="c-date gray">{{ formatDate(job.createdAt) }}</span>
           <span class="c-dl" @click.stop>
-            <button class="preview-btn" @click="selectJob(job)" title="미리보기">👁</button>
+            <button class="preview-btn" @click="selectJob(job)" title="미리보기">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
             <button v-if="job.status === 'done'" class="dl-btn" @click="download(job)">ZIP ↓</button>
             <span v-else-if="job.status === 'fail'" class="err-txt" @click.stop="openError(job)">오류 ↗</span>
             <span v-else class="dash">—</span>
@@ -704,7 +708,7 @@ onMounted(load)
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   transition: all 0.12s; flex-shrink: 0;
 }
-.preview-btn:hover { background: #7C3AED; border-color: #7C3AED; }
+.preview-btn:hover { background: #7C3AED; border-color: #7C3AED; color: #fff; }
 
 /* 상태별 좌측 accent bar */
 .tbl-row.status-done       { border-left-color: #059669; }
