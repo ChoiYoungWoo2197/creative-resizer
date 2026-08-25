@@ -1812,10 +1812,8 @@ onMounted(loadSpecs)
 .right-panel {
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
   background:
-    radial-gradient(ellipse at 20% 10%, rgba(124,58,237,0.07) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 85%, rgba(59,130,246,0.06) 0%, transparent 55%),
-    radial-gradient(ellipse at 55% 45%, rgba(236,72,153,0.04) 0%, transparent 50%),
-    #F9F8FD;
+    linear-gradient(rgba(249,248,253,0.88), rgba(249,248,253,0.88)),
+    url('/main_bg.png') center / cover no-repeat;
 }
 .right-scroll { flex: 1; overflow-y: auto; padding: 28px 28px 20px; }
 
