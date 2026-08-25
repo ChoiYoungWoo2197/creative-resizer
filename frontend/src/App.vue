@@ -37,7 +37,7 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: url('/main_bg.png') center / cover no-repeat;
+  background: url('/main_bg2.png') center / cover no-repeat;
   opacity: 0.15;
   z-index: -1;
   pointer-events: none;

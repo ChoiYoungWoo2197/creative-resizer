@@ -1813,7 +1813,7 @@ onMounted(loadSpecs)
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
   background:
     linear-gradient(rgba(249,248,253,0.88), rgba(249,248,253,0.88)),
-    url('/main_bg.png') center / cover no-repeat;
+    url('/main_bg2.png') center / cover no-repeat;
 }
 .right-scroll { flex: 1; overflow-y: auto; padding: 28px 28px 20px; }
 
