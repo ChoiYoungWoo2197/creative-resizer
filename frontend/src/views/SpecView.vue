@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-wrap">
     <div class="page-header">
       <div>
@@ -133,8 +133,8 @@ onMounted(load)
   display: flex; justify-content: space-between; align-items: flex-start;
   margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
 }
-.page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
-.page-desc { margin-top: 6px; font-size: 14px; color: #8B95A1; }
+.page-title { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+.page-desc { margin-top: 6px; font-size: 16px; color: #8B95A1; }
 
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
@@ -143,7 +143,7 @@ onMounted(load)
   border-radius: 10px;
   border: 1.5px solid #E5E8EB;
   background: #fff;
-  font-size: 13px;
+  font-size: 15px;
   color: #4E5968;
   font-family: inherit;
   cursor: pointer;
@@ -154,7 +154,7 @@ onMounted(load)
 .btn-primary, .btn-outline, .btn-danger {
   padding: 9px 16px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -184,14 +184,14 @@ onMounted(load)
 }
 .table-head {
   background: #F8F9FA;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: #8B95A1;
   border-bottom: 1px solid #F0F2F4;
 }
 .table-row {
   border-bottom: 1px solid #F0F2F4;
-  font-size: 13px;
+  font-size: 15px;
   color: #191F28;
   transition: background 0.1s;
 }
@@ -202,7 +202,7 @@ onMounted(load)
   padding: 60px;
   text-align: center;
   color: #8B95A1;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .media-tag {
@@ -210,7 +210,7 @@ onMounted(load)
   padding: 2px 10px;
   border-radius: 100px;
   background: #F2F4F6;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   color: #4E5968;
 }
@@ -220,7 +220,7 @@ onMounted(load)
   display: inline-block;
   padding: 3px 10px;
   border-radius: 100px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 .badge.on  { background: #E8FBF3; color: #0DC780; }
@@ -232,7 +232,7 @@ onMounted(load)
   border: 1.5px solid #FFD0CC;
   background: #fff;
   color: #FF3B30;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.12s;
   display: flex; align-items: center; justify-content: center;
