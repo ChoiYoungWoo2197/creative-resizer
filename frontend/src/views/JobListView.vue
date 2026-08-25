@@ -122,7 +122,7 @@
           <span class="c-media">매체</span>
           <span class="c-status" @click="sort('status')">상태 <span class="sort-ico">↕</span></span>
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
-          <span class="c-dl">다운로드</span>
+          <span class="c-dl">미리보기 | 다운로드</span>
         </div>
         <div v-for="job in paginated" :key="job.id" class="tbl-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, 'row-checked': selectedIds.has(job.id), ['status-' + job.status]: true }">
           <span class="c-chk" @click.stop>
