@@ -274,7 +274,7 @@
             <h1 class="hero-title">
               선택된 사이즈 <span class="accent-num">{{ selectedSpecIds.length + customSpecs.length }}개</span>
             </h1>
-            <p class="hero-sub">AI가 최적화된 크리에이티브를 빠르게 생성합니다.</p>
+            <p class="hero-sub">왼쪽 매체 가이드에서 사이즈를 선택하거나 커스텀 사이즈를 추가하세요</p>
           </div>
           <div class="hero-right">
             <button class="gen-btn"
@@ -519,12 +519,6 @@
               </div>
             </div>
           </template>
-        </div>
-
-        <!-- Empty -->
-        <div v-if="selectedSpecIds.length === 0 && customSpecs.length === 0" class="empty-hint">
-          <div class="empty-icon">☰</div>
-          <div class="empty-text">왼쪽 매체 가이드에서 사이즈를 선택하거나 커스텀 사이즈를 추가하세요</div>
         </div>
 
         <!-- Platform groups -->
@@ -1855,11 +1849,6 @@ onMounted(loadSpecs)
 .ai-feat-ico   { font-size: 16px; color: #7C3AED; display: block; margin-bottom: 4px; }
 .ai-feat-title { font-size: 11px; font-weight: 700; color: #333D4B; margin-bottom: 2px; }
 .ai-feat-desc  { font-size: 10px; color: #8B95A1; line-height: 1.4; }
-
-/* empty */
-.empty-hint { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; }
-.empty-icon { font-size: 36px; color: #D1D8E0; margin-bottom: 12px; }
-.empty-text { font-size: 13px; color: #B0B8C1; }
 
 /* platform group */
 .pf-group { margin-bottom: 28px; }
