@@ -168,7 +168,8 @@
                   <span class="pf-chv" :class="{ open: expandedPlatforms[platform] }">›</span>
                 </div>
                 <div v-show="expandedPlatforms[platform]" class="spec-items">
-                  <div v-for="spec in groupedSpecs[platform]" :key="spec.id"
+                  <div v-for="spec in (expandedAllSpecs[platform] ? groupedSpecs[platform] : groupedSpecs[platform].slice(0, 5))"
+                    :key="spec.id"
                     class="spec-item" :class="{ on: selectedSpecIds.includes(spec.id) }"
                     @click="toggleSpec(spec.id)">
                     <input type="checkbox" class="check sm" :checked="selectedSpecIds.includes(spec.id)" @click.stop @change="toggleSpec(spec.id)" />
@@ -176,6 +177,16 @@
                     <span class="sp-dim">{{ spec.width }}×{{ spec.height }}</span>
                     <span v-if="spec.safeZone" class="sp-sz-badge">SZ</span>
                   </div>
+                  <button v-if="!expandedAllSpecs[platform] && groupedSpecs[platform].length > 5"
+                    class="spec-more-btn"
+                    @click.stop="expandedAllSpecs[platform] = true">
+                    + 더보기 {{ groupedSpecs[platform].length - 5 }}개
+                  </button>
+                  <button v-if="expandedAllSpecs[platform] && groupedSpecs[platform].length > 5"
+                    class="spec-more-btn"
+                    @click.stop="expandedAllSpecs[platform] = false">
+                    ∧ 접기
+                  </button>
                 </div>
               </div>
             </template>
@@ -730,6 +741,7 @@ const customOpen  = ref(false)
 const customSpecs = ref([])
 const customForm  = reactive({ width: '', height: '', name: '', description: '' })
 const expandedPlatforms = reactive({})
+const expandedAllSpecs  = reactive({})   // platform → true이면 전체 표시
 const viewModes = reactive({})
 
 const previewUrl     = ref(null)
@@ -1587,6 +1599,16 @@ onMounted(loadSpecs)
   font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px;
   background: #EDE9FF; color: #7C3AED; flex-shrink: 0;
 }
+
+/* 더보기 / 접기 버튼 */
+.spec-more-btn {
+  width: 100%; margin-top: 2px; padding: 5px 0;
+  border: 1px dashed #D4C9F0; border-radius: 5px;
+  background: none; cursor: pointer;
+  font-size: 11px; color: #9B8EC4; text-align: center;
+  transition: background 0.15s, color 0.15s;
+}
+.spec-more-btn:hover { background: #F3EFFF; color: #7C3AED; }
 
 /* inputs */
 .field-stack { display: flex; flex-direction: column; gap: 8px; }
