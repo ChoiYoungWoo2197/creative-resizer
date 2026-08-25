@@ -1812,13 +1812,12 @@ onMounted(loadSpecs)
   opacity: 0.35;
   z-index: 0;
   pointer-events: none;
-  animation: floatAndPulse 18s ease-in-out infinite alternate;
+  animation: slowPulse 40s ease-in-out infinite alternate;
 }
 .right-panel > * { position: relative; z-index: 1; }
-@keyframes floatAndPulse {
-  0%   { transform: scale(1)    translate(0,     0); }
-  50%  { transform: scale(1.03) translate(-10px, -8px); }
-  100% { transform: scale(1.05) translate(8px,   6px); }
+@keyframes slowPulse {
+  0%   { transform: scale(1); }
+  100% { transform: scale(1.05); }
 }
 .right-scroll { flex: 1; overflow-y: auto; padding: 28px 28px 20px; }
 
