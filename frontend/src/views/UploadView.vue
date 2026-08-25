@@ -671,18 +671,6 @@
 
       </div>
 
-      <!-- AI bar (sticky bottom) -->
-      <div class="ai-bar">
-        <div class="ai-bar-left">
-          <div class="ai-bar-ico">✦</div>
-          <div>
-            <div class="ai-bar-title">AI가 자동으로 최적화합니다</div>
-            <div class="ai-bar-desc">선택한 모든 사이즈에 대해 요소 정렬, 텍스트 가독성, 안전 영역을 자동으로 최적화합니다.</div>
-          </div>
-        </div>
-        <button class="ai-bar-btn">⚙ 자동 최적화 설정 ∨</button>
-      </div>
-
       <!-- Toast -->
       <transition name="toast">
         <div v-if="result" class="toast">
@@ -2229,27 +2217,6 @@ details[open] > .hcard-details-lbl::before { content: '▼ '; }
 .oa-ins-more summary::-webkit-details-marker { display: none; }
 
 /* AI bar */
-.ai-bar {
-  flex-shrink: 0; padding: 12px 24px;
-  background: rgba(255,255,255,0.92); backdrop-filter: blur(8px);
-  border-top: 1px solid rgba(124,58,237,0.12);
-  display: flex; align-items: center; gap: 14px;
-}
-.ai-bar-left { display: flex; align-items: center; gap: 12px; flex: 1; }
-.ai-bar-ico {
-  width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
-  background: linear-gradient(135deg, #7C3AED, #3B82F6);
-  color: #fff; font-size: 14px; display: flex; align-items: center; justify-content: center;
-}
-.ai-bar-title { font-size: 13px; font-weight: 700; color: #333D4B; }
-.ai-bar-desc  { font-size: 11px; color: #8B95A1; margin-top: 1px; }
-.ai-bar-btn {
-  padding: 7px 16px; border-radius: 8px; border: 1.5px solid #E5E8EB; background: #fff;
-  font-size: 12px; font-weight: 600; color: #6B7684; cursor: pointer; font-family: inherit;
-  white-space: nowrap; flex-shrink: 0;
-}
-.ai-bar-btn:hover { border-color: #7C3AED; color: #7C3AED; }
-
 /* toast */
 .toast {
   position: fixed; bottom: 28px; right: 28px;
