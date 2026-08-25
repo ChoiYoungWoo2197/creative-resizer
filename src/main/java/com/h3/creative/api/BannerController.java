@@ -108,6 +108,24 @@ public class BannerController {
         return ResponseEntity.ok(bannerService.listJobs());
     }
 
+    @PatchMapping("/job/{id}")
+    public ResponseEntity<Void> updateJobMeta(@PathVariable String id, @RequestBody java.util.Map<String, String> body) {
+        bannerService.updateMeta(id, body.get("advertiser"), body.get("campaignName"), body.get("memo"));
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/job/{id}")
+    public ResponseEntity<Void> deleteJob(@PathVariable String id) {
+        bannerService.deleteJob(id);
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/jobs")
+    public ResponseEntity<Void> deleteJobs(@RequestBody java.util.Map<String, List<String>> body) {
+        bannerService.deleteJobs(body.get("ids"));
+        return ResponseEntity.ok().build();
+    }
+
     @PostMapping("/jobs/{jobId}/compare")
     public ResponseEntity<BannerAiCompare> compare(
             @PathVariable String jobId,

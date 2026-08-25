@@ -7,9 +7,14 @@
         <h1 class="page-title">작업 목록 <span class="title-star">✦</span></h1>
         <p class="page-desc">생성된 배너 작업을 확인하고 다운로드할 수 있습니다.</p>
       </div>
-      <button class="refresh-btn" @click="load" :disabled="loading">
-        <span class="refresh-ico">↺</span> 새로고침
-      </button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button v-if="selectedIds.size > 0" class="del-sel-btn" @click="deleteSelected">
+          선택 삭제 ({{ selectedIds.size }})
+        </button>
+        <button class="refresh-btn" @click="load" :disabled="loading">
+          <span class="refresh-ico">↺</span> 새로고침
+        </button>
+      </div>
     </div>
 
     <!-- Stats cards -->
@@ -110,6 +115,7 @@
       <div v-else-if="filtered.length === 0" class="tbl-empty">조건에 맞는 작업이 없습니다.</div>
       <template v-else>
         <div class="tbl-head">
+          <span class="c-chk"><input type="checkbox" class="chk" :checked="allSelected" ref="allCheckboxRef" @change="toggleAll" /></span>
           <span class="c-id" @click="sort('id')">작업 ID <span class="sort-ico">↕</span></span>
           <span class="c-ad" @click="sort('advertiser')">제목 <span class="sort-ico">↕</span></span>
           <span class="c-camp" @click="sort('campaignName')">설명 <span class="sort-ico">↕</span></span>
@@ -118,12 +124,27 @@
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
           <span class="c-dl">다운로드</span>
         </div>
-        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, ['status-' + job.status]: true }" @click="selectJob(job)">
+        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, 'row-checked': selectedIds.has(job.id), ['status-' + job.status]: true }" @click="selectJob(job)">
+          <span class="c-chk" @click.stop>
+            <input type="checkbox" class="chk" :checked="selectedIds.has(job.id)" @change="toggleRow(job.id)" />
+          </span>
           <span class="c-id">
             <span class="job-id">{{ job.id }}</span>
           </span>
-          <span class="c-ad fw">{{ job.advertiser }}</span>
-          <span class="c-camp fw">{{ job.campaignName }}</span>
+          <span class="c-ad fw" @dblclick.stop="startEdit(job, 'advertiser')">
+            <input v-if="editingCell?.jobId === job.id && editingCell?.field === 'advertiser'"
+              class="inline-edit" v-model="editingCell.value"
+              @blur="saveEdit" @keyup.enter="saveEdit" @keyup.escape="cancelEdit"
+              @click.stop @mousedown.stop autofocus />
+            <template v-else>{{ job.advertiser || '—' }}</template>
+          </span>
+          <span class="c-camp fw" @dblclick.stop="startEdit(job, 'campaignName')">
+            <input v-if="editingCell?.jobId === job.id && editingCell?.field === 'campaignName'"
+              class="inline-edit" v-model="editingCell.value"
+              @blur="saveEdit" @keyup.enter="saveEdit" @keyup.escape="cancelEdit"
+              @click.stop @mousedown.stop autofocus />
+            <template v-else>{{ job.campaignName || '—' }}</template>
+          </span>
           <span class="c-media">
             <span v-for="m in job.targetMedia" :key="m" class="media-tag" :class="m">{{ m }}</span>
           </span>
@@ -179,6 +200,13 @@
               <span v-for="m in selectedJob.targetMedia" :key="m" class="media-tag" :class="m">{{ m }}</span>
             </span>
           </div>
+        </div>
+        <div class="dp-memo-section">
+          <div class="dp-memo-head">메모</div>
+          <textarea class="dp-memo-area" v-model="memoEdit" placeholder="메모를 입력하세요..." />
+          <button v-if="memoDirty" class="dp-memo-save" @click="saveMemo" :disabled="isSavingMemo">
+            {{ isSavingMemo ? '저장 중...' : '저장' }}
+          </button>
         </div>
         <div class="dp-section-title">결과 이미지 <span class="dp-cnt">{{ (selectedJob.results || []).length }}개</span></div>
         <div class="dp-results">
@@ -254,10 +282,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { listJobs, downloadZip, downloadImage, previewUrl } from '../api/banner.js'
+import { listJobs, downloadZip, downloadImage, previewUrl, updateJobMeta, deleteJobs } from '../api/banner.js'
 
 const router = useRouter()
 const goDetail = (id) => router.push(`/job/${id}`)
@@ -268,7 +296,18 @@ const errorJob    = ref(null)
 const selectedJob = ref(null)
 const lightboxItem = ref(null)
 
-function selectJob(job)  { selectedJob.value = job }
+const selectedIds    = ref(new Set())
+const editingCell    = ref(null)
+const allCheckboxRef = ref(null)
+const memoEdit       = ref('')
+const memoOriginal   = ref('')
+const isSavingMemo   = ref(false)
+
+function selectJob(job)  {
+  selectedJob.value = job
+  memoEdit.value     = job.memo || ''
+  memoOriginal.value = job.memo || ''
+}
 function closePanel()    { selectedJob.value = null }
 function getPreviewUrl(jobId, fileName) { return previewUrl(jobId, fileName) }
 function openLightbox(result)  { lightboxItem.value = result }
@@ -416,6 +455,78 @@ function resetFilter() {
   page.value = 1
 }
 
+const allSelected  = computed(() => paginated.value.length > 0 && paginated.value.every(j => selectedIds.value.has(j.id)))
+const someSelected = computed(() => !allSelected.value && paginated.value.some(j => selectedIds.value.has(j.id)))
+const memoDirty    = computed(() => memoEdit.value !== memoOriginal.value)
+
+watchEffect(() => {
+  if (allCheckboxRef.value) allCheckboxRef.value.indeterminate = someSelected.value
+})
+
+function toggleAll() {
+  const s = new Set(selectedIds.value)
+  if (allSelected.value) paginated.value.forEach(j => s.delete(j.id))
+  else paginated.value.forEach(j => s.add(j.id))
+  selectedIds.value = s
+}
+
+function toggleRow(jobId) {
+  const s = new Set(selectedIds.value)
+  if (s.has(jobId)) s.delete(jobId); else s.add(jobId)
+  selectedIds.value = s
+}
+
+async function deleteSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  if (!confirm(`선택한 ${ids.length}개 작업을 삭제하시겠습니까?`)) return
+  try {
+    await deleteJobs(ids)
+    jobs.value = jobs.value.filter(j => !ids.includes(j.id))
+    if (selectedJob.value && ids.includes(selectedJob.value.id)) selectedJob.value = null
+    selectedIds.value = new Set()
+    ElMessage.success(`${ids.length}개 작업 삭제됨`)
+  } catch { ElMessage.error('삭제 실패') }
+}
+
+function startEdit(job, field) {
+  editingCell.value = { jobId: job.id, field, value: job[field] || '' }
+}
+
+function cancelEdit() { editingCell.value = null }
+
+async function saveEdit() {
+  if (!editingCell.value) return
+  const { jobId, field, value } = editingCell.value
+  editingCell.value = null
+  const job = jobs.value.find(j => j.id === jobId)
+  if (!job || value === job[field]) return
+  const old = job[field]
+  job[field] = value
+  if (selectedJob.value?.id === jobId) selectedJob.value[field] = value
+  try {
+    await updateJobMeta(jobId, { [field]: value })
+  } catch {
+    job[field] = old
+    if (selectedJob.value?.id === jobId) selectedJob.value[field] = old
+    ElMessage.error('저장 실패')
+  }
+}
+
+async function saveMemo() {
+  if (!selectedJob.value) return
+  isSavingMemo.value = true
+  try {
+    await updateJobMeta(selectedJob.value.id, { memo: memoEdit.value })
+    selectedJob.value.memo = memoEdit.value
+    memoOriginal.value = memoEdit.value
+    const job = jobs.value.find(j => j.id === selectedJob.value.id)
+    if (job) job.memo = memoEdit.value
+    ElMessage.success('메모 저장됨')
+  } catch { ElMessage.error('저장 실패') }
+  finally { isSavingMemo.value = false }
+}
+
 const statusLabel = s => ({ pending: '대기', processing: '처리중', done: '완료', fail: '실패' }[s] ?? s)
 
 function formatDate(d) {
@@ -558,7 +669,7 @@ onMounted(load)
 
 .tbl-head, .tbl-row {
   display: grid;
-  grid-template-columns: 260px 90px 1fr 180px 80px 140px 100px;
+  grid-template-columns: 40px 260px 90px 1fr 180px 80px 140px 100px;
   align-items: center; padding: 0 20px; gap: 8px;
 }
 .tbl-head {
@@ -661,6 +772,53 @@ onMounted(load)
 .invalid-name { font-size: 14px; font-weight: 600; color: #374151; display: block; margin-bottom: 2px; }
 .invalid-msg  { font-size: 13px; color: #EF4444; }
 .dash    { color: #D1D8E0; }
+
+/* 체크박스 */
+.c-chk { display: flex; align-items: center; justify-content: center; }
+.chk   { width: 16px; height: 16px; cursor: pointer; accent-color: #7C3AED; }
+.row-checked { background: #F5F0FF !important; }
+.row-selected { background: #EDE9FF !important; border-left-color: #7C3AED !important; }
+
+/* 선택삭제 버튼 */
+.del-sel-btn {
+  padding: 9px 16px; border-radius: 10px; border: 1.5px solid #DC2626;
+  background: #fff; color: #DC2626; font-size: 14px; font-weight: 700;
+  cursor: pointer; font-family: inherit; white-space: nowrap; transition: all 0.12s;
+}
+.del-sel-btn:hover { background: #DC2626; color: #fff; }
+
+/* 인라인 편집 */
+.inline-edit {
+  width: 100%; padding: 3px 7px; border: 1.5px solid #7C3AED;
+  border-radius: 6px; font-size: 14px; font-family: inherit;
+  outline: none; box-shadow: 0 0 0 3px rgba(124,58,237,0.1);
+}
+
+/* 메모 섹션 */
+.dp-memo-section {
+  margin: 0 16px 14px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+}
+.dp-memo-head {
+  font-size: 13px; font-weight: 700; color: #9B8EC4;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.dp-memo-area {
+  width: 100%; min-height: 80px; padding: 10px 12px;
+  border: 1.5px solid #EDE9FF; border-radius: 10px;
+  font-size: 14px; font-family: inherit; color: #191F28;
+  resize: vertical; outline: none; transition: border-color 0.12s;
+  background: #fff;
+}
+.dp-memo-area:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px rgba(124,58,237,0.08); }
+.dp-memo-area::placeholder { color: #C4B5FD; }
+.dp-memo-save {
+  align-self: flex-end; padding: 7px 18px; border-radius: 8px;
+  border: none; background: #7C3AED; color: #fff;
+  font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+  transition: background 0.12s;
+}
+.dp-memo-save:hover:not(:disabled) { background: #6D28D9; }
+.dp-memo-save:disabled { opacity: 0.6; cursor: not-allowed; }
 .more-btn {
   width: 28px; height: 28px; border-radius: 6px; border: 1.5px solid #EAEDF0;
   background: #fff; color: #B0B8C1; cursor: pointer; font-size: 17px;

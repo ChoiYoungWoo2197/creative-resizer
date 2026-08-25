@@ -69,6 +69,25 @@ public class BannerMongoService {
         mongoTemplate.updateFirst(query, update, BannerJob.class);
     }
 
+    public void updateMeta(String id, String advertiser, String campaignName, String memo) {
+        Query query = Query.query(Criteria.where("id").is(id));
+        Update update = new Update().set("updatedAt", LocalDateTime.now());
+        if (advertiser != null)    update.set("advertiser", advertiser);
+        if (campaignName != null)  update.set("campaignName", campaignName);
+        if (memo != null)          update.set("memo", memo);
+        mongoTemplate.updateFirst(query, update, BannerJob.class);
+    }
+
+    public void deleteById(String id) {
+        Query query = Query.query(Criteria.where("id").is(id));
+        mongoTemplate.remove(query, BannerJob.class);
+    }
+
+    public void deleteByIds(List<String> ids) {
+        Query query = Query.query(Criteria.where("id").in(ids));
+        mongoTemplate.remove(query, BannerJob.class);
+    }
+
     public BannerJob applyCompareToResult(String jobId, String specId,
             String compareId, String candidate, String candidateFilePath) {
         BannerJob job = findById(jobId);

@@ -72,3 +72,7 @@ export const layerFileUrl = (jobId, rel) =>
 
 export const recomposite = (jobId, fileName, layers, textOverrides) =>
   api.post(`/banner/job/${jobId}/recomposite`, { fileName, layers, textOverrides }, { timeout: 60000 })
+
+export const updateJobMeta = (id, data) => api.patch(`/banner/job/${id}`, data)
+export const deleteJob = (id) => api.delete(`/banner/job/${id}`)
+export const deleteJobs = (ids) => api.delete('/banner/jobs', { data: { ids } })

@@ -346,4 +346,16 @@ public class BannerService {
         return bannerMongoService.findAll();
     }
 
+    public void updateMeta(String id, String advertiser, String campaignName, String memo) {
+        bannerMongoService.updateMeta(id, advertiser, campaignName, memo);
+    }
+
+    public void deleteJob(String id) {
+        bannerMongoService.deleteById(id);
+    }
+
+    public void deleteJobs(List<String> ids) {
+        if (ids != null && !ids.isEmpty()) bannerMongoService.deleteByIds(ids);
+    }
+
 }
