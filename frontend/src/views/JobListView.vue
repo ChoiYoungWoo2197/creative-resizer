@@ -1016,7 +1016,8 @@ onMounted(load)
 /* 결과 그리드 */
 .dp-results {
   flex: 1; overflow-y: auto; padding: 0 16px 16px;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  align-content: start; align-items: start;
   scrollbar-width: thin; scrollbar-color: #DDD6FE transparent;
 }
 .dp-results::-webkit-scrollbar { width: 4px; }
