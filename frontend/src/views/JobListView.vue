@@ -48,14 +48,15 @@
         </div>
       </div>
       <div class="stat-card wave-card">
-        <div class="wave-wrap" :style="{ '--fill': processingRate + '%' }">
+        <div class="wave-wrap" :class="{ 'wave-active': processing > 0 }">
           <div class="wave-liquid">
             <div class="wave-crest"></div>
           </div>
           <div class="wave-info">
             <div class="wave-label">진행 중</div>
             <div class="wave-num">{{ processing.toLocaleString() }}</div>
-            <div class="wave-sub">전체의 {{ processingRate }}%</div>
+            <div class="wave-sub" v-if="processing > 0">AI가 열심히 만들고 있습니다...</div>
+            <div class="wave-sub" v-else>대기 중인 작업 없음</div>
           </div>
         </div>
       </div>
@@ -650,20 +651,35 @@ onMounted(load)
 }
 .wave-liquid {
   position: absolute; bottom: 0; left: 0; right: 0;
-  height: var(--fill, 0%);
+  height: 8%;
   background: linear-gradient(180deg, #93C5FD 0%, #3B82F6 100%);
-  transition: height 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: height 1s ease;
+}
+.wave-wrap.wave-active .wave-liquid {
+  animation: waveFill 5s ease-in-out infinite;
+  transition: none;
+}
+@keyframes waveFill {
+  0%   { height: 20%; }
+  25%  { height: 60%; }
+  50%  { height: 35%; }
+  75%  { height: 72%; }
+  100% { height: 20%; }
 }
 .wave-crest {
-  position: absolute; top: -10px; left: -30%;
-  width: 160%; height: 20px;
+  position: absolute; top: -12px; left: -40%;
+  width: 180%; height: 24px;
   border-radius: 50%;
   background: #93C5FD;
-  animation: waveRock 3s ease-in-out infinite;
+}
+.wave-wrap.wave-active .wave-crest {
+  animation: waveRock 2.8s ease-in-out infinite;
 }
 @keyframes waveRock {
-  0%, 100% { transform: translateX(0) scaleY(1); }
-  50%       { transform: translateX(10%) scaleY(1.3); }
+  0%   { transform: translateX(0)   scaleY(1); }
+  33%  { transform: translateX(8%)  scaleY(1.4); }
+  66%  { transform: translateX(-5%) scaleY(0.8); }
+  100% { transform: translateX(0)   scaleY(1); }
 }
 .wave-info {
   position: relative; z-index: 1; text-align: center;
@@ -671,7 +687,7 @@ onMounted(load)
 }
 .wave-label { font-size: 13px; color: #1E40AF; font-weight: 500; margin-bottom: 4px; }
 .wave-num   { font-size: 24px; font-weight: 800; color: #1E3A8A; letter-spacing: -0.5px; line-height: 1.1; margin-bottom: 3px; }
-.wave-sub   { font-size: 12px; color: #3B82F6; }
+.wave-sub   { font-size: 11px; color: #3B82F6; }
 
 /* AI stat card */
 .ai-card {
