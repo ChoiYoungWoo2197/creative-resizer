@@ -542,7 +542,7 @@ function toggleFontStyle(name, style) {
 }
 
 async function loadLayerImages() {
-  const bust = `?t=${Date.now()}`
+  const bust = `&t=${Date.now()}`
   if (layout.value?.bg_file) {
     bgImage.value = await loadImg(layerFileUrl(jobId, layout.value.bg_file) + bust)
   }
