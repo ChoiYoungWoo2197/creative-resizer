@@ -1043,7 +1043,7 @@ onMounted(load)
 
 .dp-result-label {
   padding: 8px 10px 2px; font-size: 11.5px; font-weight: 700;
-  color: #3D2D6E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: #3D2D6E; word-break: break-word; line-height: 1.4;
 }
 .dp-result-size {
   padding: 0 10px 4px; font-size: 10.5px; color: #9B8EC4; font-weight: 500;
