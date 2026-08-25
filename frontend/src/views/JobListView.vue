@@ -686,8 +686,14 @@ onMounted(load)
 }
 .tbl-row:last-child { border-bottom: none; }
 .tbl-row:hover { background: #FAFBFF; }
-.clickable-row { cursor: pointer; }
+.clickable-row { cursor: pointer; position: relative; }
 .clickable-row:hover { background: #F5F3FF; }
+.clickable-row::after {
+  content: '›'; position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+  font-size: 18px; color: #C4B5FD; opacity: 0; transition: opacity 0.12s;
+  pointer-events: none;
+}
+.clickable-row:hover::after { opacity: 1; }
 
 /* 상태별 좌측 accent bar */
 .tbl-row.status-done       { border-left-color: #059669; }
