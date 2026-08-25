@@ -124,7 +124,7 @@
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
           <span class="c-dl">미리보기 | 다운로드</span>
         </div>
-        <div v-for="job in paginated" :key="job.id" class="tbl-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, 'row-checked': selectedIds.has(job.id), ['status-' + job.status]: true }">
+        <div v-for="job in paginated" :key="job.id" class="tbl-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, 'row-checked': selectedIds.has(job.id), 'row-editing': editingCell?.jobId === job.id, ['status-' + job.status]: true }">
           <span class="c-chk" @click.stop>
             <input type="checkbox" class="chk" :checked="selectedIds.has(job.id)" @change="toggleRow(job.id)" />
           </span>
@@ -132,17 +132,27 @@
             <span class="job-id">{{ job.id }}</span>
           </span>
           <span class="c-ad fw" @dblclick.stop="startEdit(job, 'advertiser')">
-            <input v-if="editingCell?.jobId === job.id && editingCell?.field === 'advertiser'"
-              class="inline-edit" v-model="editingCell.value"
-              @blur="saveEdit" @keyup.enter="saveEdit" @keyup.escape="cancelEdit"
-              @click.stop @mousedown.stop autofocus />
+            <template v-if="editingCell?.jobId === job.id && editingCell?.field === 'advertiser'">
+              <input class="inline-edit" v-model="editingCell.value"
+                @keyup.enter="saveEdit" @keyup.escape="cancelEdit"
+                @click.stop @mousedown.stop autofocus />
+              <div class="edit-btns">
+                <button class="edit-cancel-btn" @click.stop="cancelEdit">CANCEL</button>
+                <button class="edit-update-btn" @click.stop="saveEdit">UPDATE</button>
+              </div>
+            </template>
             <template v-else>{{ job.advertiser || '—' }}</template>
           </span>
           <span class="c-camp fw" @dblclick.stop="startEdit(job, 'campaignName')">
-            <input v-if="editingCell?.jobId === job.id && editingCell?.field === 'campaignName'"
-              class="inline-edit" v-model="editingCell.value"
-              @blur="saveEdit" @keyup.enter="saveEdit" @keyup.escape="cancelEdit"
-              @click.stop @mousedown.stop autofocus />
+            <template v-if="editingCell?.jobId === job.id && editingCell?.field === 'campaignName'">
+              <input class="inline-edit" v-model="editingCell.value"
+                @keyup.enter="saveEdit" @keyup.escape="cancelEdit"
+                @click.stop @mousedown.stop autofocus />
+              <div class="edit-btns">
+                <button class="edit-cancel-btn" @click.stop="cancelEdit">CANCEL</button>
+                <button class="edit-update-btn" @click.stop="saveEdit">UPDATE</button>
+              </div>
+            </template>
             <template v-else>{{ job.campaignName || '—' }}</template>
           </span>
           <span class="c-media">
@@ -795,11 +805,29 @@ onMounted(load)
 .del-sel-btn:hover { background: #DC2626; color: #fff; }
 
 /* 인라인 편집 */
+.tbl-row.row-editing { height: auto; align-items: start; padding-top: 12px; padding-bottom: 10px; }
 .inline-edit {
-  width: 100%; padding: 3px 7px; border: 1.5px solid #7C3AED;
+  width: 100%; padding: 4px 8px; border: 1.5px solid #7C3AED;
   border-radius: 6px; font-size: 14px; font-family: inherit;
   outline: none; box-shadow: 0 0 0 3px rgba(124,58,237,0.1);
 }
+.edit-btns {
+  display: flex; gap: 6px; margin-top: 7px; justify-content: flex-end;
+}
+.edit-cancel-btn {
+  padding: 4px 12px; border-radius: 5px; border: 1.5px solid #D1D8E0;
+  background: #fff; color: #6B7684; font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; letter-spacing: 0.3px;
+  transition: all 0.1s;
+}
+.edit-cancel-btn:hover { border-color: #B0B8C1; color: #191F28; }
+.edit-update-btn {
+  padding: 4px 12px; border-radius: 5px; border: none;
+  background: #7C3AED; color: #fff; font-size: 12px; font-weight: 700;
+  cursor: pointer; font-family: inherit; letter-spacing: 0.3px;
+  transition: background 0.1s;
+}
+.edit-update-btn:hover { background: #6D28D9; }
 
 /* 메모 섹션 */
 .dp-memo-section {
