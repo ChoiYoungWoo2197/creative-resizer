@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="layout">
     <header class="header">
       <div class="hdr">
@@ -53,14 +53,14 @@ a { text-decoration: none; }
 .brand-ico {
   width: 32px; height: 32px; border-radius: 8px;
   background: linear-gradient(135deg, #7C3AED, #3B82F6);
-  color: #fff; font-size: 13px; font-weight: 800;
+  color: #fff; font-size: 12px; font-weight: 800;
   display: flex; align-items: center; justify-content: center; letter-spacing: -0.5px;
 }
-.brand-name { font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap; }
+.brand-name { font-size: 16px; font-weight: 700; color: #fff; white-space: nowrap; }
 
 .nav { display: flex; gap: 2px; }
 .nav-link {
-  font-size: 16px; font-weight: 500; color: rgba(255,255,255,0.45);
+  font-size: 15px; font-weight: 500; color: rgba(255,255,255,0.45);
   padding: 6px 14px; border-radius: 8px; transition: all 0.12s;
 }
 .nav-link:hover  { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.07); }
@@ -70,24 +70,24 @@ a { text-decoration: none; }
 .help-btn {
   display: flex; align-items: center; gap: 6px;
   background: none; border: none; cursor: pointer; font-family: inherit;
-  color: rgba(255,255,255,0.45); font-size: 15px; padding: 0;
+  color: rgba(255,255,255,0.45); font-size: 14px; padding: 0;
 }
 .help-btn:hover { color: rgba(255,255,255,0.8); }
 .qmark {
   width: 17px; height: 17px; border-radius: 50%;
   border: 1.5px solid rgba(255,255,255,0.3);
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700;
+  font-size: 11px; font-weight: 700;
 }
 .user { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .user-av {
   width: 30px; height: 30px; border-radius: 50%;
   background: linear-gradient(135deg, #10B981, #059669);
-  color: #fff; font-size: 15px; font-weight: 700;
+  color: #fff; font-size: 14px; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
 }
-.user-nm { font-size: 15px; color: rgba(255,255,255,0.65); }
-.user-nm small { font-size: 12px; }
+.user-nm { font-size: 14px; color: rgba(255,255,255,0.65); }
+.user-nm small { font-size: 11px; }
 
 .main {
   position: relative;

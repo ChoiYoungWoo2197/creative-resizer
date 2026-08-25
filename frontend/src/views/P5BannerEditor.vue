@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="editor-wrap">
     <!-- ── 상단 툴바 ─────────────────────────────────────────────────────── -->
     <div class="editor-bar">
@@ -864,12 +864,12 @@ async function saveAndRecomposite() {
 }
 .back-btn {
   background: none; border: 1px solid #E5E5E5; border-radius: 6px;
-  padding: 5px 10px; cursor: pointer; font-size: 14px; color: #333;
+  padding: 5px 10px; cursor: pointer; font-size: 13px; color: #333;
   white-space: nowrap;
 }
 .back-btn:hover { background: #F5F5F5; }
 .editor-title {
-  flex: 1; font-size: 14px; font-weight: 600; color: #333;
+  flex: 1; font-size: 13px; font-weight: 600; color: #333;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .editor-actions { display: flex; align-items: center; gap: 6px; }
@@ -877,27 +877,27 @@ async function saveAndRecomposite() {
 
 .btn-tool {
   background: none; border: 1px solid transparent; border-radius: 6px;
-  padding: 5px 9px; cursor: pointer; font-size: 16px; color: #333;
+  padding: 5px 9px; cursor: pointer; font-size: 15px; color: #333;
   transition: background 0.1s;
 }
 .btn-tool:hover:not(:disabled) { background: #F0F0F0; border-color: #E5E5E5; }
 .btn-tool:disabled { opacity: 0.35; cursor: default; }
 
 .zoom-display {
-  font-size: 14px; color: #888; min-width: 38px;
+  font-size: 13px; color: #888; min-width: 38px;
   text-align: center; flex-shrink: 0;
 }
 
 .btn-reset {
   background: none; border: 1px solid #E5E5E5; border-radius: 6px;
-  padding: 5px 12px; cursor: pointer; font-size: 14px; color: #333;
+  padding: 5px 12px; cursor: pointer; font-size: 13px; color: #333;
 }
 .btn-reset:hover:not(:disabled) { background: #F5F5F5; }
 .btn-reset:disabled { opacity: 0.4; cursor: default; }
 
 .btn-save {
   background: #0D99FF; color: #fff; border: none; border-radius: 6px;
-  padding: 6px 14px; cursor: pointer; font-size: 14px; font-weight: 600;
+  padding: 6px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
   display: flex; align-items: center; gap: 6px; white-space: nowrap;
   transition: background 0.15s;
 }
@@ -913,7 +913,7 @@ async function saveAndRecomposite() {
 /* ── 로딩 / 오류 ─────────────────────────────────────────────────────────────── */
 .center-state {
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; flex: 1; gap: 12px; color: #888; font-size: 15px;
+  justify-content: center; flex: 1; gap: 12px; color: #888; font-size: 14px;
 }
 .spinner {
   width: 28px; height: 28px;
@@ -924,8 +924,8 @@ async function saveAndRecomposite() {
   margin: 40px auto; max-width: 500px;
   background: #FFF2F2; border: 1px solid #FFCDD2; border-radius: 8px; padding: 24px;
 }
-.error-title { font-weight: 700; color: #C62828; margin-bottom: 8px; font-size: 16px; }
-.error-msg   { font-size: 15px; color: #7F1D1D; }
+.error-title { font-weight: 700; color: #C62828; margin-bottom: 8px; font-size: 15px; }
+.error-msg   { font-size: 14px; color: #7F1D1D; }
 
 /* ── 3단 레이아웃 ────────────────────────────────────────────────────────────── */
 .canvas-area { display: flex; flex: 1; overflow: hidden; }
@@ -953,7 +953,7 @@ async function saveAndRecomposite() {
 
 /* ── 패널 공통 ───────────────────────────────────────────────────────────────── */
 .panel-section-title {
-  font-size: 13px; font-weight: 700; color: #888;
+  font-size: 12px; font-weight: 700; color: #888;
   text-transform: uppercase; letter-spacing: 0.06em;
   padding: 12px 14px 8px; border-bottom: 1px solid #E5E5E5;
   position: sticky; top: 0; background: #FFFFFF; z-index: 1;
@@ -962,7 +962,7 @@ async function saveAndRecomposite() {
 /* ── Layers 패널 아이템 ──────────────────────────────────────────────────────── */
 .layer-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 7px 12px; cursor: pointer; font-size: 14px; color: #333;
+  padding: 7px 12px; cursor: pointer; font-size: 13px; color: #333;
   border-bottom: 1px solid #F5F5F5; user-select: none;
 }
 .layer-item:hover  { background: #F5F5F5; }
@@ -978,19 +978,19 @@ async function saveAndRecomposite() {
 .layer-dot.role-title-group  { background: #0D99FF; }
 .layer-dot.role-product-group{ background: #10B981; }
 
-.layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 
 /* ── PSD 트리 뷰 ─────────────────────────────────────────────────────────────── */
 .tree-item {
   display: flex; align-items: center; gap: 5px;
   padding-top: 5px; padding-bottom: 5px; padding-right: 10px;
-  font-size: 14px; border-bottom: 1px solid #F5F5F5; user-select: none;
+  font-size: 13px; border-bottom: 1px solid #F5F5F5; user-select: none;
 }
 .tree-item.tree-rendered { cursor: pointer; color: #333; }
 .tree-item.tree-rendered:hover { background: #F5F5F5; }
 .tree-item.tree-rendered.active { background: #E5F2FF; }
 .tree-item.tree-dim { cursor: default; color: #BBB; }
-.tree-chevron { font-size: 11px; width: 12px; flex-shrink: 0; color: #AAA; }
+.tree-chevron { font-size: 10px; width: 12px; flex-shrink: 0; color: #AAA; }
 .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vis-btn {
   background: none; border: none; padding: 0; cursor: pointer;
@@ -1004,7 +1004,7 @@ async function saveAndRecomposite() {
 .layer-order-btns { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
 .layer-order-btn {
   background: none; border: none; padding: 0 2px; cursor: pointer;
-  font-size: 11px; color: #CCC; line-height: 1;
+  font-size: 10px; color: #CCC; line-height: 1;
 }
 .layer-order-btn:hover:not(:disabled) { color: #333; }
 .layer-order-btn:disabled { opacity: 0.25; cursor: default; }
@@ -1012,55 +1012,55 @@ async function saveAndRecomposite() {
 /* ── Design 패널 ─────────────────────────────────────────────────────────────── */
 .design-meta {
   display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px 4px; font-size: 14px; color: #333;
+  padding: 10px 14px 4px; font-size: 13px; color: #333;
 }
 .design-meta-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .design-role-badge {
   display: inline-block; margin: 0 14px 10px;
   padding: 2px 8px; border-radius: 10px;
-  background: #F0F0F0; color: #888; font-size: 12px; font-weight: 600;
+  background: #F0F0F0; color: #888; font-size: 11px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 
 .design-group-label {
-  font-size: 12px; font-weight: 700; color: #888;
+  font-size: 11px; font-weight: 700; color: #888;
   text-transform: uppercase; letter-spacing: 0.06em;
   padding: 10px 14px 4px;
 }
 .design-row { display: flex; gap: 8px; padding: 0 14px 6px; }
 .design-field { flex: 1; display: flex; flex-direction: column; gap: 3px; }
 .design-field label {
-  font-size: 12px; color: #888; font-weight: 600;
+  font-size: 11px; color: #888; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 .design-field input {
   border: 1px solid #E5E5E5; border-radius: 5px;
-  padding: 5px 8px; font-size: 14px; color: #333; width: 100%; box-sizing: border-box;
+  padding: 5px 8px; font-size: 13px; color: #333; width: 100%; box-sizing: border-box;
   background: #FAFAFA;
 }
 .design-field input:focus { outline: none; border-color: #0D99FF; background: #FFFFFF; }
 
 .design-empty {
-  padding: 24px 14px; font-size: 14px; color: #888; text-align: center;
+  padding: 24px 14px; font-size: 13px; color: #888; text-align: center;
 }
 
 /* ── Text 오버라이드 ─────────────────────────────────────────────────────────── */
 .design-text-area { padding: 0 14px 10px; }
 .design-row-full { padding: 0 14px 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .design-field-label {
-  font-size: 12px; color: #888; font-weight: 600;
+  font-size: 11px; color: #888; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
 }
 .font-select {
   flex: 1; border: 1px solid #E5E5E5; border-radius: 5px;
-  padding: 5px 8px; font-size: 13px; color: #333;
+  padding: 5px 8px; font-size: 12px; color: #333;
   background: #FAFAFA; cursor: pointer; min-width: 0;
 }
 .font-select:focus { outline: none; border-color: #0D99FF; }
 .btn-group { display: flex; gap: 2px; }
 .btn-fs {
   background: #F5F5F5; border: 1px solid #E5E5E5; border-radius: 4px;
-  padding: 3px 7px; font-size: 13px; cursor: pointer; color: #555;
+  padding: 3px 7px; font-size: 12px; cursor: pointer; color: #555;
   transition: background 0.1s; min-width: 26px; text-align: center;
 }
 .btn-fs:hover { background: #EBEBEB; }
@@ -1072,17 +1072,17 @@ async function saveAndRecomposite() {
 .text-override-input {
   width: 100%; box-sizing: border-box;
   border: 1px solid #E5E5E5; border-radius: 5px;
-  padding: 7px 9px; font-size: 14px; color: #333;
+  padding: 7px 9px; font-size: 13px; color: #333;
   resize: vertical; font-family: inherit; line-height: 1.5;
   background: #FAFAFA;
 }
 .text-override-input:focus { outline: none; border-color: #0D99FF; background: #FFFFFF; }
 .text-override-hint {
-  margin-top: 5px; font-size: 12px; color: #0D99FF; font-weight: 600;
+  margin-top: 5px; font-size: 11px; color: #0D99FF; font-weight: 600;
 }
 .text-badge {
   flex-shrink: 0; background: #0D99FF; color: #fff;
-  font-size: 11px; font-weight: 700; border-radius: 3px;
+  font-size: 10px; font-weight: 700; border-radius: 3px;
   padding: 1px 4px; line-height: 1.4;
 }
 
@@ -1090,7 +1090,7 @@ async function saveAndRecomposite() {
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: #1A1A1A; color: #fff; padding: 10px 20px;
-  border-radius: 8px; font-size: 15px; z-index: 999;
+  border-radius: 8px; font-size: 14px; z-index: 999;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25); white-space: nowrap;
 }
 </style>
