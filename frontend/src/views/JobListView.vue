@@ -586,7 +586,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-wrap { max-width: 1200px; margin: 0 auto; padding: 32px 28px 60px; }
+.page-wrap { padding: 32px 40px 60px; }
 
 /* header */
 .page-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
