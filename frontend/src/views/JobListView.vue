@@ -124,7 +124,7 @@
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
           <span class="c-dl">다운로드</span>
         </div>
-        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, 'row-checked': selectedIds.has(job.id), ['status-' + job.status]: true }" @click="selectJob(job)">
+        <div v-for="job in paginated" :key="job.id" class="tbl-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, 'row-checked': selectedIds.has(job.id), ['status-' + job.status]: true }">
           <span class="c-chk" @click.stop>
             <input type="checkbox" class="chk" :checked="selectedIds.has(job.id)" @change="toggleRow(job.id)" />
           </span>
@@ -156,6 +156,7 @@
           </span>
           <span class="c-date gray">{{ formatDate(job.createdAt) }}</span>
           <span class="c-dl" @click.stop>
+            <button class="preview-btn" @click="selectJob(job)" title="미리보기">👁</button>
             <button v-if="job.status === 'done'" class="dl-btn" @click="download(job)">ZIP ↓</button>
             <span v-else-if="job.status === 'fail'" class="err-txt" @click.stop="openError(job)">오류 ↗</span>
             <span v-else class="dash">—</span>
@@ -669,7 +670,7 @@ onMounted(load)
 
 .tbl-head, .tbl-row {
   display: grid;
-  grid-template-columns: 40px 260px 90px 1fr 180px 80px 140px 100px;
+  grid-template-columns: 40px 260px 90px 1fr 180px 80px 140px 130px;
   align-items: center; padding: 0 20px; gap: 8px;
 }
 .tbl-head {
@@ -686,14 +687,14 @@ onMounted(load)
 }
 .tbl-row:last-child { border-bottom: none; }
 .tbl-row:hover { background: #FAFBFF; }
-.clickable-row { cursor: pointer; position: relative; }
-.clickable-row:hover { background: #F5F3FF; }
-.clickable-row::after {
-  content: '›'; position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
-  font-size: 18px; color: #C4B5FD; opacity: 0; transition: opacity 0.12s;
-  pointer-events: none;
+.c-dl { display: flex; align-items: center; gap: 6px; }
+.preview-btn {
+  width: 30px; height: 28px; border-radius: 7px; border: 1.5px solid #DDD6FE;
+  background: #F5F3FF; color: #7C3AED; font-size: 14px;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: all 0.12s; flex-shrink: 0;
 }
-.clickable-row:hover::after { opacity: 1; }
+.preview-btn:hover { background: #7C3AED; border-color: #7C3AED; filter: grayscale(0) brightness(1.2); }
 
 /* 상태별 좌측 accent bar */
 .tbl-row.status-done       { border-left-color: #059669; }
