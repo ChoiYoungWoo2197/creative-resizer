@@ -704,7 +704,7 @@ onMounted(load)
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   transition: all 0.12s; flex-shrink: 0;
 }
-.preview-btn:hover { background: #7C3AED; border-color: #7C3AED; filter: grayscale(0) brightness(1.2); }
+.preview-btn:hover { background: #7C3AED; border-color: #7C3AED; }
 
 /* 상태별 좌측 accent bar */
 .tbl-row.status-done       { border-left-color: #059669; }
