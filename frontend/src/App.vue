@@ -33,6 +33,15 @@ body {
   color: #191F28;
   -webkit-font-smoothing: antialiased;
 }
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: url('/main_bg.png') center / cover no-repeat;
+  opacity: 0.15;
+  z-index: -1;
+  pointer-events: none;
+}
 a { text-decoration: none; }
 </style>
 
@@ -89,5 +98,10 @@ a { text-decoration: none; }
 .user-nm { font-size: 13px; color: rgba(255,255,255,0.65); }
 .user-nm small { font-size: 10px; }
 
-.main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+.main {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+  background: rgba(245, 246, 248, 0.82);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
 </style>
