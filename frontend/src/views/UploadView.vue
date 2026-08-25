@@ -1809,7 +1809,7 @@ onMounted(loadSpecs)
   background-image: url('/main_bg2.png');
   background-size: cover;
   background-position: center;
-  opacity: 0.35;
+  opacity: 0.2;
   z-index: 0;
   pointer-events: none;
   animation: slowPulse 40s ease-in-out infinite alternate;
