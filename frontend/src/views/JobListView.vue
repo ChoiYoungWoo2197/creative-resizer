@@ -118,7 +118,7 @@
           <span class="c-date" @click="sort('createdAt')">생성일 <span class="sort-ico">↕</span></span>
           <span class="c-dl">다운로드</span>
         </div>
-        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id }" @click="selectJob(job)">
+        <div v-for="job in paginated" :key="job.id" class="tbl-row clickable-row" :class="{ 'row-selected': selectedJob && selectedJob.id === job.id, ['status-' + job.status]: true }" @click="selectJob(job)">
           <span class="c-id">
             <span class="job-id">{{ job.id }}</span>
           </span>
@@ -536,7 +536,7 @@ onMounted(load)
   font-size: 13px; font-family: inherit; outline: none; color: #191F28;
   transition: border-color 0.12s;
 }
-.search-input:focus { border-color: #7C3AED; }
+.search-input:focus { border-color: #7C3AED; box-shadow: 0 0 0 3px rgba(124,58,237,0.08); }
 .search-input::placeholder { color: #C4CAD0; }
 .filter-select {
   padding: 9px 12px; border: 1.5px solid #EAEDF0; border-radius: 10px;
@@ -570,12 +570,19 @@ onMounted(load)
 .sort-ico { font-size: 10px; opacity: 0.5; }
 .tbl-row {
   height: 52px; border-bottom: 1px solid #F5F6F8; font-size: 13px; color: #191F28;
-  transition: background 0.1s;
+  border-left: 3px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .tbl-row:last-child { border-bottom: none; }
 .tbl-row:hover { background: #FAFBFF; }
 .clickable-row { cursor: pointer; }
 .clickable-row:hover { background: #F5F3FF; }
+
+/* 상태별 좌측 accent bar */
+.tbl-row.status-done       { border-left-color: #059669; }
+.tbl-row.status-fail       { border-left-color: #DC2626; }
+.tbl-row.status-processing { border-left-color: #D97706; }
+.tbl-row.status-pending    { border-left-color: #D1D8E0; }
 
 .job-id { font-family: monospace; font-size: 12px; color: #6B7684; }
 .fw { font-weight: 500; }
@@ -686,7 +693,7 @@ onMounted(load)
 .lightbox-size { font-size: 12px; color: rgba(255,255,255,0.5); }
 
 /* 선택된 행 강조 */
-.row-selected { background: #F5F0FF !important; }
+.row-selected { background: #F0EBFF !important; border-left-color: #7C3AED !important; }
 
 /* 우측 디테일 패널 */
 /* ── 우측 패널 ─────────────────────────────── */
