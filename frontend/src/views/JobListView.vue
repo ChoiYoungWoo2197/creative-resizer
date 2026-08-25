@@ -714,6 +714,7 @@ onMounted(load)
 
 .job-id { font-family: monospace; font-size: 13px; color: #6B7684; }
 .fw { font-weight: 500; }
+.c-ad, .c-camp { user-select: none; }
 .gray { color: #8B95A1; font-size: 13px; }
 
 .media-tag {
