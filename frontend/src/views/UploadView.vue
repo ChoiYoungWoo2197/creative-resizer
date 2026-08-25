@@ -1466,7 +1466,7 @@ async function loadSpecs() {
   try {
     const { data } = await listBannerSpecs()
     allSpecs.value = data
-    for (const s of data) { if (!(s.media in expandedPlatforms)) expandedPlatforms[s.media] = false }
+    for (const s of data) { if (!(s.media in expandedPlatforms)) expandedPlatforms[s.media] = s.media === 'naver' }
     // API에 존재하지 않는 레거시 ID 자동 제거
     const availableIds = new Set(data.map(s => s.id))
     selectedSpecIds.value = selectedSpecIds.value.filter(id => availableIds.has(id))
