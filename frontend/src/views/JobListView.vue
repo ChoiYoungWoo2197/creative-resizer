@@ -1027,9 +1027,10 @@ onMounted(load)
 .dp-empty { grid-column: 1/-1; padding: 40px 0; text-align: center; color: #C4B5FD; font-size: 14px; }
 
 .dp-result-card {
-  border: 1.5px solid #EDE9FF; border-radius: 14px; overflow: hidden;
+  border: 1.5px solid #EDE9FF; border-radius: 14px;
   background: #fff; box-shadow: 0 2px 8px rgba(124,58,237,0.06);
   transition: border-color 0.15s, box-shadow 0.15s;
+  overflow: visible;
 }
 .dp-result-card:hover {
   border-color: #7C3AED;
@@ -1039,6 +1040,7 @@ onMounted(load)
 .dp-thumb-wrap {
   position: relative; width: 100%; aspect-ratio: 3/2; overflow: hidden;
   background: #F0EDFF; display: flex; align-items: center; justify-content: center;
+  border-radius: 12px 12px 0 0;
 }
 .dp-thumb { width: 100%; height: 100%; object-fit: contain; display: block; }
 
