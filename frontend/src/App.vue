@@ -37,10 +37,18 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: url('/main_bg2.png') center / cover no-repeat;
+  background-image: url('/main_bg2.png');
+  background-size: cover;
+  background-position: center;
   opacity: 0.15;
   z-index: -1;
   pointer-events: none;
+  animation: floatAndPulse 18s ease-in-out infinite alternate;
+}
+@keyframes floatAndPulse {
+  0%   { transform: scale(1)    translate(0,     0); }
+  50%  { transform: scale(1.03) translate(-10px, -8px); }
+  100% { transform: scale(1.05) translate(8px,   6px); }
 }
 a { text-decoration: none; }
 </style>

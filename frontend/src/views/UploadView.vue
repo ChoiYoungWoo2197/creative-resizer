@@ -1810,10 +1810,27 @@ onMounted(loadSpecs)
 
 /* ===== right panel ===== */
 .right-panel {
+  position: relative;
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
-  background:
-    linear-gradient(rgba(249,248,253,0.88), rgba(249,248,253,0.88)),
-    url('/main_bg2.png') center / cover no-repeat;
+  background: #F9F8FD;
+}
+.right-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('/main_bg2.png');
+  background-size: cover;
+  background-position: center;
+  opacity: 0.35;
+  z-index: 0;
+  pointer-events: none;
+  animation: floatAndPulse 18s ease-in-out infinite alternate;
+}
+.right-panel > * { position: relative; z-index: 1; }
+@keyframes floatAndPulse {
+  0%   { transform: scale(1)    translate(0,     0); }
+  50%  { transform: scale(1.03) translate(-10px, -8px); }
+  100% { transform: scale(1.05) translate(8px,   6px); }
 }
 .right-scroll { flex: 1; overflow-y: auto; padding: 28px 28px 20px; }
 
