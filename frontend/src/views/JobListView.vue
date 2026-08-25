@@ -48,14 +48,14 @@
         </div>
       </div>
       <div class="stat-card wave-card">
-        <div class="wave-wrap" :style="{ '--fill': doneRate + '%' }">
+        <div class="wave-wrap" :style="{ '--fill': processingRate + '%' }">
           <div class="wave-liquid">
             <div class="wave-crest"></div>
           </div>
           <div class="wave-info">
-            <div class="wave-label">완료율</div>
-            <div class="wave-num">{{ doneRate }}%</div>
-            <div class="wave-sub">{{ done }} / {{ jobs.length }}건</div>
+            <div class="wave-label">진행 중</div>
+            <div class="wave-num">{{ processing.toLocaleString() }}</div>
+            <div class="wave-sub">전체의 {{ processingRate }}%</div>
           </div>
         </div>
       </div>
