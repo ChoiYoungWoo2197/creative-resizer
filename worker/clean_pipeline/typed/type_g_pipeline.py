@@ -82,6 +82,10 @@ def run(
         job_id=job_id,
         logger=logger,
         psd=psd_obj,
+        safe_top=spec.safe_top,
+        safe_right=spec.safe_right,
+        safe_bottom=spec.safe_bottom,
+        safe_left=spec.safe_left,
     )
     stage_results.append(sr_bg)
     if sr_bg.status == PipelineStatus.FAIL:

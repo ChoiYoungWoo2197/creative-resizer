@@ -29,8 +29,15 @@ def extract_and_resize(
     job_id: str,
     logger: PipelineLogger,
     psd=None,
+    safe_top: int = 0,
+    safe_right: int = 0,
+    safe_bottom: int = 0,
+    safe_left: int = 0,
 ) -> tuple[StageResult, dict | None]:
     """bg 레이어 추출 후 타겟 규격으로 확장.
+
+    safe_zone(safe_top/right/bottom/left > 0)이 있으면 flux_outpainter(Cover Scale + outpaint),
+    없으면 기존 smart_resizer(fal-ai/smart-resize)를 사용한다.
 
     Returns (StageResult, result_dict):
       result_dict = {"bg_path": str, "resized_path": str, "is_smart_resized": bool}
@@ -73,6 +80,28 @@ def extract_and_resize(
             STAGE.value, "(skip-fal)",
             f"bg 규격({bg_img.width}x{bg_img.height}) == target → fal-ai 스킵 (직접 복사)",
         )
+    elif safe_top > 0 or safe_right > 0 or safe_bottom > 0 or safe_left > 0:
+        # safe_zone 있음 → Cover Scale + flux-2-pro/outpaint
+        from clean_pipeline.typed import flux_outpainter
+
+        _, sr_result = flux_outpainter.outpaint(
+            bg_path=bg_path,
+            target_width=target_width,
+            target_height=target_height,
+            safe_top=safe_top,
+            safe_right=safe_right,
+            safe_bottom=safe_bottom,
+            safe_left=safe_left,
+            output_dir=output_dir,
+            job_id=job_id,
+            logger=logger,
+        )
+
+        if sr_result is None:
+            return _fail(logger, "BG_RESIZE_FAILED", "flux-outpaint 실패")
+
+        resized_path = sr_result["resized_path"]
+        is_smart = sr_result["is_smart_resized"]
     else:
         from clean_pipeline.typed import smart_resizer
 
