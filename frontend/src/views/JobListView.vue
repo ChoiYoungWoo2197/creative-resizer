@@ -498,6 +498,11 @@ onMounted(load)
   background: #fff; border-radius: 14px; padding: 18px 20px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05); display: flex; gap: 14px; align-items: flex-start;
   border: 1px solid #F0F2F4;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.09);
 }
 .stat-ico {
   width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;

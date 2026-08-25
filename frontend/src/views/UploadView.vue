@@ -11,6 +11,7 @@
             <span class="sec-title">배너 업로드 <span class="sec-hint">(PSD)</span></span>
             <span class="chevron" :class="{ up: uploadOpen }">›</span>
           </div>
+          <transition name="expand">
           <div v-show="uploadOpen" class="sec-body">
             <div v-if="!form.psdFile"
               class="drop-zone" :class="{ dragover }"
@@ -140,6 +141,7 @@
               </div>
             </div>
           </div>
+          </transition>
         </div>
 
         <!-- Media guide -->
@@ -148,6 +150,7 @@
             <span class="sec-title">매체 가이드 <span class="info-badge">ⓘ</span></span>
             <span class="chevron" :class="{ up: mediaOpen }">›</span>
           </div>
+          <transition name="expand">
           <div v-show="mediaOpen">
             <div v-if="specsLoading" class="side-loading">불러오는 중...</div>
             <div v-else-if="naverLoadError" class="spec-load-error">
@@ -167,6 +170,7 @@
                   <span class="pf-cnt">({{ platformSelectedCount(platform) }}/{{ groupedSpecs[platform].length }})</span>
                   <span class="pf-chv" :class="{ open: expandedPlatforms[platform] }">›</span>
                 </div>
+                <transition name="expand">
                 <div v-show="expandedPlatforms[platform]" class="spec-items">
                   <div v-for="spec in (expandedAllSpecs[platform] ? groupedSpecs[platform] : groupedSpecs[platform].slice(0, 5))"
                     :key="spec.id"
@@ -188,9 +192,11 @@
                     ∧ 접기
                   </button>
                 </div>
+                </transition>
               </div>
             </template>
           </div>
+          </transition>
         </div>
 
         <!-- 커스텀 사이즈 -->
@@ -199,6 +205,7 @@
             <span class="sec-title">커스텀 사이즈</span>
             <span class="chevron" :class="{ up: customOpen }">›</span>
           </div>
+          <transition name="expand">
           <div v-show="customOpen" class="sec-body">
             <div class="custom-inputs">
               <input class="custom-inp" v-model.number="customForm.width" type="number" placeholder="너비 (px)" min="1" />
@@ -215,6 +222,7 @@
               </div>
             </div>
           </div>
+          </transition>
         </div>
 
         <!-- AI 자동 재구성 -->
@@ -223,6 +231,7 @@
             <span class="sec-title">렌더링 옵션</span>
             <span class="chevron" :class="{ up: advOpen }">›</span>
           </div>
+          <transition name="expand">
           <div v-show="advOpen" class="sec-body adv-body">
             <div class="ai-only-notice">
               <span class="ai-only-icon">✦</span>
@@ -240,6 +249,7 @@
               </div>
             </div>
           </div>
+          </transition>
         </div>
 
       </div>
@@ -1501,6 +1511,12 @@ onMounted(loadSpecs)
 .sec-head:hover { background: #FAFBFC; }
 .sec-title { font-size: 12.5px; font-weight: 600; color: #333D4B; }
 .sec-hint  { font-weight: 400; color: #B0B8C1; }
+/* 섹션 expand/collapse 애니메이션 */
+.expand-enter-active { transition: opacity 0.22s ease, transform 0.22s ease; }
+.expand-leave-active { transition: opacity 0.15s ease; }
+.expand-enter-from   { opacity: 0; transform: translateY(-6px); }
+.expand-leave-to     { opacity: 0; }
+
 .info-badge { color: #B0B8C1; font-size: 11px; }
 .chevron { font-size: 15px; color: #C4CAD4; transform: rotate(90deg); display: inline-block; transition: transform 0.18s; }
 .chevron.up { transform: rotate(-90deg); }
@@ -1508,11 +1524,12 @@ onMounted(loadSpecs)
 
 /* drop zone */
 .drop-zone {
-  border: 1.5px dashed rgba(124,58,237,0.35); border-radius: 10px;
-  background: rgba(124,58,237,0.04); padding: 22px 16px; text-align: center;
-  cursor: pointer; transition: all 0.12s; margin-bottom: 12px;
+  border: 2px dashed rgba(124,58,237,0.3); border-radius: 10px;
+  background: rgba(124,58,237,0.03); padding: 22px 16px; text-align: center;
+  cursor: pointer; transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease; margin-bottom: 12px;
 }
-.drop-zone:hover, .drop-zone.dragover { border-color: #7C3AED; background: #F5F0FF; }
+.drop-zone:hover { border-color: #7C3AED; background: #F5F0FF; box-shadow: 0 0 0 4px rgba(124,58,237,0.07); }
+.drop-zone.dragover { border-color: #7C3AED; background: #EDE9FF; box-shadow: 0 0 0 4px rgba(124,58,237,0.12); }
 .drop-ico-wrap {
   width: 44px; height: 44px; border-radius: 50%;
   background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(59,130,246,0.08));
@@ -1638,9 +1655,9 @@ onMounted(loadSpecs)
 .pf-chv.open { transform: rotate(-90deg); }
 
 .spec-items { background: #FAFBFC; padding: 2px 0 4px 26px; }
-.spec-item { display: flex; align-items: center; gap: 7px; padding: 7px 14px 7px 0; cursor: pointer; border-radius: 6px; transition: background 0.1s; }
+.spec-item { display: flex; align-items: center; gap: 7px; padding: 7px 14px 7px 2px; cursor: pointer; border-radius: 6px; border-left: 2px solid transparent; transition: background 0.1s, border-color 0.15s; }
 .spec-item:hover { background: #F0EEFF; }
-.spec-item.on    { background: #EDE9FF; }
+.spec-item.on    { background: #EDE9FF; border-left-color: #7C3AED; padding-left: 0; }
 .sp-name { font-size: 12px; color: #4E5968; flex: 1; }
 .sp-dim  { font-size: 11px; color: #B0B8C1; flex-shrink: 0; }
 
