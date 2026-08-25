@@ -47,14 +47,16 @@
           <div class="stat-sub">{{ failRate }}%</div>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-ico" style="background:#DBEAFE">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#2563EB" stroke-width="2"/><path d="M12 7v5l3 3" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <div class="stat-body">
-          <div class="stat-label">진행 중</div>
-          <div class="stat-num" style="color:#2563EB">{{ processing.toLocaleString() }}</div>
-          <div class="stat-sub">{{ processingRate }}%</div>
+      <div class="stat-card wave-card">
+        <div class="wave-wrap" :style="{ '--fill': doneRate + '%' }">
+          <div class="wave-liquid">
+            <div class="wave-crest"></div>
+          </div>
+          <div class="wave-info">
+            <div class="wave-label">완료율</div>
+            <div class="wave-num">{{ doneRate }}%</div>
+            <div class="wave-sub">{{ done }} / {{ jobs.length }}건</div>
+          </div>
         </div>
       </div>
       <div class="stat-card ai-card">
@@ -637,6 +639,39 @@ onMounted(load)
 .stat-label { font-size: 13px; color: #8B95A1; font-weight: 500; margin-bottom: 4px; }
 .stat-num   { font-size: 23px; font-weight: 800; color: #191F28; letter-spacing: -0.5px; line-height: 1.1; margin-bottom: 3px; }
 .stat-sub   { font-size: 12px; color: #B0B8C1; }
+
+/* wave progress card */
+.wave-card { padding: 0 !important; overflow: hidden; }
+.wave-wrap {
+  position: relative; width: 100%; height: 100%; min-height: 90px;
+  overflow: hidden; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+  background: #F0F7FF;
+}
+.wave-liquid {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: var(--fill, 0%);
+  background: linear-gradient(180deg, #93C5FD 0%, #3B82F6 100%);
+  transition: height 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.wave-crest {
+  position: absolute; top: -10px; left: -30%;
+  width: 160%; height: 20px;
+  border-radius: 50%;
+  background: #93C5FD;
+  animation: waveRock 3s ease-in-out infinite;
+}
+@keyframes waveRock {
+  0%, 100% { transform: translateX(0) scaleY(1); }
+  50%       { transform: translateX(10%) scaleY(1.3); }
+}
+.wave-info {
+  position: relative; z-index: 1; text-align: center;
+  text-shadow: 0 1px 3px rgba(255,255,255,0.6);
+}
+.wave-label { font-size: 13px; color: #1E40AF; font-weight: 500; margin-bottom: 4px; }
+.wave-num   { font-size: 24px; font-weight: 800; color: #1E3A8A; letter-spacing: -0.5px; line-height: 1.1; margin-bottom: 3px; }
+.wave-sub   { font-size: 12px; color: #3B82F6; }
 
 /* AI stat card */
 .ai-card {
