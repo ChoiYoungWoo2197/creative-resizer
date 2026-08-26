@@ -39,6 +39,10 @@ def composite_elements(
     job_id: str,
     logger: PipelineLogger,
     psd=None,
+    sz_scaled_w: int | None = None,
+    sz_scaled_h: int | None = None,
+    sz_pad_left: int | None = None,
+    sz_pad_top: int | None = None,
 ) -> tuple[StageResult, dict | None]:
     """비-bg 레이어를 letterbox 변환 좌표로 배경에 합성.
 
@@ -52,19 +56,39 @@ def composite_elements(
         f"element composite src={source_w}x{source_h} -> {target_w}x{target_h}",
     )
 
-    # ── 1. 레이아웃 모드 결정 + AP_LAYOUT 기준 letterbox 계수 ────────────────
+    # ── 1. 레이아웃 모드 결정 + letterbox 계수 계산 ──────────────────────────
     engine = SmartLayoutEngine(
         source_size=(source_w, source_h),
         target_size=(target_w, target_h),
     )
     mode = engine.determine_mode()
-    S = min(target_w / source_w, target_h / source_h)
-    Ox = (target_w - source_w * S) / 2
-    Oy = (target_h - source_h * S) / 2
-    print(
-        f"[{STAGE.value}][MODE] {mode} S={S:.4f} Ox={Ox:.1f} Oy={Oy:.1f}",
-        flush=True,
+
+    safe_zone_mode = (
+        sz_scaled_w is not None and sz_scaled_h is not None
+        and sz_pad_left is not None and sz_pad_top is not None
     )
+
+    if safe_zone_mode:
+        # P3 outpaint와 동일한 좌표계 사용:
+        # 원본을 sz_scaled 컨테이너에 letterbox → (pad_left, pad_top) 위치에 배치
+        S = min(sz_scaled_w / source_w, sz_scaled_h / source_h)
+        Ox = sz_pad_left + (sz_scaled_w - source_w * S) / 2
+        Oy = sz_pad_top  + (sz_scaled_h - source_h * S) / 2
+        print(
+            f"[{STAGE.value}][MODE] {mode} SAFE_ZONE S={S:.4f} "
+            f"Ox={Ox:.1f} Oy={Oy:.1f} "
+            f"sz_scaled={sz_scaled_w}x{sz_scaled_h} pad=({sz_pad_left},{sz_pad_top})",
+            flush=True,
+        )
+    else:
+        # safe_zone 없음 — 전체 캔버스 기준 letterbox (기존 로직)
+        S = min(target_w / source_w, target_h / source_h)
+        Ox = (target_w - source_w * S) / 2
+        Oy = (target_h - source_h * S) / 2
+        print(
+            f"[{STAGE.value}][MODE] {mode} LETTERBOX S={S:.4f} Ox={Ox:.1f} Oy={Oy:.1f}",
+            flush=True,
+        )
 
     # ── 2. P3 배경 캔버스 열기 ───────────────────────────────────────────────
     try:
@@ -250,9 +274,12 @@ def composite_elements(
 
     logger.stage_pass(
         STAGE.value,
-        f"element composite PASS mode={mode} placed={placed_count}/{total_count}",
+        f"element composite PASS mode={mode} "
+        f"{'safe_zone' if safe_zone_mode else 'letterbox'} "
+        f"placed={placed_count}/{total_count}",
         metrics={
             "mode": mode,
+            "safeZoneMode": safe_zone_mode,
             "placedCount": placed_count,
             "totalCount": total_count,
             "scale": round(S, 4),
@@ -269,6 +296,7 @@ def composite_elements(
         status=PipelineStatus.PASS,
         metrics={
             "mode": mode,
+            "safeZoneMode": safe_zone_mode,
             "placedCount": placed_count,
             "scale": round(S, 4),
             "offsetX": round(Ox, 1),

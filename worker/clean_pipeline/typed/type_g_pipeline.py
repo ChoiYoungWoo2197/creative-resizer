@@ -106,6 +106,10 @@ def run(
         job_id=job_id,
         logger=logger,
         psd=psd_obj,
+        sz_scaled_w=bg_result.get("sz_scaled_w"),
+        sz_scaled_h=bg_result.get("sz_scaled_h"),
+        sz_pad_left=bg_result.get("sz_pad_left"),
+        sz_pad_top=bg_result.get("sz_pad_top"),
     )
     stage_results.append(sr_comp)
     if sr_comp.status == PipelineStatus.FAIL:

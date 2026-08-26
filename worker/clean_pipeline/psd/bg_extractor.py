@@ -102,7 +102,12 @@ def extract_and_resize(
 
         resized_path = sr_result["resized_path"]
         is_smart = sr_result["is_smart_resized"]
+        sz_scaled_w = sr_result.get("sz_scaled_w")
+        sz_scaled_h = sr_result.get("sz_scaled_h")
+        sz_pad_left = sr_result.get("sz_pad_left")
+        sz_pad_top  = sr_result.get("sz_pad_top")
     else:
+        sz_scaled_w = sz_scaled_h = sz_pad_left = sz_pad_top = None
         from clean_pipeline.typed import smart_resizer
 
         _, sr_result = smart_resizer.resize(
@@ -145,6 +150,11 @@ def extract_and_resize(
         "bg_path": bg_path,
         "resized_path": resized_path,
         "is_smart_resized": is_smart,
+        # safe_zone 모드일 때만 값이 있음 (P4 좌표계 동기화용)
+        "sz_scaled_w": sz_scaled_w,
+        "sz_scaled_h": sz_scaled_h,
+        "sz_pad_left": sz_pad_left,
+        "sz_pad_top":  sz_pad_top,
     }
 
 

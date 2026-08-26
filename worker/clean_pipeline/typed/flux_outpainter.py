@@ -158,6 +158,11 @@ def outpaint(
     ), {
         "resized_path": resized_path,
         "is_smart_resized": is_smart_resized,
+        # P4가 동일한 좌표계를 사용할 수 있도록 P3 계산값 전달
+        "sz_scaled_w": scaled_w,
+        "sz_scaled_h": scaled_h,
+        "sz_pad_left": pad_left,
+        "sz_pad_top": pad_top,
     }
 
 
