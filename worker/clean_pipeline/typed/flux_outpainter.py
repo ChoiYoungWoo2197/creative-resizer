@@ -178,11 +178,15 @@ def _call_fal_outpaint(
     import fal_client
     os.environ.setdefault("FAL_KEY", fal_key)
 
+    # 업로드 전 RGB 강제 변환 (RGBA 알파채널 제거)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="JPEG", quality=95)
     buf.seek(0)
 
-    image_url = fal_client.upload(buf.read(), content_type="image/png")
+    image_url = fal_client.upload(buf.read(), content_type="image/jpeg")
 
     t0 = time.time()
     result = fal_client.subscribe(
