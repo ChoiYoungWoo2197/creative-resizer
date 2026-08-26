@@ -149,6 +149,7 @@
           <!-- 세이프존 오버레이 레이어 -->
           <v-layer v-if="showSafeZone && hasSafeZone" :config="{ listening: false }">
             <v-rect v-for="(rc, i) in safeZoneDangerRects" :key="'danger-' + i" :config="rc" />
+            <v-text v-for="(tc, i) in safeZoneDangerLabels" :key="'label-' + i" :config="tc" />
             <v-rect :config="safeZoneRectConfig" />
           </v-layer>
         </v-stage>
@@ -407,11 +408,34 @@ const safeZoneDangerRects = computed(() => {
   const left   = (sz.left   ?? 0) * sc
   const fill = 'rgba(60,0,0,0.70)'
   return [
-    { x: 0,          y: 0,          width: tw,     height: top,             fill, listening: false },
-    { x: 0,          y: th - bottom, width: tw,    height: bottom,          fill, listening: false },
-    { x: 0,          y: top,        width: left,   height: th - top - bottom, fill, listening: false },
-    { x: tw - right, y: top,        width: right,  height: th - top - bottom, fill, listening: false },
+    { x: 0,          y: 0,           width: tw,    height: top,               fill, listening: false },
+    { x: 0,          y: th - bottom, width: tw,    height: bottom,            fill, listening: false },
+    { x: 0,          y: top,         width: left,  height: th - top - bottom, fill, listening: false },
+    { x: tw - right, y: top,         width: right, height: th - top - bottom, fill, listening: false },
   ]
+})
+
+const safeZoneDangerLabels = computed(() => {
+  const sz = layout.value?.safe_zone || {}
+  const sc = displayScale.value
+  const tw = (layout.value?.target_w ?? 0) * sc
+  const th = (layout.value?.target_h ?? 0) * sc
+  const top    = (sz.top    ?? 0) * sc
+  const right  = (sz.right  ?? 0) * sc
+  const bottom = (sz.bottom ?? 0) * sc
+  const left   = (sz.left   ?? 0) * sc
+  const fs = Math.max(10, Math.min(13, Math.round(Math.min(top, bottom, left, right) * 0.55)))
+  const common = { fill: 'rgba(255,255,255,0.90)', fontFamily: 'monospace', fontSize: fs, listening: false, align: 'center' }
+  const labels = []
+  // top
+  if (top >= 14) labels.push({ ...common, text: `${sz.top ?? 0}px`, x: tw / 2 - 20, y: top / 2 - fs / 2, width: 40 })
+  // bottom
+  if (bottom >= 14) labels.push({ ...common, text: `${sz.bottom ?? 0}px`, x: tw / 2 - 20, y: th - bottom + bottom / 2 - fs / 2, width: 40 })
+  // left
+  if (left >= 14) labels.push({ ...common, text: `${sz.left ?? 0}px`, x: left / 2 - 20, y: th / 2 - fs / 2, width: 40 })
+  // right
+  if (right >= 14) labels.push({ ...common, text: `${sz.right ?? 0}px`, x: tw - right + right / 2 - 20, y: th / 2 - fs / 2, width: 40 })
+  return labels
 })
 
 // ── 스냅/Nudge 상수 ───────────────────────────────────────────────────────────
