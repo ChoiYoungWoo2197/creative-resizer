@@ -5,7 +5,7 @@ fal-ai/flux-2-pro/outpaint로 나머지 영역을 AI 생성한다.
 FAL_KEY 없거나 API 실패 시 PIL edge-fill(코너 평균색) fallback.
 
 환경변수:
-  BG_SAFE_ZONE_SCALE  (기본 0.90) — 세이프존 대비 축소 비율 (예: 0.85, 0.90, 1.0)
+  BG_SAFE_ZONE_SCALE  (기본 0.80) — 세이프존 대비 축소 비율 (예: 0.75, 0.80, 0.90)
   FAL_KEY             — fal-ai API 키
 """
 from __future__ import annotations
