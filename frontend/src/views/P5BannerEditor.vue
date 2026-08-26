@@ -312,6 +312,9 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLayoutResult, getLayersMerged, layerFileUrl, recomposite } from '../api/banner.js'
+import Konva from 'konva'
+
+Konva.pixelRatio = window.devicePixelRatio || 1
 
 const route  = useRoute()
 const router = useRouter()
@@ -569,7 +572,6 @@ const stageConfig = computed(() => ({
   x:          stagePosX.value,
   y:          stagePosY.value,
   draggable:  spacebarDown.value,
-  pixelRatio: window.devicePixelRatio || 1,
 }))
 
 const bgConfig = computed(() => ({
