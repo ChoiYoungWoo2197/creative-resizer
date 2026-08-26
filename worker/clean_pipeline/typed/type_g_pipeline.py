@@ -110,6 +110,10 @@ def run(
         sz_scaled_h=bg_result.get("sz_scaled_h"),
         sz_pad_left=bg_result.get("sz_pad_left"),
         sz_pad_top=bg_result.get("sz_pad_top"),
+        safe_top=spec.safe_top,
+        safe_right=spec.safe_right,
+        safe_bottom=spec.safe_bottom,
+        safe_left=spec.safe_left,
     )
     stage_results.append(sr_comp)
     if sr_comp.status == PipelineStatus.FAIL:

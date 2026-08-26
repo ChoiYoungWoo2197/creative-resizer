@@ -11,6 +11,14 @@
         <span class="zoom-display">{{ Math.round(stageScale * 100) }}%</span>
         <button class="btn-tool" @click="resetZoom" :disabled="stageScale === 1 && stagePosX === 0 && stagePosY === 0" title="줌 리셋">⊙</button>
         <div class="bar-sep" />
+        <button
+          v-if="hasSafeZone"
+          class="btn-safezone"
+          :class="{ 'btn-safezone-on': showSafeZone }"
+          @click="showSafeZone = !showSafeZone"
+          title="세이프존 가이드선 표시/숨기기"
+        >⊙ 세이프존 {{ showSafeZone ? 'ON' : 'OFF' }}</button>
+        <div v-if="hasSafeZone" class="bar-sep" />
         <button class="btn-reset" @click="resetLayers" :disabled="saving">초기화</button>
         <button class="btn-save" @click="saveAndRecomposite" :disabled="saving || !isDirty">
           <span v-if="saving" class="spin" />
@@ -136,6 +144,11 @@
               v-show="isTypeLayer(lyr.name) && !!textOverrides[lyr.name] && !hiddenNames.has(lyr.name)"
               :config="textOverlayConfig(lyr)"
             />
+          </v-layer>
+
+          <!-- 세이프존 오버레이 레이어 -->
+          <v-layer v-if="showSafeZone && hasSafeZone" :config="{ listening: false }">
+            <v-rect :config="safeZoneRectConfig" />
           </v-layer>
         </v-stage>
       </div>
@@ -350,6 +363,37 @@ const stageScale   = ref(1)
 const stagePosX    = ref(0)
 const stagePosY    = ref(0)
 const spacebarDown = ref(false)
+
+// ── 세이프존 오버레이 ─────────────────────────────────────────────────────────
+const showSafeZone = ref(false)
+
+const hasSafeZone = computed(() => {
+  const sz = layout.value?.safe_zone
+  if (!sz) return false
+  return sz.top > 0 || sz.right > 0 || sz.bottom > 0 || sz.left > 0
+})
+
+const safeZoneRectConfig = computed(() => {
+  const sz = layout.value?.safe_zone || {}
+  const sc = displayScale.value
+  const tw = (layout.value?.target_w ?? 0) * sc
+  const th = (layout.value?.target_h ?? 0) * sc
+  const top    = (sz.top    ?? 0) * sc
+  const right  = (sz.right  ?? 0) * sc
+  const bottom = (sz.bottom ?? 0) * sc
+  const left   = (sz.left   ?? 0) * sc
+  return {
+    x: left,
+    y: top,
+    width:  tw - left - right,
+    height: th - top  - bottom,
+    fill:   'transparent',
+    stroke: '#22C55E',
+    strokeWidth: 1.5,
+    dash: [6, 4],
+    listening: false,
+  }
+})
 
 // ── 스냅/Nudge 상수 ───────────────────────────────────────────────────────────
 const SNAP_THRESHOLD   = 5
@@ -887,6 +931,17 @@ async function saveAndRecomposite() {
   font-size: 13px; color: #888; min-width: 38px;
   text-align: center; flex-shrink: 0;
 }
+
+.btn-safezone {
+  background: none; border: 1px solid #D1D5DB; border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; font-size: 12px; color: #6B7280;
+  white-space: nowrap; transition: all 0.15s;
+}
+.btn-safezone:hover { background: #F3F4F6; color: #374151; }
+.btn-safezone-on {
+  background: #F0FDF4; border-color: #22C55E; color: #16A34A; font-weight: 600;
+}
+.btn-safezone-on:hover { background: #DCFCE7; }
 
 .btn-reset {
   background: none; border: 1px solid #E5E5E5; border-radius: 6px;

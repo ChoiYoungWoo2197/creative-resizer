@@ -43,6 +43,10 @@ def composite_elements(
     sz_scaled_h: int | None = None,
     sz_pad_left: int | None = None,
     sz_pad_top: int | None = None,
+    safe_top: int = 0,
+    safe_right: int = 0,
+    safe_bottom: int = 0,
+    safe_left: int = 0,
 ) -> tuple[StageResult, dict | None]:
     """비-bg 레이어를 letterbox 변환 좌표로 배경에 합성.
 
@@ -224,6 +228,12 @@ def composite_elements(
             "offset_y": round(Oy, 2),
             "bg_file": _relative_path(bg_path, Path(output_dir) / job_id),
             "layers": placed_layers,
+            "safe_zone": {
+                "top": safe_top,
+                "right": safe_right,
+                "bottom": safe_bottom,
+                "left": safe_left,
+            },
         }
         layout_result_path = str(stage_dir / f"layout_result_{target_w}x{target_h}.json")
         with open(layout_result_path, "w", encoding="utf-8") as f:
