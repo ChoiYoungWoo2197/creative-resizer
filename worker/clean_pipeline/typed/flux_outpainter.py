@@ -204,7 +204,7 @@ def _call_fal_outpaint(
             "expand_left":           pad_left,
             "mode":                  "high",
             "enable_safety_checker": True,
-            "output_format":         "png",
+            "output_format":         "jpeg",
         },
     )
     elapsed = round(time.time() - t0, 2)
