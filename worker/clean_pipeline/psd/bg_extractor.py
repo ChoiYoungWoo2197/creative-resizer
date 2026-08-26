@@ -72,6 +72,8 @@ def extract_and_resize(
     resized_path = str(stage_dir_r / "smart_resized.png")
     is_smart = False
 
+    sz_scaled_w = sz_scaled_h = sz_pad_left = sz_pad_top = None
+
     if bg_img.width == target_width and bg_img.height == target_height:
         # 규격 동일 → fal-ai 불필요, 그대로 복사
         import shutil as _shutil
@@ -107,7 +109,6 @@ def extract_and_resize(
         sz_pad_left = sr_result.get("sz_pad_left")
         sz_pad_top  = sr_result.get("sz_pad_top")
     else:
-        sz_scaled_w = sz_scaled_h = sz_pad_left = sz_pad_top = None
         from clean_pipeline.typed import smart_resizer
 
         _, sr_result = smart_resizer.resize(
