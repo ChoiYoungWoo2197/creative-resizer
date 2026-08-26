@@ -562,13 +562,14 @@ const bgImage  = ref(null)
 const imgCache = ref({})
 
 const stageConfig = computed(() => ({
-  width:     (layout.value?.target_w  ?? 800) * displayScale.value,
-  height:    (layout.value?.target_h  ?? 400) * displayScale.value,
-  scaleX:    stageScale.value,
-  scaleY:    stageScale.value,
-  x:         stagePosX.value,
-  y:         stagePosY.value,
-  draggable: spacebarDown.value,
+  width:      (layout.value?.target_w  ?? 800) * displayScale.value,
+  height:     (layout.value?.target_h  ?? 400) * displayScale.value,
+  scaleX:     stageScale.value,
+  scaleY:     stageScale.value,
+  x:          stagePosX.value,
+  y:          stagePosY.value,
+  draggable:  spacebarDown.value,
+  pixelRatio: window.devicePixelRatio || 1,
 }))
 
 const bgConfig = computed(() => ({
