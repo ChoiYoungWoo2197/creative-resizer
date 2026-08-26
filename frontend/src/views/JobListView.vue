@@ -887,7 +887,7 @@ onMounted(load)
 
 /* 메모 섹션 */
 .dp-memo-section {
-  margin: 0 16px 14px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+  margin: 0 20px 16px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
 }
 .dp-memo-head {
   font-size: 13px; font-weight: 700; color: #9B8EC4;
@@ -969,7 +969,7 @@ onMounted(load)
 /* 헤더 */
 .dp-head {
   display: flex; align-items: flex-start; justify-content: space-between;
-  padding: 16px 20px 14px; background: #fff;
+  padding: 18px 24px 16px; background: #fff;
   border-bottom: 1px solid #EDE9FF; flex-shrink: 0; gap: 12px;
 }
 .dp-head-left { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; flex: 1; }
@@ -978,7 +978,7 @@ onMounted(load)
   background: #F3EEFF; border: 1px solid #DDD6FE;
   padding: 4px 9px; border-radius: 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  display: block; max-width: 340px;
+  display: block; max-width: 390px;
 }
 .dp-close {
   background: none; border: 1.5px solid #EAEDF0; font-size: 15px; color: #8B95A1;
@@ -989,7 +989,7 @@ onMounted(load)
 
 /* 메타 */
 .dp-meta {
-  margin: 14px 16px; padding: 14px 16px; flex-shrink: 0;
+  margin: 16px 20px; padding: 16px 20px; flex-shrink: 0;
   background: #fff; border: 1px solid #EDE9FF; border-radius: 14px;
   display: flex; flex-direction: column; gap: 10px;
 }
@@ -1004,7 +1004,7 @@ onMounted(load)
 
 /* 섹션 타이틀 */
 .dp-section-title {
-  padding: 4px 20px 10px; font-size: 14px; font-weight: 700;
+  padding: 4px 24px 10px; font-size: 14px; font-weight: 700;
   color: #191F28; flex-shrink: 0; display: flex; align-items: center; gap: 6px;
 }
 .dp-cnt {
@@ -1015,8 +1015,8 @@ onMounted(load)
 
 /* 결과 그리드 */
 .dp-results {
-  flex: 1; overflow-y: auto; padding: 0 16px 16px;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  flex: 1; overflow-y: auto; padding: 0 20px 20px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
   align-content: start; align-items: start;
   scrollbar-width: thin; scrollbar-color: #DDD6FE transparent;
 }
@@ -1074,7 +1074,7 @@ onMounted(load)
 
 /* 액션 영역 */
 .dp-actions {
-  padding: 14px 16px 18px; border-top: 1px solid #EDE9FF; flex-shrink: 0;
+  padding: 16px 20px 20px; border-top: 1px solid #EDE9FF; flex-shrink: 0;
 }
 .dp-btn {
   width: 100%; padding: 13px; border-radius: 12px; font-size: 15px; font-weight: 700;
