@@ -405,7 +405,7 @@ const safeZoneDangerRects = computed(() => {
   const right  = (sz.right  ?? 0) * sc
   const bottom = (sz.bottom ?? 0) * sc
   const left   = (sz.left   ?? 0) * sc
-  const fill = 'rgba(239,68,68,0.18)'
+  const fill = 'rgba(60,0,0,0.70)'
   return [
     { x: 0,          y: 0,          width: tw,     height: top,             fill, listening: false },
     { x: 0,          y: th - bottom, width: tw,    height: bottom,          fill, listening: false },
