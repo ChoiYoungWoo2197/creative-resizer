@@ -55,10 +55,10 @@
             :class="{
               'tree-rendered': !!lyr.rendered,
               'tree-dim':      !lyr.rendered,
-              active: !!lyr.rendered && lyr.name === selectedLayerName,
+              active: !!lyr.rendered && selectedIndices.has(editLayerIdx(lyr.name)),
             }"
             :style="{ paddingLeft: (10 + lyr.depth * 14) + 'px' }"
-            @click="lyr.rendered && selectByName(lyr.name)"
+            @click="(e) => lyr.rendered && selectByName(lyr.name, e)"
           >
             <button v-if="lyr.rendered" class="vis-btn" :class="{ 'vis-hidden': hiddenNames.has(lyr.name) }"
               @click.stop="toggleVis(lyr.name)" :title="hiddenNames.has(lyr.name) ? '표시' : '숨기기'">
@@ -122,7 +122,8 @@
               v-for="(lyr, idx) in editLayers"
               :key="lyr.name"
               :config="layerConfig(lyr, idx)"
-              @click="selectLayer(idx)"
+              @click="(e) => selectLayer(idx, e.evt)"
+              @dragstart="onDragStart($event, idx)"
               @dragmove="onDragMove($event, idx)"
               @dragend="onDragEnd($event, idx)"
               @transform="onTransform($event, idx)"
@@ -158,6 +159,12 @@
       <!-- 우측: Design 패널 -->
       <div class="right-panel">
         <div class="panel-section-title">Design</div>
+
+        <!-- 다중 선택 안내 -->
+        <div v-if="selectedIndices.size > 1" class="multi-select-info">
+          <span class="multi-select-count">{{ selectedIndices.size }}개</span> 레이어 선택됨
+          <div class="multi-select-hint">이동·Nudge 함께 적용됩니다</div>
+        </div>
 
         <template v-if="selectedIdx !== null">
           <!-- 선택된 레이어 정보 -->
@@ -321,7 +328,9 @@ const editLayers   = ref([])
 const origLayers   = ref([])
 const mergedLayers = ref([])   // PSD 전체 트리 (P2 + P4 merged)
 const hiddenNames    = ref(new Set())  // 숨긴 레이어 name 집합
-const selectedIdx    = ref(null)
+const selectedIdx      = ref(null)
+const selectedIndices  = ref(new Set())   // 다중 선택 인덱스 집합
+const dragStartPositions = ref({})        // { idx: {x, y} } 멀티드래그용
 const textOverrides  = ref({})         // { layerName: 'override text' } — type 레이어 텍스트 수정
 const fontOverrides  = ref({})         // { layerName: { fontSize, fontFamily, fontStyle, align, lineHeight, letterSpacing, color } }
 const saving       = ref(false)
@@ -475,6 +484,7 @@ function saveHistory() {
 
 function syncKonvaAfterRestore() {
   selectedIdx.value = null
+  selectedIndices.value = new Set()
   nextTick(() => {
     const tr = transformerRef.value?.getNode()
     if (tr) tr.nodes([])
@@ -650,14 +660,48 @@ function loadImg(src) {
 }
 
 // ── 선택 / 트랜스포머 ─────────────────────────────────────────────────────────
-function selectLayer(idx) {
-  selectedIdx.value = idx
+function selectLayer(idx, nativeEvt) {
+  const isCtrl  = nativeEvt?.ctrlKey  || nativeEvt?.metaKey
+  const isShift = nativeEvt?.shiftKey
+
+  if (isCtrl) {
+    // Ctrl+클릭: 개별 토글
+    const next = new Set(selectedIndices.value)
+    if (next.has(idx)) {
+      next.delete(idx)
+      const arr = [...next]
+      selectedIdx.value = arr.length > 0 ? arr[arr.length - 1] : null
+    } else {
+      next.add(idx)
+      selectedIdx.value = idx
+    }
+    selectedIndices.value = next
+  } else if (isShift && selectedIdx.value !== null) {
+    // Shift+클릭: 범위 선택
+    const start = Math.min(selectedIdx.value, idx)
+    const end   = Math.max(selectedIdx.value, idx)
+    const next  = new Set(selectedIndices.value)
+    for (let i = start; i <= end; i++) next.add(i)
+    selectedIndices.value = next
+    selectedIdx.value = idx
+  } else {
+    // 일반 클릭: 단일 선택
+    selectedIndices.value = new Set([idx])
+    selectedIdx.value = idx
+  }
+
+  _syncTransformer()
+}
+
+function _syncTransformer() {
   nextTick(() => {
     const layer = elemLayerRef.value?.getNode()
-    if (!layer) return
-    const node = layer.findOne(`.layer-${idx}`)
-    const tr   = transformerRef.value?.getNode()
-    if (tr && node) tr.nodes([node])
+    const tr    = transformerRef.value?.getNode()
+    if (!tr || !layer) return
+    const nodes = [...selectedIndices.value]
+      .map(i => layer.findOne(`.layer-${i}`))
+      .filter(Boolean)
+    tr.nodes(nodes)
     layer.batchDraw()
   })
 }
@@ -666,17 +710,47 @@ function onStageClick(e) {
   if (spacebarDown.value) return
   if (e.target === e.target.getStage()) {
     selectedIdx.value = null
+    selectedIndices.value = new Set()
     const tr = transformerRef.value?.getNode()
     if (tr) tr.nodes([])
   }
 }
 
 // ── 이벤트 핸들러 ─────────────────────────────────────────────────────────────
+function onDragStart(e, idx) {
+  // 선택되지 않은 레이어를 드래그하면 단일 선택으로 전환
+  if (!selectedIndices.value.has(idx)) {
+    selectedIndices.value = new Set([idx])
+    selectedIdx.value = idx
+    _syncTransformer()
+  }
+  // 드래그 시작 시 모든 선택 레이어의 현재 위치 저장
+  const starts = {}
+  for (const selIdx of selectedIndices.value) {
+    const lyr = editLayers.value[selIdx]
+    starts[selIdx] = { x: lyr.render_x, y: lyr.render_y }
+  }
+  dragStartPositions.value = starts
+}
+
 function onDragEnd(e, idx) {
   guideLines.value = []
   const sc = displayScale.value
   editLayers.value[idx].render_x = Math.round(e.target.x() / sc)
   editLayers.value[idx].render_y = Math.round(e.target.y() / sc)
+  // 다중 선택 시 다른 레이어 위치도 Konva 노드 기준으로 확정
+  if (selectedIndices.value.size > 1) {
+    const konvaLayer = elemLayerRef.value?.getNode()
+    for (const otherIdx of selectedIndices.value) {
+      if (otherIdx === idx) continue
+      const otherNode = konvaLayer?.findOne(`.layer-${otherIdx}`)
+      if (otherNode) {
+        editLayers.value[otherIdx].render_x = Math.round(otherNode.x() / sc)
+        editLayers.value[otherIdx].render_y = Math.round(otherNode.y() / sc)
+      }
+    }
+  }
+  dragStartPositions.value = {}
   saveHistory()
 }
 
@@ -805,6 +879,29 @@ function onDragMove(e, idx) {
   }
 
   guideLines.value = newGuideLines
+
+  // 다중 선택 시: 드래그 델타를 다른 선택 레이어에도 적용
+  if (selectedIndices.value.size > 1 && selectedIndices.value.has(idx)) {
+    const startMain = dragStartPositions.value[idx]
+    if (startMain) {
+      const finalX = node.x() / sc
+      const finalY = node.y() / sc
+      const dx = finalX - startMain.x
+      const dy = finalY - startMain.y
+      const konvaLayer = elemLayerRef.value?.getNode()
+      for (const otherIdx of selectedIndices.value) {
+        if (otherIdx === idx) continue
+        const startOther = dragStartPositions.value[otherIdx]
+        if (!startOther || !konvaLayer) continue
+        const newX = startOther.x + dx
+        const newY = startOther.y + dy
+        editLayers.value[otherIdx].render_x = newX
+        editLayers.value[otherIdx].render_y = newY
+        const otherNode = konvaLayer.findOne(`.layer-${otherIdx}`)
+        if (otherNode) { otherNode.x(newX * sc); otherNode.y(newY * sc) }
+      }
+    }
+  }
 }
 
 // ── 키보드 Nudge ──────────────────────────────────────────────────────────────
@@ -831,25 +928,27 @@ function handleKeyDown(e) {
   e.preventDefault()
 
   const step = e.shiftKey ? NUDGE_STEP_SHIFT : NUDGE_STEP
-  const lyr  = editLayers.value[selectedIdx.value]
+  const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0
+  const dy = e.key === 'ArrowUp'   ? -step : e.key === 'ArrowDown'  ? step : 0
 
-  if (e.key === 'ArrowLeft')  lyr.render_x -= step
-  if (e.key === 'ArrowRight') lyr.render_x += step
-  if (e.key === 'ArrowUp')    lyr.render_y -= step
-  if (e.key === 'ArrowDown')  lyr.render_y += step
+  // 선택된 모든 레이어에 동일한 delta 적용
+  for (const i of selectedIndices.value) {
+    editLayers.value[i].render_x += dx
+    editLayers.value[i].render_y += dy
+  }
 
   nextTick(() => {
     const konvaLayer = elemLayerRef.value?.getNode()
     if (!konvaLayer) return
-    const sc   = displayScale.value
-    const node = konvaLayer.findOne(`.layer-${selectedIdx.value}`)
-    if (node) {
-      node.x(lyr.render_x * sc)
-      node.y(lyr.render_y * sc)
-      const tr = transformerRef.value?.getNode()
-      if (tr) tr.forceUpdate()
-      konvaLayer.batchDraw()
+    const sc = displayScale.value
+    for (const i of selectedIndices.value) {
+      const lyr  = editLayers.value[i]
+      const node = konvaLayer.findOne(`.layer-${i}`)
+      if (node) { node.x(lyr.render_x * sc); node.y(lyr.render_y * sc) }
     }
+    const tr = transformerRef.value?.getNode()
+    if (tr) tr.forceUpdate()
+    konvaLayer.batchDraw()
   })
 }
 
@@ -863,9 +962,9 @@ function toggleVis(name) {
   else next.add(name)
   hiddenNames.value = next
 }
-function selectByName(name) {
+function selectByName(name, evt) {
   const idx = editLayerIdx(name)
-  if (idx !== -1) selectLayer(idx)
+  if (idx !== -1) selectLayer(idx, evt)
 }
 function moveLayerUpByName(name) {
   const idx = editLayerIdx(name)
@@ -883,6 +982,7 @@ function moveLayerUp(idx) {
   const item = layers.splice(idx, 1)[0]
   layers.splice(idx - 1, 0, item)
   selectedIdx.value = idx - 1
+  selectedIndices.value = new Set([idx - 1])
   saveHistory()
 }
 
@@ -892,6 +992,7 @@ function moveLayerDown(idx) {
   const item = layers.splice(idx, 1)[0]
   layers.splice(idx + 1, 0, item)
   selectedIdx.value = idx + 1
+  selectedIndices.value = new Set([idx + 1])
   saveHistory()
 }
 
@@ -974,6 +1075,18 @@ async function saveAndRecomposite() {
   font-size: 13px; color: #888; min-width: 38px;
   text-align: center; flex-shrink: 0;
 }
+
+.multi-select-info {
+  padding: 8px 12px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #1D4ED8;
+  margin-bottom: 10px;
+}
+.multi-select-count { font-weight: 700; }
+.multi-select-hint { font-size: 11px; color: #3B82F6; margin-top: 2px; }
 
 .btn-safezone {
   background: none; border: 1px solid #D1D5DB; border-radius: 6px;
