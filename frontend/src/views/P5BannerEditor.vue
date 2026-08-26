@@ -1150,7 +1150,11 @@ async function saveAndRecomposite() {
 /* 중앙 캔버스 워크스페이스 */
 .konva-wrap {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  background: #E5E5E5; overflow: auto;
+  background-color: #E0E0E0; overflow: auto;
+  background-image:
+    linear-gradient(rgba(0,0,0,0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.07) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 .konva-wrap :deep(canvas) {
   box-shadow: 0 2px 16px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.06);
