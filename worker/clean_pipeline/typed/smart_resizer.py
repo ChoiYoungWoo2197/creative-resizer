@@ -152,12 +152,16 @@ def _call_fal_smart_resize(
     import fal_client
     os.environ.setdefault("FAL_KEY", fal_key)
 
+    # 업로드 전 RGB 강제 변환 (RGBA 알파채널 제거)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="JPEG", quality=95)
     buf.seek(0)
 
-    # fal storage에 업로드 → HTTPS URL 획득
-    image_url = fal_client.upload(buf.read(), content_type="image/png")
+    # fal storage에 업로드 → HTTPS URL 획득 (JPEG: PNG 대비 용량 50~70% 절감)
+    image_url = fal_client.upload(buf.read(), content_type="image/jpeg")
 
     request_id_holder: dict = {}
 
