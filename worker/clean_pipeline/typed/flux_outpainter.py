@@ -24,7 +24,7 @@ from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.BG_EXTRACTION
 _FAL_ENDPOINT = "fal-ai/flux-2-pro/outpaint"
-_SAFE_ZONE_SCALE = float(os.environ.get("BG_SAFE_ZONE_SCALE", "0.90"))
+_SAFE_ZONE_SCALE = float(os.environ.get("BG_SAFE_ZONE_SCALE", "0.80"))
 
 
 def outpaint(
