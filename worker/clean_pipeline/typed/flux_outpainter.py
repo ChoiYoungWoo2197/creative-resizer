@@ -86,6 +86,16 @@ def outpaint(
     pad_right  = target_width  - scaled_w - offset_x
     pad_bottom = target_height - scaled_h - offset_y
 
+    # scaled_img 저장 (확인용)
+    stage_dir_early = Path(output_dir) / job_id / "clean_v1" / "03_bg_extraction"
+    stage_dir_early.mkdir(parents=True, exist_ok=True)
+    scaled_path = str(stage_dir_early / "bg_scaled.png")
+    scaled_img.save(scaled_path)
+
+    logger.artifact_written(
+        STAGE.value, scaled_path,
+        f"Cover Scaled bg {scaled_w}x{scaled_h} (scale={scale})",
+    )
     logger.artifact_written(
         STAGE.value, "(outpaint-calc)",
         f"scale={scale} scaled={scaled_w}x{scaled_h} "
