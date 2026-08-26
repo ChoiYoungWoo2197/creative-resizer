@@ -148,6 +148,7 @@
 
           <!-- 세이프존 오버레이 레이어 -->
           <v-layer v-if="showSafeZone && hasSafeZone" :config="{ listening: false }">
+            <v-rect v-for="(rc, i) in safeZoneDangerRects" :key="'danger-' + i" :config="rc" />
             <v-rect :config="safeZoneRectConfig" />
           </v-layer>
         </v-stage>
@@ -393,6 +394,24 @@ const safeZoneRectConfig = computed(() => {
     dash: [6, 4],
     listening: false,
   }
+})
+
+const safeZoneDangerRects = computed(() => {
+  const sz = layout.value?.safe_zone || {}
+  const sc = displayScale.value
+  const tw = (layout.value?.target_w ?? 0) * sc
+  const th = (layout.value?.target_h ?? 0) * sc
+  const top    = (sz.top    ?? 0) * sc
+  const right  = (sz.right  ?? 0) * sc
+  const bottom = (sz.bottom ?? 0) * sc
+  const left   = (sz.left   ?? 0) * sc
+  const fill = 'rgba(239,68,68,0.18)'
+  return [
+    { x: 0,          y: 0,          width: tw,     height: top,             fill, listening: false },
+    { x: 0,          y: th - bottom, width: tw,    height: bottom,          fill, listening: false },
+    { x: 0,          y: top,        width: left,   height: th - top - bottom, fill, listening: false },
+    { x: tw - right, y: top,        width: right,  height: th - top - bottom, fill, listening: false },
+  ]
 })
 
 // ── 스냅/Nudge 상수 ───────────────────────────────────────────────────────────
