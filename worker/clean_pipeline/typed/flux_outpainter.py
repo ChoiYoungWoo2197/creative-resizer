@@ -188,13 +188,14 @@ def _call_fal_outpaint(
     result = fal_client.subscribe(
         _FAL_ENDPOINT,
         arguments={
-            "image_url":    image_url,
-            "expand_top":   pad_top,
-            "expand_right": pad_right,
-            "expand_bottom":pad_bottom,
-            "expand_left":  pad_left,
-            "mode":         "high",
-            "output_format":"png",
+            "image_url":             image_url,
+            "expand_top":            pad_top,
+            "expand_right":          pad_right,
+            "expand_bottom":         pad_bottom,
+            "expand_left":           pad_left,
+            "mode":                  "high",
+            "enable_safety_checker": True,
+            "output_format":         "png",
         },
     )
     elapsed = round(time.time() - t0, 2)
