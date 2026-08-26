@@ -951,7 +951,7 @@ onMounted(load)
   backdrop-filter: blur(3px); z-index: 1000;
 }
 .detail-panel {
-  position: fixed; top: 56px; right: 0; height: calc(100vh - 56px); width: 440px;
+  position: fixed; top: 56px; right: 0; height: calc(100vh - 56px); width: 500px;
   background: #F8F7FF;
   box-shadow: -6px 0 40px rgba(124,58,237,0.12), -1px 0 0 rgba(124,58,237,0.08);
   display: flex; flex-direction: column; z-index: 1001;
