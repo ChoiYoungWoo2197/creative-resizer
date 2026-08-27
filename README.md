@@ -34,7 +34,8 @@ creative-resizer/
 │   └── src/
 │       ├── views/
 │       │   ├── UploadView.vue          # 배너 생성 (2패널 레이아웃)
-│       │   ├── JobListView.vue         # 작업 목록
+│       │   ├── JobListView.vue         # 작업 목록 + 우측 결과 패널
+│       │   ├── P5BannerEditor.vue      # Konva 기반 레이어 편집기 (TYPE G 전용)
 │       │   └── SpecView.vue            # 규격 관리
 │       └── api/banner.js               # Axios API 클라이언트
 │
@@ -50,18 +51,26 @@ creative-resizer/
     ├── Dockerfile
     ├── requirements.txt
     ├── app.py                          # Flask (POST /generate, GET /health)
-    └── clean_pipeline/                 # clean_v1 파이프라인 (P1~P8)
-        ├── orchestrator.py             # P1~P8 단계 조율
-        ├── contracts.py               # 공통 타입 (CleanPipelineRequest, StageResult …)
+    └── clean_pipeline/                 # clean_v1 파이프라인
+        ├── pipeline_type_selector.py   # TYPE 라우팅 (A / G)
+        ├── orchestrator.py             # 파이프라인 단계 조율
+        ├── contracts.py               # 공통 타입 (TargetSpec, StageResult …)
         ├── bridge/                    # request_adapter / response_adapter
+        ├── psd/                       # TYPE G PSD 처리
+        │   ├── psd_layer_reader.py    # P2: PSD 레이어 구조 분석
+        │   ├── bg_extractor.py        # P3: 배경 추출 + Flux outpaint
+        │   └── element_compositor.py  # P4: 레이어 letterbox 합성 + layout_result 생성
+        ├── typed/                     # TYPE별 파이프라인 구현
+        │   ├── type_g_pipeline.py     # TYPE G 진입점 (PSD 레이어 재배치)
+        │   ├── flux_outpainter.py     # Flux API 배경 생성
+        │   └── smart_resizer.py       # smart resize 유틸
         ├── source/                    # P1: 원본 소스 정규화
-        ├── analysis/                  # P2: GPT-4o 객체 분석
-        ├── extraction/                # P3: 객체 좌표 추출
-        ├── removal/                   # P4: 제거 마스크 생성
-        ├── scene/                     # P5: OpenAI 배경 생성
-        ├── validation/                # P6: 장면 검증 (임시 PASS 상태)
-        ├── layout/                    # P7: Safe-zone 배치 검증
-        └── render/                    # P8: 최종 합성
+        ├── analysis/                  # GPT-4o 객체 분석 (TYPE C 등)
+        ├── extraction/                # 객체 좌표 추출
+        ├── scene/                     # OpenAI 배경 생성 (TYPE B/D/E/F)
+        ├── validation/                # 장면 검증
+        ├── layout/                    # Safe-zone 배치 검증
+        └── render/                    # 최종 합성
 ```
 
 ---
@@ -102,31 +111,31 @@ BannerConsumer → creative-worker (Python Flask :5000)
 
 ---
 
-## clean_v1 파이프라인 (P1~P8)
+## clean_v1 파이프라인
 
 모든 생성 요청은 `pipelineVersion=clean_v1` 파이프라인으로 처리된다.
 실패 시 legacy fallback은 없다. 어느 단계에서든 FAIL이면 그 결과를 그대로 반환한다.
 
+### 파이프라인 TYPE 라우팅 (`pipeline_type_selector.py`)
+
+원본 크기와 타겟 규격을 비교해 TYPE을 자동 선택한다. 환경변수 `CLEAN_PIPELINE_TYPE`으로 강제 지정 가능.
+
+| TYPE | 조건 | 처리 방식 |
+|---|---|---|
+| **A** | 원본 크기 == 타겟 규격 | Pass-through — canonical 그대로 출력 |
+| **G** | 그 외 (기본값) | PSD 레이어 분해 → 배경 생성 → 재합성 |
+
+### TYPE G 흐름 (PSD 레이어 재배치)
+
 ```
-P1  SOURCE_PREPARATION   — PSD/PNG/JPG/JPEG 정규화 → RGBA canonical.png
-P2  OBJECT_ANALYSIS      — GPT-4o Vision으로 객체 분석 (product, text, cta …)
-P3  OBJECT_EXTRACTION    — bbox / polygon 추출 · 검증
-P4  REMOVAL_MASK         — 제거 대상 마스크 생성
-P5  SCENE_GENERATION     — OpenAI images.edit (1024×1024) → 배경 생성
-P6  SCENE_VALIDATION     — ⚠ 임시 PASS 상태 (아래 주의 참고)
-P7  LAYOUT_VALIDATION    — 타겟 규격별 safe-zone 배치 검증
-P8  COMPOSITION          — 원본 보존 픽셀 복원 + 최종 합성
+P1  SOURCE_PREPARATION   — PSD 정규화 → RGBA canonical.png
+P2  PSD_LAYER_READ       — 레이어 구조 파악 (role 분류: title/product/cta/bg …)
+P3  BG_EXTRACT_OUTPAINT  — bg 레이어 추출 → Flux API로 타겟 규격 배경 생성
+P4  ELEMENT_COMPOSITE    — 비-bg 레이어를 letterbox 좌표로 배경 위에 합성
+                           → result.png + layout_result_{w}x{h}.json 저장
 ```
 
-### P6 임시 PASS 상태 주의
-
-**현재 P6 AI 검증은 비활성화(`_AI_VALIDATION_ENABLED = False`)** 되어 있다.
-결정론적 체크(단색 감지, 픽셀 복원 일치)만 실행된다.
-
-- `valid=true`는 "AI가 장면 품질을 보증했다"는 의미가 아니다.
-- GPT-4o 재검증 기능을 활성화하기 전까지 이 상태가 유지된다.
-- P6를 재활성화하려면 `worker/clean_pipeline/validation/scene_validator.py`의
-  `_AI_VALIDATION_ENABLED = True`로 변경 후 `test_p6_validation.py` 전체를 통과시켜야 한다.
+`layout_result_{w}x{h}.json`: P5 에디터가 레이어별 위치/크기를 로드하는 파일.
 
 ---
 
@@ -219,14 +228,25 @@ pipelineVersion clean_v1  (기본값 — 생략 가능)
 > `resizeMode`, `smartFitStrength`, `focalPosition`, `objectReflowEnabled` 등은 더 이상 사용하지 않는다.
 > Worker가 clean_v1 파이프라인을 실행하므로 무시된다.
 
-### 작업 조회
+### 작업 조회 / 다운로드
 
 ```
-GET /api/banner/job/{id}                       단건 조회
-GET /api/banner/jobs                           전체 목록
-GET /api/banner/job/{id}/preview/{filename}    이미지 미리보기
-GET /api/banner/job/{id}/image/{filename}      개별 이미지 다운로드
-GET /api/banner/job/{id}/download              ZIP 전체 다운로드
+GET    /api/banner/job/{id}                       단건 조회
+GET    /api/banner/jobs                           전체 목록
+DELETE /api/banner/job/{id}                       단건 삭제
+DELETE /api/banner/jobs                           다건 삭제 (body: {"ids": [...]})
+GET    /api/banner/job/{id}/preview/{filename}    이미지 미리보기
+GET    /api/banner/job/{id}/image/{filename}      개별 이미지 다운로드
+GET    /api/banner/job/{id}/download              ZIP 전체 다운로드
+```
+
+### P5 에디터 (TYPE G 전용)
+
+```
+GET  /api/banner/job/{id}/layout-result?fileName=  layout_result_{w}x{h}.json 반환
+GET  /api/banner/job/{id}/layers-merged?fileName=  layers_merged_{w}x{h}.json 반환
+GET  /api/banner/job/{id}/layer-file?path=         레이어 개별 PNG 반환
+POST /api/banner/job/{id}/recomposite              레이어 위치 수정 후 재합성
 ```
 
 ### AI 소재 분석 (선택)
