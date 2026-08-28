@@ -892,6 +892,10 @@ function removeSpec(id) {
 }
 function addCustomSpec() {
   if (!customForm.width || !customForm.height) return
+  if (customSpecs.value.some(cs => cs.width === Number(customForm.width) && cs.height === Number(customForm.height))) {
+    ElMessage.warning('이미 추가된 사이즈입니다.')
+    return
+  }
   customSpecs.value.push({
     width: Number(customForm.width),
     height: Number(customForm.height),
