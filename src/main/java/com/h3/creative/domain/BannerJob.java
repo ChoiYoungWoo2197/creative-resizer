@@ -73,6 +73,7 @@ public class BannerJob {
         private Long fileSize;
         private Boolean valid;
         private String validationMessage;
+        private String specDirName;  // spec 격리 서브디렉터리명 (예: "00_slug_1200x628")
 
         // PSD 아트보드 선택 정보
         private String selectedArtboardId;

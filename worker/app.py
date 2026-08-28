@@ -116,9 +116,9 @@ def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
         for item in items:
             file_path = item.get("filePath")
             if file_path:
-                # 모든 TYPE이 고정 경로(예: 08_final/result.png)에 쓰므로,
-                # 다음 spec 처리 전에 spec별 고유 파일명으로 옮겨 덮어쓰기를 막는다.
-                item["filePath"], item["fileName"] = _uniquify_result_file(
+                # 모든 TYPE이 고정 경로(예: 04_composite/result.png)에 쓰므로,
+                # 다음 spec 처리 전에 spec별로 격리해 덮어쓰기를 막는다.
+                item["filePath"], item["fileName"], item["specDirName"] = _isolate_spec_output(
                     file_path, spec_index, item.get("slug", ""),
                     item.get("width", 0), item.get("height", 0),
                 )
@@ -144,22 +144,60 @@ def _run_clean_v1(data: dict, job_id: str, job_output_dir: str, t_start: float):
     })
 
 
-def _uniquify_result_file(file_path: str, spec_index: int, slug: str, width: int, height: int) -> tuple[str, str]:
-    """spec별 결과가 같은 고정 경로(result.png)에 쓰이므로, 다음 spec 처리 전에
-    고유 파일명으로 옮긴다. 반환값: (새 filePath, 새 fileName)
+def _isolate_spec_output(file_path: str, spec_index: int, slug: str, width: int, height: int) -> tuple[str, str, str]:
+    """spec별 result.png를 고유 파일명으로 이동하고, JSON/layers를 spec 전용
+    서브디렉터리로 격리한다. 같은 spec이 여러 개일 때 파일 덮어쓰기를 방지.
+
+    반환값: (새 filePath, 새 fileName, specDirName)
     """
     directory = os.path.dirname(file_path)
     ext = os.path.splitext(file_path)[1] or ".png"
     safe_slug = slug or f"spec{spec_index}"
     size_suffix = f"{width}x{height}"
-    # slug가 이미 _WxH로 끝나면 중복 방지
+
+    # spec_dir_name: 기존 _uniquify_result_file과 동일한 명명 규칙
     if safe_slug.endswith(size_suffix):
-        new_name = f"{spec_index:02d}_{safe_slug}{ext}"
+        spec_dir_name = f"{spec_index:02d}_{safe_slug}"
     else:
-        new_name = f"{spec_index:02d}_{safe_slug}_{size_suffix}{ext}"
+        spec_dir_name = f"{spec_index:02d}_{safe_slug}_{size_suffix}"
+
+    # 1. result.png → {spec_dir_name}.png (기존 동작 유지)
+    new_name = spec_dir_name + ext
     new_path = os.path.join(directory, new_name)
     shutil.move(file_path, new_path)
-    return new_path, new_name
+
+    # 2. spec 전용 서브디렉터리 생성 후 JSON + layers 이동
+    # file_key는 element_compositor._file_key와 동일한 규칙 사용
+    file_key = slug if slug else size_suffix
+    spec_dir = os.path.join(directory, spec_dir_name)
+    os.makedirs(spec_dir, exist_ok=True)
+    for item in [f"layout_result_{file_key}.json", f"layers_merged_{file_key}.json", "layers"]:
+        src = os.path.join(directory, item)
+        if os.path.exists(src):
+            shutil.move(src, os.path.join(spec_dir, item))
+
+    # 3. JSON 내부 layer_file 경로 패치 (이동 후 경로가 변경되므로)
+    old_prefix = "clean_v1/04_composite/layers/"
+    new_prefix = f"clean_v1/04_composite/{spec_dir_name}/layers/"
+    for json_name in [f"layout_result_{file_key}.json", f"layers_merged_{file_key}.json"]:
+        json_path = os.path.join(spec_dir, json_name)
+        if os.path.exists(json_path):
+            _patch_layer_file_paths(json_path, old_prefix, new_prefix)
+
+    return new_path, new_name, spec_dir_name
+
+
+def _patch_layer_file_paths(json_path: str, old_prefix: str, new_prefix: str) -> None:
+    """layout_result.json 내 layer_file 경로를 spec 서브디렉터리 기준으로 수정."""
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            text = f.read()
+        if old_prefix not in text:
+            return
+        with open(json_path, "w", encoding="utf-8") as f:
+            f.write(text.replace(old_prefix, new_prefix))
+    except Exception as exc:
+        print(f"[ISOLATE_SPEC][PATCH_WARN] path={json_path} err={exc}", flush=True)
 
 
 def _make_zip(job_id: str, files: list[str]) -> str:

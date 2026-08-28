@@ -287,6 +287,7 @@ public class BannerService {
                         br.setFileName(r.getFileName());
                         br.setFilePath(r.getFilePath());
                         br.setFileSize(r.getFileSize());
+                        br.setSpecDirName(r.getSpecDirName());
                         br.setValid(r.getValid());
                         br.setValidationMessage(r.getValidationMessage());
                         br.setRenderSource(r.getRenderSource());

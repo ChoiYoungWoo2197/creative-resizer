@@ -285,7 +285,13 @@ public class BannerController {
         String slug0 = result.getSlug();
         String sizeKey0 = result.getWidth() + "x" + result.getHeight();
         String fileKey0 = (slug0 != null && !slug0.isEmpty()) ? slug0 : sizeKey0;
-        File layoutFile = new File(compositeDir, "layout_result_" + fileKey0 + ".json");
+        // specDirName 있으면 spec 격리 서브디렉터리에서 우선 탐색 (구버전은 compositeDir 직접 탐색)
+        String specDirName0 = result.getSpecDirName();
+        File searchDir0 = (specDirName0 != null && !specDirName0.isEmpty())
+                ? new File(compositeDir, specDirName0) : compositeDir;
+        File layoutFile = new File(searchDir0, "layout_result_" + fileKey0 + ".json");
+        if (!layoutFile.exists()) layoutFile = new File(searchDir0, "layout_result_" + sizeKey0 + ".json");
+        if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result_" + fileKey0 + ".json");
         if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result_" + sizeKey0 + ".json");
         if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result.json");
         if (!layoutFile.exists()) return ResponseEntity.notFound().build();
@@ -316,7 +322,13 @@ public class BannerController {
         String slug1 = result.getSlug();
         String sizeKey1 = result.getWidth() + "x" + result.getHeight();
         String fileKey1 = (slug1 != null && !slug1.isEmpty()) ? slug1 : sizeKey1;
-        File mergedFile = new File(compositeDir, "layers_merged_" + fileKey1 + ".json");
+        // specDirName 있으면 spec 격리 서브디렉터리에서 우선 탐색
+        String specDirName1 = result.getSpecDirName();
+        File searchDir1 = (specDirName1 != null && !specDirName1.isEmpty())
+                ? new File(compositeDir, specDirName1) : compositeDir;
+        File mergedFile = new File(searchDir1, "layers_merged_" + fileKey1 + ".json");
+        if (!mergedFile.exists()) mergedFile = new File(searchDir1, "layers_merged_" + sizeKey1 + ".json");
+        if (!mergedFile.exists()) mergedFile = new File(compositeDir, "layers_merged_" + fileKey1 + ".json");
         if (!mergedFile.exists()) mergedFile = new File(compositeDir, "layers_merged_" + sizeKey1 + ".json");
         if (!mergedFile.exists()) return ResponseEntity.notFound().build();
 
@@ -374,10 +386,21 @@ public class BannerController {
         // bg_file 은 Path(output_dir)/job_id = .../output/{jobId}/{jobId}/ 기준 상대경로
         File jobRoot    = cleanV1Dir.getParentFile();                  // clean_v1 → inner_{jobId}
 
-        // layout_result_{w}x{h}.json 우선, 없으면 layout_result.json 폴백
+        // layout_result 탐색: specDirName 있으면 spec 격리 서브디렉터리 우선, 없으면 기존 방식
         String specKey2 = result.getWidth() + "x" + result.getHeight();
-        File layoutFile = new File(stage04Dir, "layout_result_" + specKey2 + ".json");
-        if (!layoutFile.exists()) layoutFile = new File(stage04Dir, "layout_result.json");
+        String fileKey2 = (result.getSlug() != null && !result.getSlug().isEmpty()) ? result.getSlug() : specKey2;
+        String specDirName2 = result.getSpecDirName();
+        File layoutFile = null;
+        if (specDirName2 != null && !specDirName2.isEmpty()) {
+            File specSubDir2 = new File(stage04Dir, specDirName2);
+            layoutFile = new File(specSubDir2, "layout_result_" + fileKey2 + ".json");
+            if (!layoutFile.exists()) layoutFile = new File(specSubDir2, "layout_result_" + specKey2 + ".json");
+            if (!layoutFile.exists()) layoutFile = null;
+        }
+        if (layoutFile == null || !layoutFile.exists()) {
+            layoutFile = new File(stage04Dir, "layout_result_" + specKey2 + ".json");
+            if (!layoutFile.exists()) layoutFile = new File(stage04Dir, "layout_result.json");
+        }
         File bgFile;
         java.util.Map<String, String> layerFileMap = new java.util.HashMap<>();
         if (layoutFile.exists()) {

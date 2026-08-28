@@ -39,6 +39,7 @@ public class WorkerResponse {
         private String fileName;
         private String filePath;
         private Long fileSize;
+        private String specDirName;  // spec 격리 서브디렉터리명 (예: "00_slug_1200x628")
 
         // ── clean_v1 FAIL 전용 ───────────────────────────────────────────────
         private String failedStage;    // P1~P8 단계명 (예: SOURCE_PREPARATION)
