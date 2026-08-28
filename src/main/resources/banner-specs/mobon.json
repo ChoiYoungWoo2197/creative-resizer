@@ -1,0 +1,236 @@
+[
+  {
+    "id": 1, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 150x150",
+    "placementType": "display", "slug": "mobon-mobile-banner-150x150",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 150, "height": 150, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 2, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 200x200",
+    "placementType": "display", "slug": "mobon-mobile-banner-200x200",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 200, "height": 200, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 3, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 250x250",
+    "placementType": "display", "slug": "mobon-mobile-banner-250x250",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 250, "height": 250, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 4, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 300x250",
+    "placementType": "display", "slug": "mobon-mobile-banner-300x250",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 300, "height": 250, "ratio": "6:5", "ratioLabel": "1.2:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 5, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 300x600",
+    "placementType": "display", "slug": "mobon-mobile-banner-300x600",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 300, "height": 600, "ratio": "1:2", "ratioLabel": "0.5:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 6, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 320x100",
+    "placementType": "display", "slug": "mobon-mobile-banner-320x100",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 320, "height": 100, "ratio": "16:5", "ratioLabel": "3.2:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 7, "media": "mobion", "category": "Mobile Banner", "placementName": "Mobile Banner 320x50",
+    "placementType": "display", "slug": "mobon-mobile-banner-320x50",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 320, "height": 50, "ratio": "32:5", "ratioLabel": "6.4:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 8, "media": "mobion", "category": "Mobile Interstitial", "placementName": "Mobile Interstitial 320x480",
+    "placementType": "display", "slug": "mobon-mobile-interstitial-320x480",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 320, "height": 480, "ratio": "2:3", "ratioLabel": "0.67:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 9, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 120x600",
+    "placementType": "display", "slug": "mobon-pc-banner-120x600",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 120, "height": 600, "ratio": "1:5", "ratioLabel": "0.2:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 10, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 160x600",
+    "placementType": "display", "slug": "mobon-pc-banner-160x600",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 160, "height": 600, "ratio": "4:15", "ratioLabel": "0.27:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 11, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 180x180",
+    "placementType": "display", "slug": "mobon-pc-banner-180x180",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 180, "height": 180, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 12, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 200x200",
+    "placementType": "display", "slug": "mobon-pc-banner-200x200",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 200, "height": 200, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 13, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 250x250",
+    "placementType": "display", "slug": "mobon-pc-banner-250x250",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 250, "height": 250, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 14, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 300x150",
+    "placementType": "display", "slug": "mobon-pc-banner-300x150",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 300, "height": 150, "ratio": "2:1", "ratioLabel": "2:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 15, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 300x250",
+    "placementType": "display", "slug": "mobon-pc-banner-300x250",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 300, "height": 250, "ratio": "6:5", "ratioLabel": "1.2:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 16, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 300x600",
+    "placementType": "display", "slug": "mobon-pc-banner-300x600",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 300, "height": 600, "ratio": "1:2", "ratioLabel": "0.5:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 17, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 320x480",
+    "placementType": "display", "slug": "mobon-pc-banner-320x480",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 320, "height": 480, "ratio": "2:3", "ratioLabel": "0.67:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 18, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 336x280",
+    "placementType": "display", "slug": "mobon-pc-banner-336x280",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 336, "height": 280, "ratio": "6:5", "ratioLabel": "1.2:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 19, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 720x120",
+    "placementType": "display", "slug": "mobon-pc-banner-720x120",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 720, "height": 120, "ratio": "6:1", "ratioLabel": "6:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 20, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 720x1230",
+    "placementType": "display", "slug": "mobon-pc-banner-720x1230",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 720, "height": 1230, "ratio": "24:41", "ratioLabel": "0.59:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 21, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 728x90",
+    "placementType": "display", "slug": "mobon-pc-banner-728x90",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 728, "height": 90, "ratio": "364:45", "ratioLabel": "8.09:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 22, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 800x1500",
+    "placementType": "display", "slug": "mobon-pc-banner-800x1500",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 800, "height": 1500, "ratio": "8:15", "ratioLabel": "0.53:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 23, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 850x850",
+    "placementType": "display", "slug": "mobon-pc-banner-850x850",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 850, "height": 850, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 24, "media": "mobion", "category": "PC Banner", "placementName": "PC Banner 970x250",
+    "placementType": "display", "slug": "mobon-pc-banner-970x250",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 970, "height": 250, "ratio": "97:25", "ratioLabel": "3.88:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 25, "media": "mobion", "category": "SDK Banner", "placementName": "SDK Banner 600x600",
+    "placementType": "display", "slug": "mobon-sdk-banner-600x600",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 600, "height": 600, "ratio": "1:1", "ratioLabel": "1:1",
+    "fileFormats": ["jpg", "png", "gif"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": false, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  },
+  {
+    "id": 26, "media": "mobion", "category": "Advertiser Logo", "placementName": "Advertiser Logo",
+    "placementType": "display", "slug": "mobon-advertiser-logo-200x67",
+    "sourceUrl": "https://www.imagefactory.co.kr/sizes/mobon", "sourceType": "competitor",
+    "width": 200, "height": 67, "ratio": "200:67", "ratioLabel": "2.99:1",
+    "fileFormats": ["png"], "maxFileSizeKb": null, "minFileSizeKb": null,
+    "safeZoneParseStatus": "diagram_unreadable", "safeTop": null, "safeRight": null, "safeBottom": null, "safeLeft": null,
+    "bgTransparent": true, "isVideo": false, "needsReview": false, "notes": null, "lastVerified": "2026-08-28"
+  }
+]
