@@ -47,6 +47,7 @@ def composite_elements(
     safe_right: int = 0,
     safe_bottom: int = 0,
     safe_left: int = 0,
+    slug: str = "",
 ) -> tuple[StageResult, dict | None]:
     """비-bg 레이어를 letterbox 변환 좌표로 배경에 합성.
 
@@ -235,7 +236,8 @@ def composite_elements(
                 "left": safe_left,
             },
         }
-        layout_result_path = str(stage_dir / f"layout_result_{target_w}x{target_h}.json")
+        _file_key = slug if slug else f"{target_w}x{target_h}"
+        layout_result_path = str(stage_dir / f"layout_result_{_file_key}.json")
         with open(layout_result_path, "w", encoding="utf-8") as f:
             json.dump(layout_data, f, ensure_ascii=False, indent=2)
         print(f"[{STAGE.value}][LAYOUT_RESULT_SAVED] path={layout_result_path}", flush=True)
@@ -260,7 +262,7 @@ def composite_elements(
             {**layer, "rendered": rendered_map.get(layer["name"].strip("[] \t"))}
             for layer in p2_data.get("layers", [])
         ]
-        merged_path = str(stage_dir / f"layers_merged_{target_w}x{target_h}.json")
+        merged_path = str(stage_dir / f"layers_merged_{_file_key}.json")
         with open(merged_path, "w", encoding="utf-8") as f:
             json.dump(
                 {

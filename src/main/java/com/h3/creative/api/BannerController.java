@@ -282,8 +282,11 @@ public class BannerController {
         File resultFile0 = new File(result.getFilePath());
         File cleanV1Dir0 = resultFile0.getParentFile().getParentFile(); // 08_final → clean_v1
         File compositeDir = new File(cleanV1Dir0, "04_composite");
-        String specKey = result.getWidth() + "x" + result.getHeight();
-        File layoutFile = new File(compositeDir, "layout_result_" + specKey + ".json");
+        String slug0 = result.getSlug();
+        String sizeKey0 = result.getWidth() + "x" + result.getHeight();
+        String fileKey0 = (slug0 != null && !slug0.isEmpty()) ? slug0 : sizeKey0;
+        File layoutFile = new File(compositeDir, "layout_result_" + fileKey0 + ".json");
+        if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result_" + sizeKey0 + ".json");
         if (!layoutFile.exists()) layoutFile = new File(compositeDir, "layout_result.json");
         if (!layoutFile.exists()) return ResponseEntity.notFound().build();
 
@@ -310,8 +313,11 @@ public class BannerController {
         File resultFile1 = new File(result.getFilePath());
         File cleanV1Dir1 = resultFile1.getParentFile().getParentFile(); // 08_final → clean_v1
         File compositeDir = new File(cleanV1Dir1, "04_composite");
-        String specKey = result.getWidth() + "x" + result.getHeight();
-        File mergedFile = new File(compositeDir, "layers_merged_" + specKey + ".json");
+        String slug1 = result.getSlug();
+        String sizeKey1 = result.getWidth() + "x" + result.getHeight();
+        String fileKey1 = (slug1 != null && !slug1.isEmpty()) ? slug1 : sizeKey1;
+        File mergedFile = new File(compositeDir, "layers_merged_" + fileKey1 + ".json");
+        if (!mergedFile.exists()) mergedFile = new File(compositeDir, "layers_merged_" + sizeKey1 + ".json");
         if (!mergedFile.exists()) return ResponseEntity.notFound().build();
 
         byte[] bytes = Files.readAllBytes(mergedFile.toPath());

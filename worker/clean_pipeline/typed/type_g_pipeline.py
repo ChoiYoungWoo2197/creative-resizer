@@ -114,6 +114,7 @@ def run(
         safe_right=spec.safe_right,
         safe_bottom=spec.safe_bottom,
         safe_left=spec.safe_left,
+        slug=spec.slug,
     )
     stage_results.append(sr_comp)
     if sr_comp.status == PipelineStatus.FAIL:
