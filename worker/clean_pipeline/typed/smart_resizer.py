@@ -176,7 +176,7 @@ def _call_fal_smart_resize(
     result = fal_client.subscribe(
         _FAL_ENDPOINT,
         arguments={
-            "prompt": "",
+            "prompt": "Soft background bokeh, shallow depth of field on edges, subtle ambient light, minimal negative space, high commercial quality, photorealistic. [DO NOT ADD: no text, no logos, no new objects, no extra people, no harsh seams]",
             "image_url": image_url,
             "resolution": "1K",
             "target_sizes": [f"{target_width}x{target_height}"],
