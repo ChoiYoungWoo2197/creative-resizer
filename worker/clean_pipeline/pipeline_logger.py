@@ -94,6 +94,18 @@ class PipelineLogger:
     ) -> None:
         self._emit("artifact_written", stage, description, {}, None, artifact=path)
 
+    def fal_request(
+        self,
+        stage: str,
+        endpoint: str,
+        request_id: str,
+        message: str = "",
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
+        """fal 호출 1건 — 실제 청구 비용 조회(clean_pipeline.fal_cost)의 기준 레코드."""
+        self._emit("fal_request", stage, message, metrics or {}, None,
+                   falEndpoint=endpoint, falRequestId=request_id)
+
     # ── Job events ────────────────────────────────────────────────────────────
 
     def job_start(self, message: str = "", metrics: dict[str, Any] | None = None) -> None:

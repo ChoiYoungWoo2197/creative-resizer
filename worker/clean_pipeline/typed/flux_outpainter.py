@@ -20,6 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.fal_cost import enqueue_kwargs, log_fal_request
 from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.BG_EXTRACTION
@@ -108,10 +109,12 @@ def outpaint(
     needs_outpaint = pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0
 
     if fal_key and needs_outpaint:
+        fal_request: dict = {}
+        t_call = time.time()
         try:
             result_img = _call_fal_outpaint(
                 scaled_img, pad_top, pad_right, pad_bottom, pad_left,
-                target_width, target_height, fal_key, logger,
+                target_width, target_height, fal_key, logger, fal_request,
             )
             is_smart_resized = True
         except Exception as exc:
@@ -119,6 +122,8 @@ def outpaint(
                 STAGE.value, "(fal-warn)",
                 f"flux-2-pro/outpaint 실패 ({exc}) — PIL edge-fill fallback",
             )
+        log_fal_request(logger, STAGE.value, _FAL_ENDPOINT, fal_request,
+                        target_width, target_height, t_call, ok=is_smart_resized)
     else:
         reason = "FAL_KEY 없음" if not fal_key else "패딩 불필요"
         logger.artifact_written(STAGE.value, "(fal-skip)", f"{reason} — PIL edge-fill fallback")
@@ -179,6 +184,7 @@ def _call_fal_outpaint(
     target_height: int,
     fal_key: str,
     logger: PipelineLogger,
+    request_holder: dict | None = None,
 ) -> Image.Image:
     import fal_client
     os.environ.setdefault("FAL_KEY", fal_key)
@@ -206,6 +212,7 @@ def _call_fal_outpaint(
             "enable_safety_checker": True,
             "output_format":         "jpeg",
         },
+        **enqueue_kwargs(fal_client.subscribe, request_holder if request_holder is not None else {}),
     )
     elapsed = round(time.time() - t0, 2)
 

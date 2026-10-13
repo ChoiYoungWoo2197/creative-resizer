@@ -20,6 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 from clean_pipeline.contracts import PipelineStatus, StageName, StageResult
+from clean_pipeline.fal_cost import enqueue_kwargs, log_fal_request
 from clean_pipeline.pipeline_logger import PipelineLogger
 
 STAGE = StageName.SMART_RESIZE
@@ -69,8 +70,11 @@ def resize(
     # ── fal-ai/smart-resize 시도 ──────────────────────────────────────────────
     fal_meta: dict | None = None
     if fal_key:
+        fal_request: dict = {}
+        t_call = time.time()
         try:
-            resized_img, fal_meta = _call_fal_smart_resize(canonical, target_width, target_height, fal_key)
+            resized_img, fal_meta = _call_fal_smart_resize(
+                canonical, target_width, target_height, fal_key, fal_request)
             is_smart_resized = True
             logger.artifact_written(
                 STAGE.value, "(fal-ok)",
@@ -82,6 +86,8 @@ def resize(
                 STAGE.value, "(fal-warn)",
                 f"fal-ai/smart-resize 실패 ({exc}) — PIL center crop fallback",
             )
+        log_fal_request(logger, STAGE.value, _FAL_ENDPOINT, fal_request,
+                        target_width, target_height, t_call, ok=is_smart_resized)
     else:
         logger.artifact_written(STAGE.value, "(fal-skip)", "FAL_KEY 없음 — PIL center crop fallback")
 
@@ -142,6 +148,7 @@ def _call_fal_smart_resize(
     target_width: int,
     target_height: int,
     fal_key: str,
+    request_holder: dict | None = None,
 ) -> tuple[Image.Image, dict]:
     """fal-ai/smart-resize REST 호출. (PIL Image, fal_meta dict) 반환.
 
@@ -163,7 +170,7 @@ def _call_fal_smart_resize(
     # fal storage에 업로드 → HTTPS URL 획득 (JPEG: PNG 대비 용량 50~70% 절감)
     image_url = fal_client.upload(buf.read(), content_type="image/jpeg")
 
-    request_id_holder: dict = {}
+    request_id_holder: dict = request_holder if request_holder is not None else {}
 
     def on_queue_update(update):
         if isinstance(update, fal_client.InProgress):
@@ -186,6 +193,7 @@ def _call_fal_smart_resize(
         },
         with_logs=True,
         on_queue_update=on_queue_update,
+        **enqueue_kwargs(fal_client.subscribe, request_id_holder),
     )
     elapsed = round(time.time() - t0, 2)
 
